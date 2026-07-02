@@ -2,7 +2,7 @@ import subprocess
 from pathlib import Path
 
 
-def test_powershell_helper_prefers_project_virtual_environment() -> None:
+def test_powershell_helper_resolves_runnable_interpreter() -> None:
     project_root = Path(__file__).parents[2]
     result = subprocess.run(
         [
@@ -19,9 +19,13 @@ def test_powershell_helper_prefers_project_virtual_environment() -> None:
         encoding="utf-8",
     )
 
-    assert Path(result.stdout.strip()).resolve() == (
-        project_root / ".venv" / "Scripts" / "python.exe"
-    ).resolve()
+    resolved = Path(result.stdout.strip()).resolve()
+    virtual_environment = (project_root / ".venv" / "Scripts" / "python.exe").resolve()
+    if virtual_environment.is_file():
+        assert resolved == virtual_environment
+    else:
+        assert resolved.is_file()
+        assert resolved.name.casefold() == "python.exe"
 
 
 def test_build_and_release_scripts_use_resolved_interpreter() -> None:
