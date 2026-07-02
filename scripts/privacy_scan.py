@@ -15,6 +15,21 @@ EXCLUDED_DIRS = {
     "build",
 }
 EXCLUDED_FILES = {".privacy-blocklist"}
+TEXT_SUFFIXES = {
+    ".bat",
+    ".cfg",
+    ".cmd",
+    ".ini",
+    ".json",
+    ".md",
+    ".ps1",
+    ".py",
+    ".spec",
+    ".toml",
+    ".txt",
+    ".yaml",
+    ".yml",
+}
 HOME_PATTERNS = (
     re.compile(r"[A-Za-z]:\\Users\\[^\\\s]+"),
     re.compile(r"/(?:Users|home)/[^/\s]+"),
@@ -55,9 +70,10 @@ def scan_tree(root: Path, terms: tuple[str, ...]) -> list[Finding]:
         for term in terms:
             if term.encode("utf-8") in raw:
                 findings.append(Finding(path, "private-term", term))
-        for pattern in HOME_PATTERNS:
-            for match in pattern.finditer(text):
-                findings.append(Finding(path, "home-path", match.group(0)))
+        if path.suffix.lower() in TEXT_SUFFIXES:
+            for pattern in HOME_PATTERNS:
+                for match in pattern.finditer(text):
+                    findings.append(Finding(path, "home-path", match.group(0)))
     return findings
 
 

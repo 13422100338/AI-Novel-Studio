@@ -39,6 +39,24 @@ def test_scan_tree_ignores_python_cache_directories(tmp_path: Path) -> None:
     assert scan_tree(tmp_path, ("Private Person",)) == []
 
 
+def test_scan_tree_ignores_upstream_build_paths_in_binary_files(tmp_path: Path) -> None:
+    binary = tmp_path / "library.dll"
+    binary.write_bytes(b"built under C:\\Users\\Administrator\\source")
+
+    assert scan_tree(tmp_path, ()) == []
+
+
+def test_scan_tree_detects_private_terms_inside_binary_files(tmp_path: Path) -> None:
+    binary = tmp_path / "application.exe"
+    binary.write_bytes(b"embedded Private Person metadata")
+
+    findings = scan_tree(tmp_path, ("Private Person",))
+
+    assert [(finding.kind, finding.value) for finding in findings] == [
+        ("private-term", "Private Person")
+    ]
+
+
 def test_load_terms_rejects_missing_or_empty_file(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="privacy terms"):
         load_terms(tmp_path / "missing.txt")
