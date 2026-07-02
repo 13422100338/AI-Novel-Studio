@@ -40,6 +40,7 @@ def test_chapter_sidebar_is_scrollable_and_sections_collapse(qtbot: QtBot) -> No
     assert sidebar.scroll_area.widgetResizable() is True
     assert sidebar.scroll_area.verticalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAsNeeded
     assert sidebar.chapter_tree.topLevelItemCount() == 1
+    assert sidebar.chapter_tree.topLevelItem(0).isExpanded() is True
     assert sidebar.chapter_section.is_expanded() is True
     sidebar.chapter_section.set_expanded(False)
     assert sidebar.chapter_tree.isHidden() is True

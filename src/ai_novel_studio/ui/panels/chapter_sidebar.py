@@ -105,7 +105,6 @@ class ChapterSidebar(QFrame):
         tree.setIndentation(14)
         for volume in data.volumes:
             volume_item = QTreeWidgetItem([volume.title])
-            volume_item.setExpanded(True)
             tree.addTopLevelItem(volume_item)
             for chapter in volume.chapters:
                 item = QTreeWidgetItem(
@@ -116,6 +115,7 @@ class ChapterSidebar(QFrame):
                 )
                 item.setData(0, Qt.ItemDataRole.UserRole, chapter.id)
                 volume_item.addChild(item)
+            volume_item.setExpanded(True)
         return tree
 
     def _build_character_editor(self, parent: QWidget) -> QWidget:

@@ -8,7 +8,8 @@ def application_stylesheet() -> str:
     QMainWindow, QDialog, QWidget#appSurface {
         background: #f6f7f8;
     }
-    QFrame#topBar, QFrame#panelSurface, QFrame#cardSurface {
+    QFrame#topBar, QFrame#panelSurface, QFrame#cardSurface,
+    QFrame#chapterSidebar, QFrame#manuscriptPanel, QFrame#plotChatPanel {
         background: #ffffff;
         border: 1px solid #e4e6e8;
         border-radius: 12px;

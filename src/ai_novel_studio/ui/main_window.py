@@ -13,6 +13,7 @@ from ai_novel_studio.ui.pages.audit_window import AuditWindow
 from ai_novel_studio.ui.pages.brief_dialog import BriefDialog
 from ai_novel_studio.ui.pages.detached_chat_window import DetachedChatWindow
 from ai_novel_studio.ui.pages.memory_window import MemoryWindow
+from ai_novel_studio.ui.pages.settings_dialog import SettingsDialog
 from ai_novel_studio.ui.pages.style_rules_window import StyleRulesWindow
 from ai_novel_studio.ui.panels.chapter_sidebar import ChapterSidebar
 from ai_novel_studio.ui.panels.manuscript_panel import ManuscriptPanel
@@ -25,7 +26,7 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("AI Novel Studio")
-        self.setMinimumSize(960, 640)
+        self.setMinimumSize(1100, 680)
         self.resize(1440, 900)
         self.setStyleSheet(application_stylesheet())
 
@@ -35,6 +36,7 @@ class MainWindow(QMainWindow):
         self.memory_window: MemoryWindow | None = None
         self.style_rules_window: StyleRulesWindow | None = None
         self.audit_window: AuditWindow | None = None
+        self.settings_dialog: SettingsDialog | None = None
         surface = QWidget(self)
         surface.setObjectName("appSurface")
         layout = QVBoxLayout(surface)
@@ -68,6 +70,7 @@ class MainWindow(QMainWindow):
         self.chapter_sidebar.style_requested.connect(self.open_style_rules_window)
         self.chapter_sidebar.audit_requested.connect(self.open_audit_window)
         self.manuscript_panel.audit_requested.connect(self.open_audit_window)
+        self.top_bar.settings_requested.connect(self.open_settings_dialog)
 
     def open_brief_dialog(self) -> None:
         if self.brief_dialog is None:
@@ -99,6 +102,13 @@ class MainWindow(QMainWindow):
         if self.audit_window is None:
             self.audit_window = AuditWindow(self.data, self)
         self._show_workspace_window(self.audit_window)
+
+    def open_settings_dialog(self) -> None:
+        if self.settings_dialog is None:
+            self.settings_dialog = SettingsDialog(self)
+        self.settings_dialog.show()
+        self.settings_dialog.raise_()
+        self.settings_dialog.activateWindow()
 
     @staticmethod
     def _show_workspace_window(window: QMainWindow) -> None:
