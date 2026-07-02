@@ -1,4 +1,13 @@
+from ai_novel_studio.ui.pages.audit_window import AuditWindow
 from ai_novel_studio.ui.pages.brief_dialog import BriefDialog
 from ai_novel_studio.ui.pages.detached_chat_window import DetachedChatWindow
+from ai_novel_studio.ui.pages.memory_window import MemoryWindow
+from ai_novel_studio.ui.pages.style_rules_window import StyleRulesWindow
 
-__all__ = ["BriefDialog", "DetachedChatWindow"]
+__all__ = [
+    "AuditWindow",
+    "BriefDialog",
+    "DetachedChatWindow",
+    "MemoryWindow",
+    "StyleRulesWindow",
+]

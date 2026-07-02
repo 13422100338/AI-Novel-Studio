@@ -19,6 +19,9 @@ from ai_novel_studio.ui.widgets.collapsible_section import CollapsibleSection
 
 class ChapterSidebar(QFrame):
     chapter_selected = Signal(str)
+    memory_requested = Signal()
+    style_requested = Signal()
+    audit_requested = Signal()
 
     def __init__(self, data: WorkspaceDemoData, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -55,6 +58,21 @@ class ChapterSidebar(QFrame):
         character_content = self._build_character_editor(content)
         self.character_section = CollapsibleSection("当前人物状态", character_content, content)
         content_layout.addWidget(self.character_section)
+
+        workspace_content = QWidget(content)
+        workspace_layout = QGridLayout(workspace_content)
+        workspace_layout.setContentsMargins(0, 0, 0, 0)
+        self.memory_button = QPushButton("记忆库", workspace_content)
+        self.memory_button.setAccessibleName("打开长篇记忆库")
+        self.style_button = QPushButton("文风规则", workspace_content)
+        self.style_button.setAccessibleName("打开文风规则")
+        self.audit_button = QPushButton("审校工作台", workspace_content)
+        self.audit_button.setAccessibleName("打开审校工作台")
+        workspace_layout.addWidget(self.memory_button, 0, 0)
+        workspace_layout.addWidget(self.style_button, 0, 1)
+        workspace_layout.addWidget(self.audit_button, 1, 0, 1, 2)
+        self.workspace_section = CollapsibleSection("项目工作台", workspace_content, content)
+        content_layout.addWidget(self.workspace_section)
         content_layout.addStretch(1)
 
         self.scroll_area.setWidget(content)
@@ -64,6 +82,9 @@ class ChapterSidebar(QFrame):
 
         self.chapter_tree.currentItemChanged.connect(self._emit_chapter_selection)
         self.character_combo.currentIndexChanged.connect(self._load_selected_character)
+        self.memory_button.clicked.connect(self.memory_requested)
+        self.style_button.clicked.connect(self.style_requested)
+        self.audit_button.clicked.connect(self.audit_requested)
         self._load_selected_character()
 
     @staticmethod

@@ -9,8 +9,11 @@ from PySide6.QtWidgets import (
 )
 
 from ai_novel_studio.ui.demo_data import WorkspaceDemoData
+from ai_novel_studio.ui.pages.audit_window import AuditWindow
 from ai_novel_studio.ui.pages.brief_dialog import BriefDialog
 from ai_novel_studio.ui.pages.detached_chat_window import DetachedChatWindow
+from ai_novel_studio.ui.pages.memory_window import MemoryWindow
+from ai_novel_studio.ui.pages.style_rules_window import StyleRulesWindow
 from ai_novel_studio.ui.panels.chapter_sidebar import ChapterSidebar
 from ai_novel_studio.ui.panels.manuscript_panel import ManuscriptPanel
 from ai_novel_studio.ui.panels.plot_chat_panel import PlotChatPanel
@@ -29,6 +32,9 @@ class MainWindow(QMainWindow):
         self.data = WorkspaceDemoData.sample()
         self.brief_dialog: BriefDialog | None = None
         self.detached_chat_window: DetachedChatWindow | None = None
+        self.memory_window: MemoryWindow | None = None
+        self.style_rules_window: StyleRulesWindow | None = None
+        self.audit_window: AuditWindow | None = None
         surface = QWidget(self)
         surface.setObjectName("appSurface")
         layout = QVBoxLayout(surface)
@@ -58,6 +64,10 @@ class MainWindow(QMainWindow):
         self.manuscript_panel.brief_requested.connect(self.open_brief_dialog)
         self.plot_chat_panel.brief_draft_requested.connect(self.open_brief_dialog)
         self.plot_chat_panel.detach_requested.connect(self.open_detached_chat)
+        self.chapter_sidebar.memory_requested.connect(self.open_memory_window)
+        self.chapter_sidebar.style_requested.connect(self.open_style_rules_window)
+        self.chapter_sidebar.audit_requested.connect(self.open_audit_window)
+        self.manuscript_panel.audit_requested.connect(self.open_audit_window)
 
     def open_brief_dialog(self) -> None:
         if self.brief_dialog is None:
@@ -74,6 +84,27 @@ class MainWindow(QMainWindow):
         self.detached_chat_window.show()
         self.detached_chat_window.raise_()
         self.detached_chat_window.activateWindow()
+
+    def open_memory_window(self) -> None:
+        if self.memory_window is None:
+            self.memory_window = MemoryWindow(self.data, self)
+        self._show_workspace_window(self.memory_window)
+
+    def open_style_rules_window(self) -> None:
+        if self.style_rules_window is None:
+            self.style_rules_window = StyleRulesWindow(self.data, self)
+        self._show_workspace_window(self.style_rules_window)
+
+    def open_audit_window(self) -> None:
+        if self.audit_window is None:
+            self.audit_window = AuditWindow(self.data, self)
+        self._show_workspace_window(self.audit_window)
+
+    @staticmethod
+    def _show_workspace_window(window: QMainWindow) -> None:
+        window.show()
+        window.raise_()
+        window.activateWindow()
 
     @staticmethod
     def _placeholder(object_name: str, title: str, minimum_width: int) -> QFrame:
