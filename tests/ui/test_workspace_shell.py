@@ -15,7 +15,7 @@ def test_main_window_composes_top_bar_and_three_resizable_panes(qtbot: QtBot) ->
     assert window.workspace_splitter.count() == 3
     assert [window.workspace_splitter.widget(index).objectName() for index in range(3)] == [
         "chapterSidebar",
-        "manuscriptPlaceholder",
+        "manuscriptPanel",
         "plotChatPlaceholder",
     ]
     assert window.workspace_splitter.childrenCollapsible() is False
