@@ -34,12 +34,13 @@ def test_send_appends_user_message_without_fabricating_assistant_reply(qtbot: Qt
     assert panel.composer.toPlainText() == ""
 
 
-def test_generate_brief_action_emits_explicit_signal(qtbot: QtBot) -> None:
+def test_generate_requirement_action_emits_explicit_signal(qtbot: QtBot) -> None:
     panel = PlotChatPanel(WorkspaceDemoData.sample().messages)
     qtbot.addWidget(panel)
 
-    with qtbot.waitSignal(panel.brief_draft_requested, timeout=1000):
-        panel.brief_button.click()
+    assert panel.requirement_button.text() == "生成当前章要求"
+    with qtbot.waitSignal(panel.chapter_requirement_requested, timeout=1000):
+        panel.requirement_button.click()
 
 
 def test_detached_chat_copies_current_conversation(qtbot: QtBot) -> None:

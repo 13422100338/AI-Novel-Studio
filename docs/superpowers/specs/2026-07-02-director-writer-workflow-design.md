@@ -27,23 +27,30 @@ Markdown, repository, checkpoint, and model-gateway architecture.
 ## Core decisions
 
 1. The plot-discussion model acts as director; the prose model acts as writer.
-2. A frozen Chapter Brief is the only formal handoff from director to writer in Standard and
+2. Current Chapter Requirement is a concise, directly editable human instruction and the
+   highest-priority chapter-level source.
+3. A frozen Chapter Brief is the only formal handoff from director to writer in Standard and
    Strict modes.
-3. A Chapter Brief is a versioned pipeline artifact, not a second manuscript or memory database.
-4. Character state, character knowledge, and reader knowledge are separate temporal records.
-5. Real foreshadowing and intentional misdirection are different clue types.
-6. Style guidance is layered and compiled per task instead of injecting one ever-growing guide.
-7. Deterministic checks report measurable patterns before model-based review.
-8. AI-derived updates are candidates; locked human canon, decisions, rules, and samples are
+4. A Chapter Brief is compiled from Current Chapter Requirement plus structured context; it is not
+   a replacement for the author's requirement.
+5. Character state, character knowledge, and reader knowledge are separate temporal records.
+6. Real foreshadowing and intentional misdirection are different clue types.
+7. Style guidance is layered and compiled per task instead of injecting one ever-growing guide.
+8. Deterministic checks report measurable patterns before model-based review.
+9. AI-derived updates are candidates; locked human canon, decisions, rules, and samples are
    immutable until the user explicitly accepts a change.
-9. Every accepted chapter can be traced to human decisions, AI suggestions, inputs, model calls,
+10. Every accepted chapter can be traced to human decisions, AI suggestions, inputs, model calls,
    and user edits.
-10. Fast mode remains available and does not require the full design workflow.
+11. Fast mode remains available and does not require the full design workflow.
 
 ## Architecture
 
 ```text
 Plot chat / outline / memory / current manuscript
+                    |
+                    v
+        Current Chapter Requirement
+          (human editable + lockable)
                     |
                     v
             ChapterBriefCompiler
@@ -77,6 +84,7 @@ The prose model cannot query or mutate project storage directly.
 
 `ChapterBriefCompiler.compile(chapter_id, mode, source_revision) -> ChapterBriefDraft` gathers:
 
+- the locked or current Current Chapter Requirement as the highest-priority chapter instruction;
 - dramatic purpose, target length, story date, and point-of-view character;
 - hard events, soft goals, prohibited changes, and explicit creative freedom;
 - current motivation, psychology, relationship, location, injury, and capability states;
@@ -91,8 +99,9 @@ Brief states are `DRAFT`, `FROZEN`, `STALE`, and `ARCHIVED`. Standard and Strict
 `FROZEN`. Any source revision change invalidates the source fingerprint and marks the Brief `STALE`.
 A user can clone a stale Brief into a new draft, inspect the delta, then freeze the new revision.
 
-The plot chat can propose or update a draft Brief through an explicit action. Ordinary conversation
-never silently changes the Brief. A frozen Brief is read-only.
+The plot chat can propose a Current Chapter Requirement draft through an explicit action. It cannot
+overwrite a locked requirement.
+Ordinary conversation never silently changes the requirement or Brief. A frozen Brief is read-only.
 
 ## Temporal knowledge matrix
 
@@ -182,7 +191,7 @@ It is not a claim that automated logs alone determine copyright status.
 ### Fast
 
 ```text
-Context -> prose draft -> versioned save -> human edit
+Current Chapter Requirement -> context -> prose draft -> versioned save -> human edit
 ```
 
 No frozen Brief or automatic long-term memory update is required.
@@ -190,7 +199,7 @@ No frozen Brief or automatic long-term memory update is required.
 ### Standard
 
 ```text
-Event checklist -> lightweight Brief -> human freeze -> context -> prose
+Current Chapter Requirement -> event checklist -> lightweight Brief -> human freeze -> context -> prose
 -> deterministic basic checks -> human confirmation -> candidate memory
 ```
 
@@ -200,7 +209,8 @@ events, and relevant style rules.
 ### Strict
 
 ```text
-Event checklist -> complete Brief -> knowledge validation -> human freeze -> context -> prose
+Current Chapter Requirement -> event checklist -> complete Brief -> knowledge validation
+-> human freeze -> context -> prose
 -> deterministic full-work checks -> independent model audit -> bounded repair proposals
 -> human confirmation -> candidate memory and provenance
 ```
@@ -213,7 +223,10 @@ Phase 2 mock data must expose the later workflow without calling a model:
 
 - The center pane opens a Brief review panel with source badges, warnings, edit, freeze, and clone
   actions.
-- The plot-chat action creates a draft Brief proposal; normal chat remains conversational.
+- The center pane keeps Current Chapter Requirement visible, directly editable, and lockable above
+  the manuscript.
+- The plot-chat action creates a Current Chapter Requirement draft; normal chat remains
+  conversational and cannot overwrite a locked requirement.
 - The memory page includes tabs for character state, character knowledge, reader knowledge, and
   narrative clues.
 - The style page includes layered rules, immutable samples, candidate suggestions, and frequency

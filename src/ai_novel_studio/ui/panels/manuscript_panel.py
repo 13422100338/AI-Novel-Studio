@@ -73,6 +73,27 @@ class ManuscriptPanel(QFrame):
         action_row.addStretch(1)
         action_row.addWidget(self.generate_button)
 
+        requirement_header = QHBoxLayout()
+        requirement_title = QLabel("当前章要求", self)
+        requirement_title.setObjectName("sectionEyebrow")
+        self.requirement_status = QLabel("人工指令 · 可编辑 · 最高优先级", self)
+        self.requirement_status.setObjectName("mutedLabel")
+        self.requirement_lock_button = QPushButton("锁定要求", self)
+        self.requirement_lock_button.setAccessibleName("锁定当前章要求")
+        self.requirement_lock_button.clicked.connect(self.toggle_requirement_lock)
+        requirement_header.addWidget(requirement_title)
+        requirement_header.addWidget(self.requirement_status)
+        requirement_header.addStretch(1)
+        requirement_header.addWidget(self.requirement_lock_button)
+
+        self._requirement_locked = False
+        self.chapter_requirement = QPlainTextEdit(self)
+        self.chapter_requirement.setObjectName("chapterRequirement")
+        self.chapter_requirement.setAccessibleName("当前章要求")
+        self.chapter_requirement.setPlainText(data.chapter_requirement)
+        self.chapter_requirement.setMinimumHeight(82)
+        self.chapter_requirement.setMaximumHeight(120)
+
         self.editor = QPlainTextEdit(self)
         self.editor.setObjectName("manuscriptEditor")
         self.editor.setAccessibleName("章节正文编辑器")
@@ -99,6 +120,8 @@ class ManuscriptPanel(QFrame):
         layout.addLayout(title_row)
         layout.addLayout(settings_row)
         layout.addLayout(action_row)
+        layout.addLayout(requirement_header)
+        layout.addWidget(self.chapter_requirement)
         layout.addWidget(self.editor, 1)
         layout.addLayout(footer)
 
@@ -121,3 +144,23 @@ class ManuscriptPanel(QFrame):
     def _update_word_count(self) -> None:
         count = sum(1 for character in self.editor.toPlainText() if not character.isspace())
         self.word_count_label.setText(f"{count:,} 字")
+
+    def toggle_requirement_lock(self) -> None:
+        self._requirement_locked = not self._requirement_locked
+        self.chapter_requirement.setReadOnly(self._requirement_locked)
+        if self._requirement_locked:
+            self.requirement_status.setText("人工指令 · 已锁定 · 最高优先级")
+            self.requirement_lock_button.setText("解除锁定")
+            self.requirement_lock_button.setAccessibleName("解除当前章要求锁定")
+        else:
+            self.requirement_status.setText("人工指令 · 可编辑 · 最高优先级")
+            self.requirement_lock_button.setText("锁定要求")
+            self.requirement_lock_button.setAccessibleName("锁定当前章要求")
+
+    def apply_requirement_draft(self, text: str) -> bool:
+        if self._requirement_locked:
+            return False
+        self.chapter_requirement.setPlainText(text)
+        self.requirement_status.setText("剧情商讨生成的正式要求草稿 · 待确认")
+        self.chapter_requirement.setFocus()
+        return True

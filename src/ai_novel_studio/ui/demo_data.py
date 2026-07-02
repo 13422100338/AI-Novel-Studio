@@ -50,6 +50,8 @@ class WorkspaceDemoData:
     characters: tuple[DemoCharacter, ...]
     messages: tuple[DemoMessage, ...]
     brief: DemoBrief
+    chapter_requirement: str
+    generated_requirement: str
     chapter_text: str
     memory_tabs: tuple[tuple[str, str], ...]
     style_rules: tuple[tuple[str, str, str], ...]
@@ -95,7 +97,13 @@ class WorkspaceDemoData:
                 status="草稿",
                 fingerprint="brief-demo-a31f",
                 warnings=("钟楼记录的来源尚未人工确认",),
-                sources=("人工大纲", "上一章全文", "人物知识矩阵", "叙事线索 CL-04"),
+                sources=(
+                    "当前章要求（最高优先级）",
+                    "人工大纲",
+                    "上一章全文",
+                    "人物知识矩阵",
+                    "叙事线索 CL-04",
+                ),
                 sections=(
                     ("戏剧功能", "迫使林默从被动等待转为主动调查。"),
                     ("必须事件", "来信出现；林默识别暗号；决定前往旧港。"),
@@ -104,6 +112,15 @@ class WorkspaceDemoData:
                     ("文风", "近距离第三人称；克制；避免解释恐惧。"),
                     ("自由空间", "允许自行设计来信出现的位置和现场细节。"),
                 ),
+            ),
+            chapter_requirement=(
+                "本章让林默收到使用兄长旧暗号的无署名来信。保持寄信人身份未知，"
+                "重点描写他明知可能是陷阱，仍主动决定前往旧港调查。"
+            ),
+            generated_requirement=(
+                "正式要求：林默在雪夜发现无署名来信并确认兄长旧暗号真实；"
+                "不得揭示寄信人或兄长生死；结尾由林默主动决定前往旧港，"
+                "情绪保持克制，不直接解释恐惧。"
             ),
             chapter_text=(
                 "雪是在傍晚以后才密起来的。\n\n"

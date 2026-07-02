@@ -18,7 +18,7 @@ from ai_novel_studio.ui.widgets.chat_bubble import ChatBubble
 
 class PlotChatPanel(QFrame):
     message_sent = Signal(str)
-    brief_draft_requested = Signal()
+    chapter_requirement_requested = Signal()
     detach_requested = Signal()
 
     def __init__(
@@ -68,9 +68,10 @@ class PlotChatPanel(QFrame):
         for message in self._messages:
             self._append_bubble(message.role, message.text)
 
-        self.brief_button = QPushButton("生成正式 Brief 草稿", self)
-        self.brief_button.setAccessibleName("根据商讨内容生成正式章节 Brief 草稿")
-        self.brief_button.clicked.connect(self.brief_draft_requested)
+        self.requirement_button = QPushButton("生成当前章要求", self)
+        self.requirement_button.setAccessibleName("把商讨内容整理成正式当前章要求")
+        self.requirement_button.setToolTip("阶段 2 使用演示草稿；阶段 3 由剧情模型生成")
+        self.requirement_button.clicked.connect(self.chapter_requirement_requested)
 
         self.composer = QPlainTextEdit(self)
         self.composer.setObjectName("chatComposer")
@@ -82,7 +83,7 @@ class PlotChatPanel(QFrame):
         self.send_button.setAccessibleName("发送剧情商讨消息")
         self.send_button.clicked.connect(self.send_current_message)
         composer_actions = QHBoxLayout()
-        composer_actions.addWidget(self.brief_button)
+        composer_actions.addWidget(self.requirement_button)
         composer_actions.addStretch(1)
         composer_actions.addWidget(self.send_button)
 

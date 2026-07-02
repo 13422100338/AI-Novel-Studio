@@ -41,6 +41,8 @@ The following Phase 2 interactions are local and intentionally temporary:
 
 - choosing, editing, or deleting a character in the sidebar;
 - editing the sample manuscript and font size;
+- editing and locking Current Chapter Requirement;
+- routing the plot-chat demo action into an unlocked requirement while protecting a locked one;
 - sending a user chat bubble;
 - freezing, marking stale, or cloning the sample Chapter Brief;
 - editing sample memory and AI style-candidate text;
@@ -52,6 +54,8 @@ layout and interaction contracts before application services bind widgets to rep
 ## Deferred controls
 
 - Prose generation is disabled with a Phase 3 tooltip.
+- Plot chat uses a clearly labeled demonstration requirement draft until the Phase 3 model gateway
+  is connected.
 - Audit repair is disabled until a model gateway is present.
 - Model connection fields are previews and cannot store an API key.
 - Token and price chips are labeled demonstration values.

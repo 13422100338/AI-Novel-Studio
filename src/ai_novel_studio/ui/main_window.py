@@ -64,7 +64,9 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.workspace_splitter, 1)
         self.setCentralWidget(surface)
         self.manuscript_panel.brief_requested.connect(self.open_brief_dialog)
-        self.plot_chat_panel.brief_draft_requested.connect(self.open_brief_dialog)
+        self.plot_chat_panel.chapter_requirement_requested.connect(
+            self.apply_plot_requirement_draft
+        )
         self.plot_chat_panel.detach_requested.connect(self.open_detached_chat)
         self.chapter_sidebar.memory_requested.connect(self.open_memory_window)
         self.chapter_sidebar.style_requested.connect(self.open_style_rules_window)
@@ -78,6 +80,9 @@ class MainWindow(QMainWindow):
         self.brief_dialog.show()
         self.brief_dialog.raise_()
         self.brief_dialog.activateWindow()
+
+    def apply_plot_requirement_draft(self) -> None:
+        self.manuscript_panel.apply_requirement_draft(self.data.generated_requirement)
 
     def open_detached_chat(self) -> None:
         if self.detached_chat_window is None:
