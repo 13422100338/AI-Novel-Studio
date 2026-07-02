@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+build/
+dist/
+*.spec.bak
+.privacy-blocklist
+.superpowers/
+*.log
+*.sqlite3
+*.db
+user-projects/
