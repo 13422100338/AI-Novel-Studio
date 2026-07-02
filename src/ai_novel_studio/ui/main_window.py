@@ -10,8 +10,10 @@ from PySide6.QtWidgets import (
 
 from ai_novel_studio.ui.demo_data import WorkspaceDemoData
 from ai_novel_studio.ui.pages.brief_dialog import BriefDialog
+from ai_novel_studio.ui.pages.detached_chat_window import DetachedChatWindow
 from ai_novel_studio.ui.panels.chapter_sidebar import ChapterSidebar
 from ai_novel_studio.ui.panels.manuscript_panel import ManuscriptPanel
+from ai_novel_studio.ui.panels.plot_chat_panel import PlotChatPanel
 from ai_novel_studio.ui.panels.top_bar import TopBar
 from ai_novel_studio.ui.theme import application_stylesheet
 
@@ -26,6 +28,7 @@ class MainWindow(QMainWindow):
 
         self.data = WorkspaceDemoData.sample()
         self.brief_dialog: BriefDialog | None = None
+        self.detached_chat_window: DetachedChatWindow | None = None
         surface = QWidget(self)
         surface.setObjectName("appSurface")
         layout = QVBoxLayout(surface)
@@ -42,10 +45,10 @@ class MainWindow(QMainWindow):
 
         self.chapter_sidebar = ChapterSidebar(self.data, self.workspace_splitter)
         self.manuscript_panel = ManuscriptPanel(self.data, self.workspace_splitter)
-        right = self._placeholder("plotChatPlaceholder", "剧情商讨", 300)
+        self.plot_chat_panel = PlotChatPanel(self.data.messages, self.workspace_splitter)
         self.workspace_splitter.addWidget(self.chapter_sidebar)
         self.workspace_splitter.addWidget(self.manuscript_panel)
-        self.workspace_splitter.addWidget(right)
+        self.workspace_splitter.addWidget(self.plot_chat_panel)
         self.workspace_splitter.setStretchFactor(0, 0)
         self.workspace_splitter.setStretchFactor(1, 1)
         self.workspace_splitter.setStretchFactor(2, 0)
@@ -53,6 +56,8 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.workspace_splitter, 1)
         self.setCentralWidget(surface)
         self.manuscript_panel.brief_requested.connect(self.open_brief_dialog)
+        self.plot_chat_panel.brief_draft_requested.connect(self.open_brief_dialog)
+        self.plot_chat_panel.detach_requested.connect(self.open_detached_chat)
 
     def open_brief_dialog(self) -> None:
         if self.brief_dialog is None:
@@ -60,6 +65,15 @@ class MainWindow(QMainWindow):
         self.brief_dialog.show()
         self.brief_dialog.raise_()
         self.brief_dialog.activateWindow()
+
+    def open_detached_chat(self) -> None:
+        if self.detached_chat_window is None:
+            self.detached_chat_window = DetachedChatWindow(
+                self.plot_chat_panel.message_snapshot(), self
+            )
+        self.detached_chat_window.show()
+        self.detached_chat_window.raise_()
+        self.detached_chat_window.activateWindow()
 
     @staticmethod
     def _placeholder(object_name: str, title: str, minimum_width: int) -> QFrame:
