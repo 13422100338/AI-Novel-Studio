@@ -26,10 +26,22 @@ def test_records_keep_identity_separate_from_editable_metadata() -> None:
     project = Project(new_id(), "Novel", 1, now, now)
     volume = Volume(new_id(), "Volume One", "", 0, now, now)
     chapter = Chapter(
-        new_id(), volume.id, "1", "Opening", "", "manuscript/chapter.md", 0, 0,
-        "pending", False, now, now,
+        new_id(),
+        volume.id,
+        "1",
+        "Opening",
+        "",
+        "manuscript/chapter.md",
+        0,
+        0,
+        "pending",
+        False,
+        now,
+        now,
     )
-    version = ChapterVersion(new_id(), chapter.id, 0, "history/rev-0.md", "manual", "edit", now, "abc")
+    version = ChapterVersion(
+        new_id(), chapter.id, 0, "history/rev-0.md", "manual", "edit", now, "abc"
+    )
 
     assert project.format_version == 1
     assert volume.title == "Volume One"

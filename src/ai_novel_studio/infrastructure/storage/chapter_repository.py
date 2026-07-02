@@ -24,9 +24,17 @@ def _parse_time(value: str) -> datetime:
 
 def _chapter_from_row(row: sqlite3.Row) -> Chapter:
     return Chapter(
-        row["id"], row["volume_id"], row["declared_number"], row["title"],
-        row["synopsis"], row["content_path"], row["sort_index"], row["revision"],
-        row["memory_status"], bool(row["is_deleted"]), _parse_time(row["created_at"]),
+        row["id"],
+        row["volume_id"],
+        row["declared_number"],
+        row["title"],
+        row["synopsis"],
+        row["content_path"],
+        row["sort_index"],
+        row["revision"],
+        row["memory_status"],
+        bool(row["is_deleted"]),
+        _parse_time(row["created_at"]),
         _parse_time(row["updated_at"]),
     )
 
@@ -54,7 +62,9 @@ class ChapterRepository:
         connection = self.project.database.connect()
         try:
             with connection:
-                exists = connection.execute("SELECT 1 FROM volumes WHERE id = ?", (volume_id,)).fetchone()
+                exists = connection.execute(
+                    "SELECT 1 FROM volumes WHERE id = ?", (volume_id,)
+                ).fetchone()
                 if exists is None:
                     raise KeyError(f"unknown volume: {volume_id}")
                 sort_index = int(
@@ -73,8 +83,16 @@ class ChapterRepository:
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 'pending', 0, NULL, ?, ?)
                     """,
                     (
-                        chapter_id, volume_id, declared_number, title.strip(), synopsis,
-                        relative.as_posix(), _hash(content), sort_index, now.isoformat(), now.isoformat(),
+                        chapter_id,
+                        volume_id,
+                        declared_number,
+                        title.strip(),
+                        synopsis,
+                        relative.as_posix(),
+                        _hash(content),
+                        sort_index,
+                        now.isoformat(),
+                        now.isoformat(),
                     ),
                 )
         except BaseException:
@@ -121,15 +139,15 @@ class ChapterRepository:
         chapter = self.get_chapter(chapter_id, include_deleted=False)
         return (self.project.layout.root / chapter.content_path).read_text(encoding="utf-8")
 
-    def save_content(
-        self, chapter_id: str, content: str, *, source: str, reason: str
-    ) -> Chapter:
+    def save_content(self, chapter_id: str, content: str, *, source: str, reason: str) -> Chapter:
         chapter = self.get_chapter(chapter_id, include_deleted=False)
         canonical = self.project.layout.root / chapter.content_path
         previous = canonical.read_text(encoding="utf-8")
         version_id = new_id()
         snapshot_relative = (
-            Path(".ai_pipeline") / "history" / chapter.id
+            Path(".ai_pipeline")
+            / "history"
+            / chapter.id
             / f"revision_{chapter.revision}_{version_id}.md"
         )
         snapshot = self.project.layout.root / snapshot_relative
@@ -144,8 +162,14 @@ class ChapterRepository:
                     INSERT INTO chapter_versions VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
-                        version_id, chapter.id, chapter.revision, snapshot_relative.as_posix(),
-                        source, reason, now.isoformat(), _hash(previous),
+                        version_id,
+                        chapter.id,
+                        chapter.revision,
+                        snapshot_relative.as_posix(),
+                        source,
+                        reason,
+                        now.isoformat(),
+                        _hash(previous),
                     ),
                 )
                 cursor = connection.execute(
@@ -171,14 +195,21 @@ class ChapterRepository:
         connection = self.project.database.connect()
         try:
             rows = connection.execute(
-                "SELECT * FROM chapter_versions WHERE chapter_id = ? ORDER BY revision", (chapter_id,)
+                "SELECT * FROM chapter_versions WHERE chapter_id = ? ORDER BY revision",
+                (chapter_id,),
             ).fetchall()
         finally:
             connection.close()
         return [
             ChapterVersion(
-                row["id"], row["chapter_id"], row["revision"], row["content_snapshot_path"],
-                row["source"], row["reason"], _parse_time(row["created_at"]), row["content_hash"],
+                row["id"],
+                row["chapter_id"],
+                row["revision"],
+                row["content_snapshot_path"],
+                row["source"],
+                row["reason"],
+                _parse_time(row["created_at"]),
+                row["content_hash"],
             )
             for row in rows
         ]
@@ -186,7 +217,9 @@ class ChapterRepository:
     def delete_chapter(self, chapter_id: str) -> None:
         chapter = self.get_chapter(chapter_id, include_deleted=False)
         canonical = self.project.layout.root / chapter.content_path
-        trash_relative = Path(".ai_pipeline") / "trash" / f"chapter_{chapter.id}_r{chapter.revision}.md"
+        trash_relative = (
+            Path(".ai_pipeline") / "trash" / f"chapter_{chapter.id}_r{chapter.revision}.md"
+        )
         trash = self.project.layout.root / trash_relative
         trash.parent.mkdir(parents=True, exist_ok=True)
         os.replace(canonical, trash)
@@ -223,7 +256,8 @@ class ChapterRepository:
             try:
                 with connection:
                     connection.execute(
-                        "UPDATE chapters SET is_deleted = 0, deleted_content_path = NULL, updated_at = ? "
+                        "UPDATE chapters SET is_deleted = 0, deleted_content_path = NULL, "
+                        "updated_at = ? "
                         "WHERE id = ?",
                         (_now().isoformat(), chapter.id),
                     )
@@ -247,30 +281,39 @@ class ChapterRepository:
                 target_exists = connection.execute(
                     "SELECT 1 FROM volumes WHERE id = ?", (target_volume_id,)
                 ).fetchone()
-                source_exists = connection.execute("SELECT 1 FROM volumes WHERE id = ?", (volume_id,)).fetchone()
+                source_exists = connection.execute(
+                    "SELECT 1 FROM volumes WHERE id = ?", (volume_id,)
+                ).fetchone()
                 if target_exists is None or source_exists is None:
                     raise KeyError("source or target volume does not exist")
                 next_index = int(
                     connection.execute(
                         "SELECT COALESCE(MAX(sort_index), -1) + 1 FROM chapters "
-                        "WHERE volume_id = ? AND is_deleted = 0", (target_volume_id,),
+                        "WHERE volume_id = ? AND is_deleted = 0",
+                        (target_volume_id,),
                     ).fetchone()[0]
                 )
                 for offset, chapter in enumerate(moving):
                     old_path = self.project.layout.root / chapter.content_path
                     new_relative = (
-                        Path("manuscript") / f"volume_{target_volume_id}" / f"chapter_{chapter.id}.md"
+                        Path("manuscript")
+                        / f"volume_{target_volume_id}"
+                        / f"chapter_{chapter.id}.md"
                     )
                     new_path = self.project.layout.root / new_relative
                     new_path.parent.mkdir(parents=True, exist_ok=True)
                     os.replace(old_path, new_path)
                     moved_paths.append((old_path, new_path))
                     connection.execute(
-                        "UPDATE chapters SET volume_id = ?, content_path = ?, sort_index = ?, updated_at = ? "
+                        "UPDATE chapters SET volume_id = ?, content_path = ?, sort_index = ?, "
+                        "updated_at = ? "
                         "WHERE id = ?",
                         (
-                            target_volume_id, new_relative.as_posix(), next_index + offset,
-                            _now().isoformat(), chapter.id,
+                            target_volume_id,
+                            new_relative.as_posix(),
+                            next_index + offset,
+                            _now().isoformat(),
+                            chapter.id,
                         ),
                     )
                 connection.execute("DELETE FROM volumes WHERE id = ?", (volume_id,))

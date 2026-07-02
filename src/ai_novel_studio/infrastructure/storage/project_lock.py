@@ -1,7 +1,6 @@
 import json
 import os
 from datetime import UTC, datetime
-from pathlib import Path
 
 from ai_novel_studio.infrastructure.storage.project_layout import ProjectLayout
 

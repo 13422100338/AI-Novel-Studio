@@ -44,7 +44,13 @@ class ProjectRepository:
             with connection:
                 connection.execute(
                     "INSERT INTO projects VALUES (?, ?, ?, ?, ?)",
-                    (project.id, project.title, project.format_version, now.isoformat(), now.isoformat()),
+                    (
+                        project.id,
+                        project.title,
+                        project.format_version,
+                        now.isoformat(),
+                        now.isoformat(),
+                    ),
                 )
                 volume_id = new_id()
                 connection.execute(
@@ -73,7 +79,9 @@ class ProjectRepository:
         database = Database(layout.database)
         with database.connect() as connection:
             MigrationManager(connection).migrate()
-            row = connection.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
+            row = connection.execute(
+                "SELECT * FROM projects WHERE id = ?", (project_id,)
+            ).fetchone()
         if row is None:
             raise RuntimeError("project manifest identity is absent from database")
         project = Project(
@@ -90,8 +98,12 @@ class ProjectRepository:
             rows = connection.execute("SELECT * FROM volumes ORDER BY sort_index, id").fetchall()
         return [
             Volume(
-                row["id"], row["title"], row["synopsis"], row["sort_index"],
-                _parse_time(row["created_at"]), _parse_time(row["updated_at"]),
+                row["id"],
+                row["title"],
+                row["synopsis"],
+                row["sort_index"],
+                _parse_time(row["created_at"]),
+                _parse_time(row["updated_at"]),
             )
             for row in rows
         ]
@@ -102,14 +114,20 @@ class ProjectRepository:
         now = _now()
         with self.database.connect() as connection, connection:
             sort_index = int(
-                connection.execute("SELECT COALESCE(MAX(sort_index), -1) + 1 FROM volumes").fetchone()[0]
+                connection.execute(
+                    "SELECT COALESCE(MAX(sort_index), -1) + 1 FROM volumes"
+                ).fetchone()[0]
             )
             volume = Volume(new_id(), title.strip(), synopsis, sort_index, now, now)
             connection.execute(
                 "INSERT INTO volumes VALUES (?, ?, ?, ?, ?, ?)",
                 (
-                    volume.id, volume.title, volume.synopsis, volume.sort_index,
-                    now.isoformat(), now.isoformat(),
+                    volume.id,
+                    volume.title,
+                    volume.synopsis,
+                    volume.sort_index,
+                    now.isoformat(),
+                    now.isoformat(),
                 ),
             )
         return volume

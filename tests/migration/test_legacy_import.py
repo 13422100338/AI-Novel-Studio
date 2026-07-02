@@ -12,8 +12,7 @@ from ai_novel_studio.infrastructure.storage.project_repository import ProjectRep
 def _write_docx(path: Path, paragraphs: list[str]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     runs = "".join(
-        f'<w:p><w:r><w:t xml:space="preserve">{text}</w:t></w:r></w:p>'
-        for text in paragraphs
+        f'<w:p><w:r><w:t xml:space="preserve">{text}</w:t></w:r></w:p>' for text in paragraphs
     )
     document = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
@@ -90,9 +89,10 @@ def test_import_is_read_only_and_writes_verified_markdown_report(tmp_path: Path)
     chapters = ChapterRepository(project).list_chapters()
     assert len(chapters) == 1
     assert ChapterRepository(project).read_content(chapters[0].id) == "# 第一章\n正文内容"
-    assert report.chapter_hashes[chapters[0].id] == hashlib.sha256(
-        "# 第一章\n正文内容".encode()
-    ).hexdigest()
+    assert (
+        report.chapter_hashes[chapters[0].id]
+        == hashlib.sha256("# 第一章\n正文内容".encode()).hexdigest()
+    )
     report_files = list(project.layout.reports.glob("*.json"))
     assert len(report_files) == 1
     serialized = report_files[0].read_text(encoding="utf-8")

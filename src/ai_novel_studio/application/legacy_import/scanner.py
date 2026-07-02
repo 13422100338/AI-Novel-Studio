@@ -40,16 +40,16 @@ class LegacyProjectScanner:
             for chapter_index, chapter_data in enumerate(
                 _list_of_dicts(volume_data.get("chapters"))
             ):
-                chapter_title = str(
-                    chapter_data.get("name") or f"未命名章 {chapter_index + 1}"
-                )
+                chapter_title = str(chapter_data.get("name") or f"未命名章 {chapter_index + 1}")
                 relative = Path(title) / f"{chapter_title}.docx"
                 document_path = source_root / relative
                 source_hash: str | None = None
                 if not document_path.is_file():
                     issues.append(
                         MigrationIssue(
-                            "document_missing", "legacy chapter document is missing", relative.as_posix()
+                            "document_missing",
+                            "legacy chapter document is missing",
+                            relative.as_posix(),
                         )
                     )
                 else:
@@ -59,7 +59,8 @@ class LegacyProjectScanner:
                     except (LegacyDocumentError, OSError):
                         issues.append(
                             MigrationIssue(
-                                "document_corrupt", "legacy chapter document is unreadable",
+                                "document_corrupt",
+                                "legacy chapter document is unreadable",
                                 relative.as_posix(),
                             )
                         )

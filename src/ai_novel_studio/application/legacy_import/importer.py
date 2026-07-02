@@ -41,7 +41,9 @@ class LegacyProjectImporter:
                     if current_hash != chapter.source_hash:
                         issues.append(
                             MigrationIssue(
-                                "source_changed", "document changed after migration preview", chapter.source
+                                "source_changed",
+                                "document changed after migration preview",
+                                chapter.source,
                             )
                         )
                         continue
@@ -49,7 +51,9 @@ class LegacyProjectImporter:
                 except (OSError, LegacyDocumentError):
                     issues.append(
                         MigrationIssue(
-                            "document_unreadable", "document became unreadable during import", chapter.source
+                            "document_unreadable",
+                            "document became unreadable during import",
+                            chapter.source,
                         )
                     )
                     continue

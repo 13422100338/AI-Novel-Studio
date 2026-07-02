@@ -32,7 +32,8 @@ class IntegrityChecker:
             if database_result != "ok":
                 issues.append(IntegrityIssue("database_integrity", database_result))
             rows = connection.execute(
-                "SELECT id, content_path, content_hash FROM chapters WHERE is_deleted = 0 ORDER BY id"
+                "SELECT id, content_path, content_hash FROM chapters "
+                "WHERE is_deleted = 0 ORDER BY id"
             ).fetchall()
             version_rows = connection.execute(
                 "SELECT id, content_snapshot_path, content_hash FROM chapter_versions ORDER BY id"
@@ -61,7 +62,9 @@ class IntegrityChecker:
             path = self._project.layout.root / row["content_snapshot_path"]
             if not path.is_file():
                 issues.append(
-                    IntegrityIssue("version_snapshot_missing", "chapter version is missing", row["id"])
+                    IntegrityIssue(
+                        "version_snapshot_missing", "chapter version is missing", row["id"]
+                    )
                 )
                 continue
             if hashlib.sha256(path.read_bytes()).hexdigest() != row["content_hash"]:
