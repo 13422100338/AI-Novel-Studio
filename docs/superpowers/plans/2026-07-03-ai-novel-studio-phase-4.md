@@ -164,12 +164,12 @@
 - `MemoryWorkspaceService` loads reviewed current memory, stale dependencies, compressed summaries, knowledge timelines, clues, canon, and source metadata for a chapter boundary; edits call repositories explicitly.
 - `MemoryWindow.bind(service, before_chapter_id)` displays source/revision/authority/review status, permits user edits and promotion, and never silently promotes AI output.
 
-- [ ] Write failing tests for prompt/source order, contract rejection, candidate-only behavior, locked-record protection, chapter-boundary display, direct user edits, review/promotion, and stale warnings.
-- [ ] Run focused tests and confirm missing services/UI behavior.
-- [ ] Implement extraction contracts and review application services.
-- [ ] Bind the existing memory page through injected services while retaining offline demo compatibility.
-- [ ] Run focused tests and full suite.
-- [ ] Commit `feat: connect phase 4 memory review workspace`.
+- [x] Write failing tests for prompt/source order, contract rejection, candidate-only behavior, locked-record protection, chapter-boundary display, direct user edits, review/promotion, and stale warnings.
+- [x] Run focused tests and confirm missing services/UI behavior.
+- [x] Implement extraction contracts and review application services.
+- [x] Bind the existing memory page through injected services while retaining offline demo compatibility.
+- [x] Run focused tests and full suite.
+- [x] Commit `feat: connect phase 4 memory review workspace`.
 
 ### Task 8: Documentation, pressure checks, Windows build, and Desktop sync
 
