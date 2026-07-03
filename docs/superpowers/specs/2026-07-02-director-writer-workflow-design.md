@@ -282,5 +282,11 @@ The implementation plans for Phases 2 through 8 must cover:
 - Phase 8: long-project, contamination, knowledge leakage, provenance, concurrency, and recovery
   pressure tests.
 
+Phase 3 was implemented on 2026-07-03 with provider-neutral routing, OpenAI-compatible relay
+support, Windows credential storage, model discovery and opt-in capability probes, streamed plot
+discussion, Current Chapter Requirement drafting, Brief normalization, style audit, contract
+validation, bounded retries, partial-output preservation, and usage accounting. It intentionally
+does not enable the Phase 5 prose pipeline or the Phase 6 repair workflow.
+
 Phase 1 storage remains valid. Later schema additions must use new idempotent migrations and must not
 rewrite or discard Phase 1 project data.

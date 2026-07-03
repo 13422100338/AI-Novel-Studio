@@ -1,4 +1,8 @@
+import tomllib
 from importlib import import_module
+from pathlib import Path
+
+import ai_novel_studio
 
 
 def test_planned_package_boundaries_are_importable() -> None:
@@ -53,3 +57,11 @@ def test_phase_one_modules_are_importable() -> None:
 
     for module in modules:
         assert import_module(module) is not None
+
+
+def test_phase_three_package_version_matches_build_metadata() -> None:
+    root = Path(__file__).parents[1]
+    metadata = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+
+    assert ai_novel_studio.__version__ == "0.3.0"
+    assert metadata["project"]["version"] == ai_novel_studio.__version__
