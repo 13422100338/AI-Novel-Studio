@@ -59,9 +59,9 @@ def test_phase_one_modules_are_importable() -> None:
         assert import_module(module) is not None
 
 
-def test_phase_three_package_version_matches_build_metadata() -> None:
+def test_phase_four_package_version_matches_build_metadata() -> None:
     root = Path(__file__).parents[1]
     metadata = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
 
-    assert ai_novel_studio.__version__ == "0.3.0"
+    assert ai_novel_studio.__version__ == "0.4.0"
     assert metadata["project"]["version"] == ai_novel_studio.__version__

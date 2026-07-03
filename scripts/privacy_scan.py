@@ -10,6 +10,7 @@ EXCLUDED_DIRS = {
     ".mypy_cache",
     ".pytest_cache",
     ".ruff_cache",
+    ".test-temp",
     ".venv",
     "__pycache__",
     "build",

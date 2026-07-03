@@ -39,6 +39,16 @@ def test_scan_tree_ignores_python_cache_directories(tmp_path: Path) -> None:
     assert scan_tree(tmp_path, ("Private Person",)) == []
 
 
+def test_scan_tree_ignores_controlled_test_temp_directory(tmp_path: Path) -> None:
+    test_temp = tmp_path / ".test-temp" / "pytest-run"
+    test_temp.mkdir(parents=True)
+    (test_temp / "fixture.md").write_text(
+        "C:\\Users\\private-user and Private Person", encoding="utf-8"
+    )
+
+    assert scan_tree(tmp_path, ("Private Person",)) == []
+
+
 def test_scan_tree_ignores_upstream_build_paths_in_binary_files(tmp_path: Path) -> None:
     binary = tmp_path / "library.dll"
     binary.write_bytes(b"built under C:\\Users\\Administrator\\source")

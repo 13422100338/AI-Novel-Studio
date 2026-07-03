@@ -290,3 +290,15 @@ does not enable the Phase 5 prose pipeline or the Phase 6 repair workflow.
 
 Phase 1 storage remains valid. Later schema additions must use new idempotent migrations and must not
 rewrite or discard Phase 1 project data.
+
+## Phase 4 implementation note
+
+Phase 4 was implemented on 2026-07-03. It adds schema v2 memory records, append-only character and
+knowledge timelines, typed clue and canon ledgers, L0-L4 summaries, layered style retrieval, FTS5
+history search, dependency invalidation, deterministic Token budgeting, and reviewable Context
+Manifests. Current and future chapter evidence is excluded by stable volume/chapter order.
+
+Model memory extraction now validates both the top-level JSON contract and every nested candidate.
+All extracted records remain `MODEL_EXTRACTED/REVIEW`; the memory workspace exposes separate edit
+and promotion intents and blocks locked records before a storage mutation is attempted. These
+interfaces do not activate prose generation, frozen Briefs, automatic repair, or Agent tool calls.
