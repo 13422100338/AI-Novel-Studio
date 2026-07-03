@@ -95,7 +95,7 @@ git commit -m "feat: add phase 5 generation schema"
 - `apply_model_candidate(chapter_id, content, expected_revision) -> ChapterRequirement`
 - User saves may explicitly lock/unlock; model candidates reject locked requirements and stale revisions.
 
-- [ ] **Step 1: Write failing tests** for first creation, content hash, user lock/unlock, optimistic revision, model candidate protection, empty content rejection, and chapter identity by UUID rather than title/number.
+- [x] **Step 1: Write failing tests** for first creation, content hash, user lock/unlock, optimistic revision, model candidate protection, empty content rejection, and chapter identity by UUID rather than title/number.
 
 ```python
 locked = service.save_user(chapter.id, "必须收到来信", True, expected_revision=0)
@@ -103,13 +103,13 @@ with pytest.raises(LockedRequirementError):
     service.apply_model_candidate(chapter.id, "覆盖要求", expected_revision=locked.revision)
 ```
 
-- [ ] **Step 2: Run focused tests and verify RED.**
+- [x] **Step 2: Run focused tests and verify RED.**
 
 ```powershell
 .venv\Scripts\python.exe -m pytest tests\integration\generation\test_chapter_requirement.py -q -p no:cacheprovider --basetemp .test-temp\phase5-task2-red
 ```
 
-- [ ] **Step 3: Implement repository transactions and application protection.** Hash normalized UTF-8 content with SHA-256; update with `WHERE revision = ?`; never let model calls unlock a requirement.
+- [x] **Step 3: Implement repository transactions and application protection.** Hash normalized UTF-8 content with SHA-256; update with `WHERE revision = ?`; never let model calls unlock a requirement.
 
 ```python
 cursor = connection.execute(
@@ -118,7 +118,7 @@ cursor = connection.execute(
 )
 ```
 
-- [ ] **Step 4: Run focused and full gates.**
+- [x] **Step 4: Run focused and full gates.**
 
 ```powershell
 .venv\Scripts\python.exe -m pytest tests\integration\generation\test_chapter_requirement.py -q -p no:cacheprovider --basetemp .test-temp\phase5-task2-green
@@ -127,7 +127,7 @@ cursor = connection.execute(
 .venv\Scripts\python.exe -m mypy src
 ```
 
-- [ ] **Step 5: Commit.**
+- [x] **Step 5: Commit.**
 
 ```powershell
 git add src/ai_novel_studio/infrastructure/storage/chapter_requirement_repository.py src/ai_novel_studio/application/chapter_requirement_service.py tests/integration/generation/test_chapter_requirement.py

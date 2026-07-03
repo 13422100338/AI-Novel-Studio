@@ -63,7 +63,6 @@ class ChapterRequirement:
     def __post_init__(self) -> None:
         object.__setattr__(self, "id", _required(self.id, "id"))
         object.__setattr__(self, "chapter_id", _required(self.chapter_id, "chapter_id"))
-        object.__setattr__(self, "content", _required(self.content, "content"))
         object.__setattr__(self, "content_hash", _required(self.content_hash, "content_hash"))
         _non_negative(self.revision, "revision")
 
