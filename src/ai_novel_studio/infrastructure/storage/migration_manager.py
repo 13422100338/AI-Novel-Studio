@@ -1,7 +1,7 @@
 import sqlite3
 from collections.abc import Callable
 
-LATEST_SCHEMA_VERSION = 2
+LATEST_SCHEMA_VERSION = 3
 
 
 def _migration_1(connection: sqlite3.Connection) -> None:
@@ -274,9 +274,118 @@ def _migration_2(connection: sqlite3.Connection) -> None:
         connection.execute(statement)
 
 
+def _migration_3(connection: sqlite3.Connection) -> None:
+    statements = (
+        """
+        CREATE TABLE chapter_requirements (
+            id TEXT PRIMARY KEY,
+            chapter_id TEXT NOT NULL UNIQUE REFERENCES chapters(id),
+            content TEXT NOT NULL,
+            is_locked INTEGER NOT NULL CHECK(is_locked IN (0, 1)),
+            revision INTEGER NOT NULL DEFAULT 0 CHECK(revision >= 0),
+            content_hash TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """,
+        """
+        CREATE TABLE chapter_briefs (
+            id TEXT PRIMARY KEY,
+            chapter_id TEXT NOT NULL REFERENCES chapters(id),
+            mode TEXT NOT NULL CHECK(mode IN ('BASIC', 'STANDARD', 'STRICT')),
+            status TEXT NOT NULL CHECK(status IN ('DRAFT', 'FROZEN', 'STALE', 'ARCHIVED')),
+            revision INTEGER NOT NULL DEFAULT 0 CHECK(revision >= 0),
+            dramatic_purpose TEXT NOT NULL,
+            target_length INTEGER NOT NULL CHECK(target_length > 0),
+            story_date TEXT NOT NULL DEFAULT '',
+            pov_character_id TEXT,
+            hard_events_json TEXT NOT NULL DEFAULT '[]',
+            soft_goals_json TEXT NOT NULL DEFAULT '[]',
+            prohibited_changes_json TEXT NOT NULL DEFAULT '[]',
+            creative_freedom_json TEXT NOT NULL DEFAULT '[]',
+            participants_json TEXT NOT NULL DEFAULT '[]',
+            knowledge_json TEXT NOT NULL DEFAULT '[]',
+            clue_actions_json TEXT NOT NULL DEFAULT '[]',
+            style_rules_json TEXT NOT NULL DEFAULT '[]',
+            warnings_json TEXT NOT NULL DEFAULT '[]',
+            source_fingerprint TEXT NOT NULL,
+            content_hash TEXT NOT NULL,
+            cloned_from_id TEXT REFERENCES chapter_briefs(id),
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            frozen_at TEXT
+        )
+        """,
+        """
+        CREATE TABLE brief_sources (
+            id TEXT PRIMARY KEY,
+            brief_id TEXT NOT NULL REFERENCES chapter_briefs(id),
+            source_type TEXT NOT NULL,
+            source_id TEXT NOT NULL,
+            source_revision INTEGER NOT NULL CHECK(source_revision >= 0),
+            source_hash TEXT NOT NULL,
+            required INTEGER NOT NULL CHECK(required IN (0, 1)),
+            UNIQUE(brief_id, source_type, source_id)
+        )
+        """,
+        """
+        CREATE TABLE generation_runs (
+            id TEXT PRIMARY KEY,
+            chapter_id TEXT NOT NULL REFERENCES chapters(id),
+            mode TEXT NOT NULL CHECK(mode IN ('BASIC', 'STANDARD', 'STRICT')),
+            status TEXT NOT NULL CHECK(status IN (
+                'PREPARING', 'READY', 'STREAMING', 'PARTIAL',
+                'COMPLETED', 'FAILED', 'ACCEPTED', 'DISCARDED'
+            )),
+            brief_id TEXT REFERENCES chapter_briefs(id),
+            brief_revision INTEGER CHECK(brief_revision >= 0),
+            context_manifest_id TEXT REFERENCES context_manifests(id),
+            model_provider_id TEXT NOT NULL,
+            model_id TEXT NOT NULL,
+            output_token_limit INTEGER NOT NULL CHECK(output_token_limit > 0),
+            prompt_version TEXT NOT NULL,
+            accepted_chapter_revision INTEGER CHECK(accepted_chapter_revision >= 0),
+            input_tokens INTEGER CHECK(input_tokens >= 0),
+            output_tokens INTEGER CHECK(output_tokens >= 0),
+            cached_input_tokens INTEGER CHECK(cached_input_tokens >= 0),
+            reasoning_tokens INTEGER CHECK(reasoning_tokens >= 0),
+            failure_code TEXT,
+            failure_message TEXT,
+            started_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            completed_at TEXT,
+            accepted_at TEXT
+        )
+        """,
+        """
+        CREATE TABLE generation_checkpoints (
+            id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL REFERENCES generation_runs(id),
+            sequence INTEGER NOT NULL CHECK(sequence >= 0),
+            text_path TEXT NOT NULL UNIQUE,
+            content_hash TEXT NOT NULL,
+            finish_reason TEXT,
+            created_at TEXT NOT NULL,
+            UNIQUE(run_id, sequence)
+        )
+        """,
+        "CREATE INDEX chapter_briefs_status ON chapter_briefs(chapter_id, status, revision)",
+        "CREATE INDEX brief_sources_lookup ON brief_sources(source_type, source_id)",
+        "CREATE INDEX generation_runs_chapter ON generation_runs(chapter_id, started_at)",
+        """
+        CREATE UNIQUE INDEX generation_one_active_writer
+        ON generation_runs(chapter_id)
+        WHERE status IN ('PREPARING', 'READY', 'STREAMING')
+        """,
+    )
+    for statement in statements:
+        connection.execute(statement)
+
+
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     1: _migration_1,
     2: _migration_2,
+    3: _migration_3,
 }
 
 

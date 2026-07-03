@@ -36,7 +36,7 @@
 - Produce immutable `ChapterRequirement`、`ChapterBrief`、`BriefSource`、`GenerationRun`、`GenerationCheckpoint` records。
 - Migration 3 creates `chapter_requirements`、`chapter_briefs`、`brief_sources`、`generation_runs`、`generation_checkpoints` and partial unique index `generation_one_active_writer`。
 
-- [ ] **Step 1: Write failing domain and migration tests** proving enum values, immutable records, non-negative revisions/Token usage, schema version 3, unique requirement per chapter, unique source/checkpoint keys, active-writer partial index, idempotence, and preservation of Phase 1–4 rows.
+- [x] **Step 1: Write failing domain and migration tests** proving enum values, immutable records, non-negative revisions/Token usage, schema version 3, unique requirement per chapter, unique source/checkpoint keys, active-writer partial index, idempotence, and preservation of Phase 1–4 rows.
 
 ```python
 def test_schema_v3_preserves_existing_chapter_and_limits_active_writer(project):
@@ -45,7 +45,7 @@ def test_schema_v3_preserves_existing_chapter_and_limits_active_writer(project):
         insert_second_streaming_run_for_same_chapter(project)
 ```
 
-- [ ] **Step 2: Run the focused tests and verify RED.**
+- [x] **Step 2: Run the focused tests and verify RED.**
 
 ```powershell
 .venv\Scripts\python.exe -m pytest tests\unit\domain\test_generation_records.py tests\integration\storage\test_generation_schema.py -q -p no:cacheprovider --basetemp .test-temp\phase5-task1-red
@@ -53,7 +53,7 @@ def test_schema_v3_preserves_existing_chapter_and_limits_active_writer(project):
 
 Expected: missing `ai_novel_studio.domain.generation` and schema version remains 2.
 
-- [ ] **Step 3: Implement domain records and migration 3** without altering migrations 1–2. Use database checks for enum text, non-negative revisions/usage, foreign keys, and the active-run partial unique index.
+- [x] **Step 3: Implement domain records and migration 3** without altering migrations 1–2. Use database checks for enum text, non-negative revisions/usage, foreign keys, and the active-run partial unique index.
 
 ```python
 class GenerationStatus(StrEnum):
@@ -67,7 +67,7 @@ class GenerationStatus(StrEnum):
     DISCARDED = "DISCARDED"
 ```
 
-- [ ] **Step 4: Run focused tests, full pytest, Ruff, and mypy.**
+- [x] **Step 4: Run focused tests, full pytest, Ruff, and mypy.**
 
 ```powershell
 .venv\Scripts\python.exe -m pytest -q -p no:cacheprovider --basetemp .test-temp\phase5-task1-full
@@ -75,7 +75,7 @@ class GenerationStatus(StrEnum):
 .venv\Scripts\python.exe -m mypy src
 ```
 
-- [ ] **Step 5: Commit.**
+- [x] **Step 5: Commit.**
 
 ```powershell
 git add src/ai_novel_studio/domain/generation.py src/ai_novel_studio/infrastructure/storage/migration_manager.py tests/unit/domain/test_generation_records.py tests/integration/storage/test_generation_schema.py

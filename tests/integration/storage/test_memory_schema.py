@@ -80,7 +80,7 @@ def test_schema_v2_adds_memory_tables_and_preserves_existing_chapters(tmp_path) 
         connection.close()
 
     assert chapter_title == "旧章"
-    assert version == 2 == LATEST_SCHEMA_VERSION
+    assert version == LATEST_SCHEMA_VERSION
     assert EXPECTED_TABLES <= tables
 
 
