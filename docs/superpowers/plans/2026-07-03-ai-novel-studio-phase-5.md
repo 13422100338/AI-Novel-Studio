@@ -202,7 +202,7 @@ git commit -m "feat: add reviewable chapter brief lifecycle"
 - `ChapterBriefCompiler.compile(request) -> CompiledBrief` stores a `DRAFT` and complete source snapshots.
 - Compiler returns explicit `BriefConflict` values; it never guesses among same-authority canon/state conflicts.
 
-- [ ] **Step 1: Write failing tests** proving source order, current/future exclusion, requirement priority, character/reader knowledge separation, active clue actions, layered style inclusion, source revision/hash capture, missing required source warnings, and conflict-blocked freeze.
+- [x] **Step 1: Write failing tests** proving source order, current/future exclusion, requirement priority, character/reader knowledge separation, active clue actions, layered style inclusion, source revision/hash capture, missing required source warnings, and conflict-blocked freeze.
 
 ```python
 compiled = compiler.compile(request)
@@ -210,13 +210,13 @@ assert compiled.sources[0].source_type == "CHAPTER_REQUIREMENT"
 assert future_knowledge.id not in {source.source_id for source in compiled.sources}
 ```
 
-- [ ] **Step 2: Run focused tests and verify RED.**
+- [x] **Step 2: Run focused tests and verify RED.**
 
 ```powershell
 .venv\Scripts\python.exe -m pytest tests\integration\generation\test_chapter_brief_compiler.py -q -p no:cacheprovider --basetemp .test-temp\phase5-task4-red
 ```
 
-- [ ] **Step 3: Implement the provider and compiler** by composing existing requirement, character, knowledge, narrative, style, summary, and search repositories. Keep query logic in repositories/provider; compiler only assembles and validates.
+- [x] **Step 3: Implement the provider and compiler** by composing existing requirement, character, knowledge, narrative, style, summary, and search repositories. Keep query logic in repositories/provider; compiler only assembles and validates.
 
 ```python
 sources = (
@@ -229,7 +229,7 @@ sources = (
 )
 ```
 
-- [ ] **Step 4: Run focused/full tests and static gates.**
+- [x] **Step 4: Run focused/full tests and static gates.**
 
 ```powershell
 .venv\Scripts\python.exe -m pytest -q -p no:cacheprovider --basetemp .test-temp\phase5-task4-full
@@ -237,7 +237,7 @@ sources = (
 .venv\Scripts\python.exe -m mypy src
 ```
 
-- [ ] **Step 5: Commit.**
+- [x] **Step 5: Commit.**
 
 ```powershell
 git add src/ai_novel_studio/application/chapter_brief_compiler.py src/ai_novel_studio/application/brief_context_provider.py tests/integration/generation/test_chapter_brief_compiler.py

@@ -56,6 +56,8 @@ class BriefLifecycleService:
             raise BriefValidationError("Brief 来源已经变化，请克隆或重新编译后再冻结")
         if not brief.hard_events and not brief.dramatic_purpose.strip():
             raise BriefValidationError("Brief 必须包含戏剧功能或必须事件")
+        if any(warning.startswith("MISSING_REQUIRED:") for warning in brief.warnings):
+            raise BriefValidationError("Brief 仍有必需来源缺失")
         if any(warning.startswith("CONFLICT:") for warning in brief.warnings):
             raise BriefValidationError("Brief 仍有未解决冲突")
         return self.repository.freeze(brief_id, expected_revision=expected_revision)
