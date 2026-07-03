@@ -78,12 +78,12 @@
 - Locked human Misdirection/Open Question/Atmospheric Hint records reject model mutation.
 - `StyleRetriever.for_task(book_id, scene_scope, character_ids, chapter_id)` compiles BOOK, GENRE_OR_SCENE, CHARACTER, and CHAPTER layers in authority order and keeps human samples immutable.
 
-- [ ] Write failing tests for canon authority, conflict reporting, clue type protection, action history, active-at-chapter filtering, layered style precedence, occurrence limits, and immutable human samples.
-- [ ] Run focused tests and confirm missing repositories.
-- [ ] Implement ledgers with explicit candidate/confirmed transitions and no model overwrite path.
-- [ ] Implement style retrieval without merging AI annotations into source samples.
-- [ ] Run focused tests and full suite.
-- [ ] Commit `feat: add canon clue and layered style ledgers`.
+- [x] Write failing tests for canon authority, conflict reporting, clue type protection, action history, active-at-chapter filtering, layered style precedence, occurrence limits, and immutable human samples.
+- [x] Run focused tests and confirm missing repositories.
+- [x] Implement ledgers with explicit candidate/confirmed transitions and no model overwrite path.
+- [x] Implement style retrieval without merging AI annotations into source samples.
+- [x] Run focused tests and full suite.
+- [x] Commit `feat: add canon clue and layered style ledgers`.
 
 ### Task 4: Layered summaries, candidate promotion, and invalidation
 
