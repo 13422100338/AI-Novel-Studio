@@ -4,7 +4,10 @@ from pathlib import Path
 
 import pytest
 
-from ai_novel_studio.infrastructure.storage.migration_manager import MigrationManager
+from ai_novel_studio.infrastructure.storage.migration_manager import (
+    LATEST_SCHEMA_VERSION,
+    MigrationManager,
+)
 from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
 
 
@@ -37,8 +40,8 @@ def test_schema_migration_is_idempotent(tmp_path: Path) -> None:
         version = connection.execute("PRAGMA user_version").fetchone()[0]
         rows = connection.execute("SELECT version FROM schema_migrations").fetchall()
 
-    assert version == 1
-    assert [row[0] for row in rows] == [1]
+    assert version == LATEST_SCHEMA_VERSION
+    assert [row[0] for row in rows] == list(range(1, LATEST_SCHEMA_VERSION + 1))
 
 
 def test_open_restores_project_identity_and_structure(tmp_path: Path) -> None:
