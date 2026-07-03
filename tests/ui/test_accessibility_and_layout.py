@@ -36,7 +36,7 @@ def test_scroll_areas_resize_and_model_actions_are_explicitly_deferred(qtbot: Qt
     assert window.chapter_sidebar.scroll_area.widgetResizable()
     assert window.plot_chat_panel.scroll_area.widgetResizable()
     assert window.manuscript_panel.generate_button.isEnabled() is False
-    assert "阶段 3" in window.manuscript_panel.generate_button.toolTip()
+    assert "阶段 5" in window.manuscript_panel.generate_button.toolTip()
 
 
 def test_settings_button_opens_reusable_phase_aware_dialog(qtbot: QtBot) -> None:

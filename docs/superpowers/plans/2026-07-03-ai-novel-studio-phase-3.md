@@ -144,12 +144,12 @@
 - Brief dialog gains explicit “AI 整理草稿”; audit gains “运行模型审校”. Neither action writes project storage.
 - Top metrics consume `UsageSnapshot`; actual and estimated data are visually distinguished.
 
-- [ ] **Step 1: Write failing UI tests** for editable third-party profiles, password-mode key field, independent route combos, model-list refresh signal, custom `200000` output limit retention, locked requirement protection, bubble streaming, Brief normalization, audit findings, and metric updates.
-- [ ] **Step 2: Run focused tests and verify expected Phase 2 failures.**
-- [ ] **Step 3: Implement the settings widgets and controller boundary.**
-- [ ] **Step 4: Wire MainWindow to the coordinator; keep prose generation disabled with a Phase 5 tooltip and repair disabled with a Phase 6 tooltip.**
-- [ ] **Step 5: Run focused UI tests and full suite offscreen.**
-- [ ] **Step 6: Commit** `feat: connect phase 3 model controls to the workspace`.
+- [x] **Step 1: Write failing UI tests** for editable third-party profiles, password-mode key field, independent route combos, model-list refresh signal, custom `200000` output limit retention, locked requirement protection, bubble streaming, Brief normalization, audit findings, and metric updates.
+- [x] **Step 2: Run focused tests and verify expected Phase 2 failures.**
+- [x] **Step 3: Implement the settings widgets and controller boundary.**
+- [x] **Step 4: Wire MainWindow to the coordinator; keep prose generation disabled with a Phase 5 tooltip and repair disabled with a Phase 6 tooltip.**
+- [x] **Step 5: Run focused UI tests and full suite offscreen.**
+- [x] **Step 6: Commit** `feat: connect phase 3 model controls to the workspace`.
 
 ### Task 7: Documentation, release verification, and Windows build
 

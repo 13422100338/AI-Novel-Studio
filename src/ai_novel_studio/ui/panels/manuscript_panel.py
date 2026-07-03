@@ -64,7 +64,7 @@ class ManuscriptPanel(QFrame):
         self.generate_button.setAccessibleName("使用当前 Brief 生成正文")
         self.generate_button.setProperty("buttonRole", "primary")
         self.generate_button.setEnabled(False)
-        self.generate_button.setToolTip("阶段 3 接入模型后可用")
+        self.generate_button.setToolTip("阶段 5 接入章节生成管线后可用")
         self.generate_button.clicked.connect(self.generation_requested)
         action_row = QHBoxLayout()
         action_row.addWidget(self.brief_button)
@@ -164,3 +164,6 @@ class ManuscriptPanel(QFrame):
         self.requirement_status.setText("剧情商讨生成的正式要求草稿 · 待确认")
         self.chapter_requirement.setFocus()
         return True
+
+    def requirement_locked(self) -> bool:
+        return self._requirement_locked

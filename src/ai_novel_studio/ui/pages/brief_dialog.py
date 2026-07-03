@@ -1,3 +1,4 @@
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QDialog,
     QFrame,
@@ -10,10 +11,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ai_novel_studio.application.model_tasks import NormalizedBrief
 from ai_novel_studio.ui.demo_data import DemoBrief
 
 
 class BriefDialog(QDialog):
+    normalize_requested = Signal(str)
+
     def __init__(self, brief: DemoBrief, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("章节 Brief 审查")
@@ -73,6 +77,11 @@ class BriefDialog(QDialog):
         form_layout.addStretch(1)
         scroll.setWidget(form)
 
+        self.normalize_button = QPushButton("AI 整理草稿", self)
+        self.normalize_button.setAccessibleName("使用模型整理当前 Brief 草稿")
+        self.normalize_button.clicked.connect(
+            lambda: self.normalize_requested.emit(self.source_text())
+        )
         self.clone_button = QPushButton("克隆为新草稿", self)
         self.clone_button.setAccessibleName("把当前 Brief 克隆为新草稿")
         self.clone_button.clicked.connect(self.clone_as_draft)
@@ -83,6 +92,7 @@ class BriefDialog(QDialog):
         close_button = QPushButton("关闭", self)
         close_button.clicked.connect(self.close)
         actions = QHBoxLayout()
+        actions.addWidget(self.normalize_button)
         actions.addWidget(self.clone_button)
         actions.addStretch(1)
         actions.addWidget(close_button)
@@ -119,3 +129,22 @@ class BriefDialog(QDialog):
     def _set_status(self, status: str) -> None:
         self._status = status
         self.status_label.setText(status)
+
+    def source_text(self) -> str:
+        return "\n\n".join(
+            f"{title}：\n{editor.toPlainText()}"
+            for title, editor in self.section_editors.items()
+        )
+
+    def apply_normalized_brief(self, brief: NormalizedBrief) -> None:
+        updates = {
+            "戏剧功能": brief.dramatic_function,
+            "必须事件": "\n".join(brief.hard_events),
+            "自由空间": "\n".join(brief.creative_freedom),
+        }
+        for title, text in updates.items():
+            editor = self.section_editors.get(title)
+            if editor is not None:
+                editor.setPlainText(text)
+        self._set_status("草稿 · AI 已整理 · 待人工审查")
+        self.normalize_button.setEnabled(True)

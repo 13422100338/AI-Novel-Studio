@@ -32,6 +32,7 @@ class PlotChatPanel(QFrame):
         self.setObjectName("plotChatPanel")
         self.setMinimumWidth(300)
         self._messages = list(messages)
+        self._streaming_bubble: ChatBubble | None = None
         self.message_bubbles: list[ChatBubble] = []
         self.bubble_rows: list[QHBoxLayout] = []
 
@@ -70,7 +71,7 @@ class PlotChatPanel(QFrame):
 
         self.requirement_button = QPushButton("生成当前章要求", self)
         self.requirement_button.setAccessibleName("把商讨内容整理成正式当前章要求")
-        self.requirement_button.setToolTip("阶段 2 使用演示草稿；阶段 3 由剧情模型生成")
+        self.requirement_button.setToolTip("使用剧情商讨模型整理正式当前章要求")
         self.requirement_button.clicked.connect(self.chapter_requirement_requested)
 
         self.composer = QPlainTextEdit(self)
@@ -108,7 +109,43 @@ class PlotChatPanel(QFrame):
     def message_snapshot(self) -> tuple[DemoMessage, ...]:
         return tuple(self._messages)
 
-    def _append_bubble(self, role: str, text: str) -> None:
+    def begin_assistant_response(self) -> None:
+        if self._streaming_bubble is not None:
+            return
+        self.send_button.setEnabled(False)
+        self.model_label.setText("剧情模型 · 正在回复…")
+        self._streaming_bubble = self._append_bubble("assistant", "")
+
+    def append_assistant_chunk(self, text: str) -> None:
+        if self._streaming_bubble is None:
+            self.begin_assistant_response()
+        if self._streaming_bubble is not None:
+            self._streaming_bubble.append_text(text)
+        self._scroll_to_bottom()
+
+    def finish_assistant_response(self) -> None:
+        if self._streaming_bubble is not None:
+            text = self._streaming_bubble.text().strip()
+            if text:
+                self._messages.append(DemoMessage("assistant", text))
+        self._streaming_bubble = None
+        self.send_button.setEnabled(True)
+        self.model_label.setText("剧情模型 · 已连接")
+        self._scroll_to_bottom()
+
+    def show_model_error(self, message: str) -> None:
+        if self._streaming_bubble is not None and not self._streaming_bubble.text():
+            self._streaming_bubble.set_text(f"未能获得回复：{message}")
+        self._streaming_bubble = None
+        self.send_button.setEnabled(True)
+        self.requirement_button.setEnabled(True)
+        self.model_label.setText("剧情模型 · 调用失败")
+
+    def set_requirement_busy(self, busy: bool) -> None:
+        self.requirement_button.setEnabled(not busy)
+        self.requirement_button.setText("正在整理…" if busy else "生成当前章要求")
+
+    def _append_bubble(self, role: str, text: str) -> ChatBubble:
         bubble = ChatBubble(role, text, self.conversation)
         row = QHBoxLayout()
         row.setContentsMargins(0, 0, 0, 0)
@@ -123,6 +160,7 @@ class PlotChatPanel(QFrame):
         self.conversation_layout.insertLayout(self.conversation_layout.count() - 1, row)
         self.message_bubbles.append(bubble)
         self.bubble_rows.append(row)
+        return bubble
 
     def _scroll_to_bottom(self) -> None:
         scrollbar = self.scroll_area.verticalScrollBar()

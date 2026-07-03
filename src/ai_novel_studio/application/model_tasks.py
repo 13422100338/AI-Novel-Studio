@@ -16,6 +16,7 @@ from ai_novel_studio.infrastructure.llm.schemas import (
     LLMStreamEvent,
     TaskPurpose,
 )
+from ai_novel_studio.infrastructure.llm.usage_tracker import UsageSnapshot
 
 _DIRECTOR_SYSTEM = """你是长篇小说的剧情导演。你的职责是与作者讨论人物动机、因果、伏笔和章节结构。
 不得假装读取未提供的资料，不得擅自修改正文、正典、记忆库或章节要求。区分建议与已确认事实。"""
@@ -48,6 +49,9 @@ class ModelTaskService:
     def __init__(self, gateway: LLMGateway) -> None:
         self.gateway = gateway
         self.contracts = LLMContractRunner(gateway)
+
+    def usage_snapshot(self) -> UsageSnapshot:
+        return self.gateway.usage_tracker.snapshot()
 
     def stream_chat(
         self,
@@ -204,4 +208,3 @@ class ModelTaskService:
         ):
             raise ContractValidationError(f"字段 {key} 必须是文本数组")
         return tuple(cast(str, item).strip() for item in value)
-

@@ -1,3 +1,4 @@
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -10,10 +11,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ai_novel_studio.application.model_tasks import StyleAuditResult
 from ai_novel_studio.ui.demo_data import WorkspaceDemoData
 
 
 class AuditWindow(QMainWindow):
+    model_audit_requested = Signal()
+
     def __init__(self, data: WorkspaceDemoData, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("审校工作台 · AI Novel Studio")
@@ -48,10 +52,14 @@ class AuditWindow(QMainWindow):
         reject_button.setAccessibleName("忽略当前审校标记")
         self.repair_button = QPushButton("生成局部修复建议", surface)
         self.repair_button.setEnabled(False)
-        self.repair_button.setToolTip("阶段 3 接入模型后可用")
+        self.repair_button.setToolTip("阶段 6 接入有边界的局部修复后可用")
+        self.run_model_audit_button = QPushButton("运行模型审校", surface)
+        self.run_model_audit_button.setAccessibleName("使用审校模型检查当前章节")
+        self.run_model_audit_button.clicked.connect(self.model_audit_requested)
         actions = QHBoxLayout()
         actions.addWidget(accept_button)
         actions.addWidget(reject_button)
+        actions.addWidget(self.run_model_audit_button)
         actions.addStretch(1)
         actions.addWidget(self.repair_button)
 
@@ -70,3 +78,12 @@ class AuditWindow(QMainWindow):
             for column, value in enumerate(values):
                 table.setItem(row, column, QTableWidgetItem(value))
         return table
+
+    def apply_model_audit(self, result: StyleAuditResult) -> None:
+        self.model_table.setRowCount(len(result.findings))
+        for row, finding in enumerate(result.findings):
+            values = (finding.category, finding.issue, finding.evidence)
+            for column, value in enumerate(values):
+                self.model_table.setItem(row, column, QTableWidgetItem(value))
+        self.run_model_audit_button.setEnabled(True)
+        self.run_model_audit_button.setText("重新运行模型审校")

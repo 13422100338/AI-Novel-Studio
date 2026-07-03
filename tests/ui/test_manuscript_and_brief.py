@@ -94,12 +94,15 @@ def test_main_window_opens_reusable_brief_dialog(qtbot: QtBot) -> None:
     assert window.brief_dialog is first
 
 
-def test_plot_chat_action_routes_mock_draft_to_current_requirement(qtbot: QtBot) -> None:
+def test_plot_chat_action_never_uses_old_demo_draft_when_requirement_is_locked(
+    qtbot: QtBot,
+) -> None:
     window = MainWindow()
     qtbot.addWidget(window)
     window.manuscript_panel.chapter_requirement.clear()
+    window.manuscript_panel.toggle_requirement_lock()
 
     window.plot_chat_panel.requirement_button.click()
 
-    assert "正式要求" in window.manuscript_panel.requirement_status.text()
-    assert "旧港" in window.manuscript_panel.chapter_requirement.toPlainText()
+    assert "未请求" in window.manuscript_panel.requirement_status.text()
+    assert window.manuscript_panel.chapter_requirement.toPlainText() == ""

@@ -8,6 +8,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ai_novel_studio.application.model_runtime import ModelRuntime
+from ai_novel_studio.application.model_tasks import NormalizedBrief, StyleAuditResult
+from ai_novel_studio.infrastructure.llm import LLMMessage, UsageSnapshot
 from ai_novel_studio.ui.demo_data import WorkspaceDemoData
 from ai_novel_studio.ui.pages.audit_window import AuditWindow
 from ai_novel_studio.ui.pages.brief_dialog import BriefDialog
@@ -23,12 +26,13 @@ from ai_novel_studio.ui.theme import application_stylesheet
 
 
 class MainWindow(QMainWindow):
-    def __init__(self) -> None:
+    def __init__(self, model_runtime: ModelRuntime | None = None) -> None:
         super().__init__()
         self.setWindowTitle("AI Novel Studio")
         self.setMinimumSize(1100, 680)
         self.resize(1440, 900)
         self.setStyleSheet(application_stylesheet())
+        self.model_runtime = model_runtime or ModelRuntime.create_default()
 
         self.data = WorkspaceDemoData.sample()
         self.brief_dialog: BriefDialog | None = None
@@ -64,25 +68,101 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.workspace_splitter, 1)
         self.setCentralWidget(surface)
         self.manuscript_panel.brief_requested.connect(self.open_brief_dialog)
-        self.plot_chat_panel.chapter_requirement_requested.connect(
-            self.apply_plot_requirement_draft
-        )
+        self.plot_chat_panel.message_sent.connect(self.request_plot_reply)
+        self.plot_chat_panel.chapter_requirement_requested.connect(self.request_requirement)
         self.plot_chat_panel.detach_requested.connect(self.open_detached_chat)
         self.chapter_sidebar.memory_requested.connect(self.open_memory_window)
         self.chapter_sidebar.style_requested.connect(self.open_style_rules_window)
         self.chapter_sidebar.audit_requested.connect(self.open_audit_window)
         self.manuscript_panel.audit_requested.connect(self.open_audit_window)
         self.top_bar.settings_requested.connect(self.open_settings_dialog)
+        coordinator = self.model_runtime.coordinator
+        coordinator.chat_chunk.connect(self.plot_chat_panel.append_assistant_chunk)
+        coordinator.chat_finished.connect(self.plot_chat_panel.finish_assistant_response)
+        coordinator.requirement_ready.connect(self.apply_model_requirement)
+        coordinator.brief_ready.connect(self.apply_normalized_brief)
+        coordinator.audit_ready.connect(self.apply_model_audit)
+        coordinator.task_failed.connect(self.show_model_error)
+        coordinator.usage_changed.connect(self.update_usage)
 
     def open_brief_dialog(self) -> None:
         if self.brief_dialog is None:
             self.brief_dialog = BriefDialog(self.data.brief, self)
+            self.brief_dialog.normalize_requested.connect(self.request_brief_normalization)
         self.brief_dialog.show()
         self.brief_dialog.raise_()
         self.brief_dialog.activateWindow()
 
-    def apply_plot_requirement_draft(self) -> None:
-        self.manuscript_panel.apply_requirement_draft(self.data.generated_requirement)
+    def request_plot_reply(self, _message: str) -> None:
+        self.plot_chat_panel.begin_assistant_response()
+        self.model_runtime.coordinator.start_chat(
+            self._conversation_messages(),
+            self.manuscript_panel.editor.toPlainText(),
+            self.manuscript_panel.output_token_limit.value(),
+        )
+
+    def request_requirement(self) -> None:
+        if self.manuscript_panel.requirement_locked():
+            self.manuscript_panel.requirement_status.setText(
+                "人工指令 · 已锁定，模型草稿未请求"
+            )
+            return
+        self.plot_chat_panel.set_requirement_busy(True)
+        self.model_runtime.coordinator.start_requirement(
+            self._conversation_messages(),
+            self.manuscript_panel.editor.toPlainText(),
+            self.manuscript_panel.output_token_limit.value(),
+        )
+
+    def apply_model_requirement(self, text: str) -> None:
+        self.manuscript_panel.apply_requirement_draft(text)
+        self.plot_chat_panel.set_requirement_busy(False)
+
+    def request_brief_normalization(self, source: str) -> None:
+        if self.brief_dialog is not None:
+            self.brief_dialog.normalize_button.setEnabled(False)
+        self.model_runtime.coordinator.start_brief(
+            source,
+            self.manuscript_panel.output_token_limit.value(),
+        )
+
+    def apply_normalized_brief(self, value: object) -> None:
+        if self.brief_dialog is not None and isinstance(value, NormalizedBrief):
+            self.brief_dialog.apply_normalized_brief(value)
+
+    def request_model_audit(self) -> None:
+        if self.audit_window is not None:
+            self.audit_window.run_model_audit_button.setEnabled(False)
+            self.audit_window.run_model_audit_button.setText("审校中…")
+        self.model_runtime.coordinator.start_audit(
+            self.manuscript_panel.editor.toPlainText(),
+            ("保持人物声音和叙述视角一致", "避免直接解释人物情绪"),
+            self.manuscript_panel.output_token_limit.value(),
+        )
+
+    def apply_model_audit(self, value: object) -> None:
+        if self.audit_window is not None and isinstance(value, StyleAuditResult):
+            self.audit_window.apply_model_audit(value)
+
+    def show_model_error(self, message: str) -> None:
+        self.plot_chat_panel.show_model_error(message)
+        self.plot_chat_panel.set_requirement_busy(False)
+        self.manuscript_panel.pipeline_status_label.setText(f"模型调用失败：{message}")
+        if self.brief_dialog is not None:
+            self.brief_dialog.normalize_button.setEnabled(True)
+        if self.audit_window is not None:
+            self.audit_window.run_model_audit_button.setEnabled(True)
+            self.audit_window.run_model_audit_button.setText("运行模型审校")
+
+    def update_usage(self, value: object) -> None:
+        if isinstance(value, UsageSnapshot):
+            self.top_bar.update_usage(value)
+
+    def _conversation_messages(self) -> tuple[LLMMessage, ...]:
+        return tuple(
+            LLMMessage(message.role, message.text)
+            for message in self.plot_chat_panel.message_snapshot()
+        )
 
     def open_detached_chat(self) -> None:
         if self.detached_chat_window is None:
@@ -106,11 +186,14 @@ class MainWindow(QMainWindow):
     def open_audit_window(self) -> None:
         if self.audit_window is None:
             self.audit_window = AuditWindow(self.data, self)
+            self.audit_window.model_audit_requested.connect(self.request_model_audit)
         self._show_workspace_window(self.audit_window)
 
     def open_settings_dialog(self) -> None:
         if self.settings_dialog is None:
-            self.settings_dialog = SettingsDialog(self)
+            self.settings_dialog = SettingsDialog(
+                self, controller=self.model_runtime.settings_controller
+            )
         self.settings_dialog.show()
         self.settings_dialog.raise_()
         self.settings_dialog.activateWindow()

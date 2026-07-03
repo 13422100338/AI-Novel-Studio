@@ -1,6 +1,7 @@
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
+from ai_novel_studio.infrastructure.llm import UsageSnapshot
 from ai_novel_studio.ui.demo_data import WorkspaceDemoData
 from ai_novel_studio.ui.widgets.metric_chip import MetricChip
 
@@ -42,3 +43,23 @@ class TopBar(QFrame):
         for metric in self.metrics.values():
             layout.addWidget(metric)
         layout.addWidget(self.settings_button)
+
+    def update_usage(self, snapshot: UsageSnapshot) -> None:
+        self.metrics["input"].set_value(self._token_text(snapshot.input_tokens))
+        self.metrics["output"].set_value(self._token_text(snapshot.output_tokens))
+        cost = "未知" if snapshot.cost is None else f"¥{snapshot.cost:.3f}"
+        self.metrics["cost"].set_value(cost)
+        cache = (
+            self._token_text(snapshot.cached_input_tokens)
+            if snapshot.cache_known
+            else "未知"
+        )
+        self.metrics["memory"].set_value(f"缓存 {cache}")
+
+    @staticmethod
+    def _token_text(value: int) -> str:
+        if value >= 1_000_000:
+            return f"{value / 1_000_000:.1f}M"
+        if value >= 1_000:
+            return f"{value / 1_000:.1f}K"
+        return str(value)

@@ -22,3 +22,9 @@ class ChatBubble(QFrame):
 
     def text(self) -> str:
         return self._label.text()
+
+    def set_text(self, text: str) -> None:
+        self._label.setText(text)
+
+    def append_text(self, text: str) -> None:
+        self._label.setText(self._label.text() + text)

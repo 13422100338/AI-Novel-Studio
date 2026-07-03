@@ -50,7 +50,7 @@ def test_audit_window_separates_deterministic_and_model_findings(qtbot: QtBot) -
     assert window.deterministic_table.rowCount() == 1
     assert window.model_table.rowCount() == 1
     assert window.repair_button.isEnabled() is False
-    assert "阶段 3" in window.repair_button.toolTip()
+    assert "阶段 6" in window.repair_button.toolTip()
 
 
 def test_main_window_reuses_memory_style_and_audit_windows(qtbot: QtBot) -> None:

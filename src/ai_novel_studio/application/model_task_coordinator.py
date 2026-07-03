@@ -99,6 +99,7 @@ class ModelTaskCoordinator(QObject):
     brief_ready = Signal(object)
     audit_ready = Signal(object)
     task_failed = Signal(str)
+    usage_changed = Signal(object)
 
     def __init__(
         self,
@@ -122,7 +123,7 @@ class ModelTaskCoordinator(QObject):
                     conversation, manuscript, output_token_limit
                 ),
                 self.chat_chunk.emit,
-                self.chat_finished.emit,
+                self._finish_chat,
                 self._emit_failure,
             )
         )
@@ -137,13 +138,13 @@ class ModelTaskCoordinator(QObject):
             lambda: self.service.draft_chapter_requirement(
                 conversation, manuscript, output_token_limit
             ),
-            lambda value: self.requirement_ready.emit(str(value)),
+            lambda value: self._emit_result(self.requirement_ready.emit, str(value)),
         )
 
     def start_brief(self, source: str, output_token_limit: int) -> None:
         self._start_result(
             lambda: self.service.normalize_brief(source, output_token_limit),
-            self.brief_ready.emit,
+            lambda value: self._emit_result(self.brief_ready.emit, value),
         )
 
     def start_audit(
@@ -154,7 +155,7 @@ class ModelTaskCoordinator(QObject):
     ) -> None:
         self._start_result(
             lambda: self.service.audit_style(manuscript, rules, output_token_limit),
-            self.audit_ready.emit,
+            lambda value: self._emit_result(self.audit_ready.emit, value),
         )
 
     def _start_result(
@@ -175,3 +176,16 @@ class ModelTaskCoordinator(QObject):
             self.task_failed.emit(str(error))
         else:
             self.task_failed.emit("模型任务失败，请检查连接与模型设置")
+
+    def _finish_chat(self) -> None:
+        self.chat_finished.emit()
+        self._emit_usage()
+
+    def _emit_result(self, emitter: Callable[[object], None], value: object) -> None:
+        emitter(value)
+        self._emit_usage()
+
+    def _emit_usage(self) -> None:
+        snapshot_method = getattr(self.service, "usage_snapshot", None)
+        if callable(snapshot_method):
+            self.usage_changed.emit(snapshot_method())
