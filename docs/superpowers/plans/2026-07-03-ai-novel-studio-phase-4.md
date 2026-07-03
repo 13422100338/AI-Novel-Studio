@@ -55,12 +55,12 @@
 - `create_knowledge_item(...)`, `append_knowledge_event(...)`, and `knowledge_before(subject_type, subject_id, chapter_id)` return the latest reviewed state before the chapter boundary.
 - `CharacterTimeline.snapshot(character_ids, before_chapter_id)` returns participating character state plus known/suspected/misunderstood/forgotten items.
 
-- [ ] Write failing integration tests with three ordered chapters proving state history is append-only, current/future events are excluded, reader and character knowledge are separated, aliases round-trip, and invalid subjects/states are rejected.
-- [ ] Run focused tests and confirm repository imports fail.
-- [ ] Implement chapter-boundary SQL using volume/chapter sort order, never declared chapter numbers.
-- [ ] Implement the timeline façade and conflict reporting for multiple reviewed events at the same boundary.
-- [ ] Run focused tests and full suite.
-- [ ] Commit `feat: add temporal character and knowledge memory`.
+- [x] Write failing integration tests with three ordered chapters proving state history is append-only, current/future events are excluded, reader and character knowledge are separated, aliases round-trip, and invalid subjects/states are rejected.
+- [x] Run focused tests and confirm repository imports fail.
+- [x] Implement chapter-boundary SQL using volume/chapter sort order, never declared chapter numbers.
+- [x] Implement the timeline façade and conflict reporting for multiple reviewed events at the same boundary.
+- [x] Run focused tests and full suite.
+- [x] Commit `feat: add temporal character and knowledge memory`.
 
 ### Task 3: Canon, narrative-clue, and layered-style ledgers
 
