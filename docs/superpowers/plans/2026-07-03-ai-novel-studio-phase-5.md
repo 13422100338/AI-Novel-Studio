@@ -149,7 +149,7 @@ git commit -m "feat: persist protected chapter requirements"
 - `mark_stale_for_source(source_type, source_id, revision, hash)` preserves content.
 - `clone_as_draft(brief_id) -> BriefCloneResult` archives no source record and reports added/removed/changed sources.
 
-- [ ] **Step 1: Write failing tests** for deterministic fingerprints, source ordering, draft edit, frozen immutability, one current frozen Brief per chapter, stale propagation, clone provenance, source diff, and optimistic revision conflicts.
+- [x] **Step 1: Write failing tests** for deterministic fingerprints, source ordering, draft edit, frozen immutability, one current frozen Brief per chapter, stale propagation, clone provenance, source diff, and optimistic revision conflicts.
 
 ```python
 first = compute_source_fingerprint((source_b, source_a))
@@ -157,13 +157,13 @@ second = compute_source_fingerprint((source_a, source_b))
 assert first == second
 ```
 
-- [ ] **Step 2: Run focused tests and verify RED.**
+- [x] **Step 2: Run focused tests and verify RED.**
 
 ```powershell
 .venv\Scripts\python.exe -m pytest tests\integration\generation\test_brief_lifecycle.py -q -p no:cacheprovider --basetemp .test-temp\phase5-task3-red
 ```
 
-- [ ] **Step 3: Implement fingerprint, repository, and legal transitions.** Freeze archives an older frozen Brief only in the same transaction that freezes the new one; stale/archived text and sources remain queryable.
+- [x] **Step 3: Implement fingerprint, repository, and legal transitions.** Freeze archives an older frozen Brief only in the same transaction that freezes the new one; stale/archived text and sources remain queryable.
 
 ```python
 LEGAL_BRIEF_TRANSITIONS = {
@@ -173,7 +173,7 @@ LEGAL_BRIEF_TRANSITIONS = {
 }
 ```
 
-- [ ] **Step 4: Run focused/full tests and static gates.**
+- [x] **Step 4: Run focused/full tests and static gates.**
 
 ```powershell
 .venv\Scripts\python.exe -m pytest -q -p no:cacheprovider --basetemp .test-temp\phase5-task3-full
@@ -181,7 +181,7 @@ LEGAL_BRIEF_TRANSITIONS = {
 .venv\Scripts\python.exe -m mypy src
 ```
 
-- [ ] **Step 5: Commit.**
+- [x] **Step 5: Commit.**
 
 ```powershell
 git add src/ai_novel_studio/core/brief/source_fingerprint.py src/ai_novel_studio/infrastructure/storage/chapter_brief_repository.py src/ai_novel_studio/application/brief_lifecycle_service.py tests/integration/generation/test_brief_lifecycle.py
