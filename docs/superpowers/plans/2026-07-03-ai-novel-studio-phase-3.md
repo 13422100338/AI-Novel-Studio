@@ -52,12 +52,12 @@
 - `ModelConfigRepository.save(configuration, api_keys)` writes profiles/routes atomically and delegates secrets to `CredentialStore`.
 - `ModelConfigRepository.load() -> ModelConfiguration` returns an empty valid configuration when no file exists.
 
-- [ ] **Step 1: Write failing tests** proving round-trip persistence, atomic JSON shape, absence of API-key text, deletion of retired credentials, and empty-first-run behavior.
-- [ ] **Step 2: Run focused tests and confirm missing symbols.**
-- [ ] **Step 3: Implement the repository** using `atomic_write_text`; JSON contains schema version, provider metadata, model metadata, and routes only.
-- [ ] **Step 4: Implement Windows generic credentials** with `CredWriteW`, `CredReadW`, `CredDeleteW`, and `CredFree`; redact target identifiers in raised errors.
-- [ ] **Step 5: Run focused tests, privacy scan, and full suite.**
-- [ ] **Step 6: Commit** `feat: store model configuration without api secrets`.
+- [x] **Step 1: Write failing tests** proving round-trip persistence, atomic JSON shape, absence of API-key text, deletion of retired credentials, and empty-first-run behavior.
+- [x] **Step 2: Run focused tests and confirm missing symbols.**
+- [x] **Step 3: Implement the repository** using `atomic_write_text`; JSON contains schema version, provider metadata, model metadata, and routes only.
+- [x] **Step 4: Implement Windows generic credentials** with `CredWriteW`, `CredReadW`, `CredDeleteW`, and `CredFree`; redact target identifiers in raised errors.
+- [x] **Step 5: Run focused tests, privacy scan, and full suite.**
+- [x] **Step 6: Commit** `feat: store model configuration without api secrets`.
 
 ### Task 3: OpenAI-compatible adapter, model catalog, and capability probe
 
