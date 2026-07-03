@@ -186,8 +186,8 @@
 - [x] Add representative 100+ chapter retrieval/budget fixtures without generating user manuscript content or committing databases.
 - [x] Update package version to `0.4.0` with a metadata consistency test.
 - [x] Run all tests with a controlled temp directory, Ruff, mypy, source/history/dist privacy scans, and Windows build.
-- [ ] Verify the EXE startup probe, commit documentation, fast-forward merge to `codex/phase-1-data-kernel`, and delete the feature branch.
-- [ ] Sync the clean Desktop repository and `dist`, rerun Desktop verification, compare EXE hashes, and do not push GitHub.
+- [x] Verify the EXE startup probe, commit documentation, fast-forward merge to `codex/phase-1-data-kernel`, and delete the feature branch.
+- [x] Sync the clean Desktop repository and `dist`, rerun Desktop verification, compare EXE hashes, and do not push GitHub.
 
 ## Self-review
 
