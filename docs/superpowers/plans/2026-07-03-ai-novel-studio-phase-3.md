@@ -73,12 +73,12 @@
 - `complete(request, profile, api_key) -> LLMResponse` parses OpenAI-compatible text, reasoning content, and usage without assuming optional fields.
 - `stream(request, profile, api_key) -> Iterator[LLMStreamEvent]` parses SSE data frames and emits text, usage, completion, and partial-failure events.
 
-- [ ] **Step 1: Write failing transport-driven tests** for authorization headers, third-party Base URLs, model listing, usage parsing, SSE chunk order, `[DONE]`, and non-secret error messages.
-- [ ] **Step 2: Run tests and confirm missing adapter behavior.**
-- [ ] **Step 3: Implement injectable transport and adapter** with standard-library networking, explicit timeouts, and typed provider errors.
-- [ ] **Step 4: Implement catalog and opt-in capability probes** for basic chat, streaming, JSON, tools, reasoning, and usage fields; unknown remains unknown.
-- [ ] **Step 5: Run focused tests and full suite.**
-- [ ] **Step 6: Commit** `feat: add openai compatible provider adapter`.
+- [x] **Step 1: Write failing transport-driven tests** for authorization headers, third-party Base URLs, model listing, usage parsing, SSE chunk order, `[DONE]`, and non-secret error messages.
+- [x] **Step 2: Run tests and confirm missing adapter behavior.**
+- [x] **Step 3: Implement injectable transport and adapter** with standard-library networking, explicit timeouts, and typed provider errors.
+- [x] **Step 4: Implement catalog and opt-in capability probes** for basic chat, streaming, JSON, tools, reasoning, and usage fields; unknown remains unknown.
+- [x] **Step 5: Run focused tests and full suite.**
+- [x] **Step 6: Commit** `feat: add openai compatible provider adapter`.
 
 ### Task 4: Gateway, contracts, retry policy, and usage accounting
 
