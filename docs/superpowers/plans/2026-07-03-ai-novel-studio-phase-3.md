@@ -166,7 +166,7 @@
 - [x] **Step 2: Run** `.venv\Scripts\python.exe -m pytest -q`, Ruff, mypy, `scripts\verify_release.ps1`, and `scripts\build_windows.ps1`.
 - [x] **Step 3: Verify the built EXE exists and release privacy scan passes on `dist`.**
 - [x] **Step 4: Commit** `docs: document phase 3 model gateway`.
-- [ ] **Step 5: Fast-forward merge into `codex/phase-1-data-kernel`, synchronize the clean Desktop repository, compare EXE hashes, and do not push GitHub.**
+- [x] **Step 5: Fast-forward merge into `codex/phase-1-data-kernel`, synchronize the clean Desktop repository, compare EXE hashes, and do not push GitHub.**
 
 ## Self-review
 
