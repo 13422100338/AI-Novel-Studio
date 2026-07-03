@@ -118,12 +118,12 @@
 - `normalize_brief(source) -> NormalizedBrief` and `audit_style(text, rules) -> StyleAuditResult` use JSON contracts.
 - `ModelTaskCoordinator` exposes Qt signals for chat chunks, requirement result, Brief result, audit result, usage changes, and sanitized failures while executing work outside the GUI thread.
 
-- [ ] **Step 1: Write failing tests** that assert task purpose, prompt order, contract fields, no repository dependency, streaming signal order, and sanitized errors.
-- [ ] **Step 2: Run focused tests and confirm missing services.**
-- [ ] **Step 3: Implement deterministic prompt builders** with stable system instructions first and dynamic task content last.
-- [ ] **Step 4: Implement `QRunnable` jobs and coordinator signals** with one in-flight job per UI action.
-- [ ] **Step 5: Run focused tests and full suite.**
-- [ ] **Step 6: Commit** `feat: add background model task coordination`.
+- [x] **Step 1: Write failing tests** that assert task purpose, prompt order, contract fields, no repository dependency, streaming signal order, and sanitized errors.
+- [x] **Step 2: Run focused tests and confirm missing services.**
+- [x] **Step 3: Implement deterministic prompt builders** with stable system instructions first and dynamic task content last.
+- [x] **Step 4: Implement `QRunnable` jobs and coordinator signals** with one in-flight job per UI action.
+- [x] **Step 5: Run focused tests and full suite.**
+- [x] **Step 6: Commit** `feat: add background model task coordination`.
 
 ### Task 6: Settings, dual-model UI, model actions, and metrics
 
