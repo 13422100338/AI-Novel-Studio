@@ -7,6 +7,9 @@ from pathlib import Path
 from ai_novel_studio.domain.chapter import Chapter, ChapterVersion
 from ai_novel_studio.domain.identifiers import new_id, validate_id
 from ai_novel_studio.infrastructure.storage.atomic_file import atomic_write_text
+from ai_novel_studio.infrastructure.storage.memory_dependency_repository import (
+    MemoryDependencyRepository,
+)
 from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
 
 
@@ -139,7 +142,15 @@ class ChapterRepository:
         chapter = self.get_chapter(chapter_id, include_deleted=False)
         return (self.project.layout.root / chapter.content_path).read_text(encoding="utf-8")
 
-    def save_content(self, chapter_id: str, content: str, *, source: str, reason: str) -> Chapter:
+    def save_content(
+        self,
+        chapter_id: str,
+        content: str,
+        *,
+        source: str,
+        reason: str,
+        invalidate_memory: bool = True,
+    ) -> Chapter:
         chapter = self.get_chapter(chapter_id, include_deleted=False)
         canonical = self.project.layout.root / chapter.content_path
         previous = canonical.read_text(encoding="utf-8")
@@ -175,13 +186,27 @@ class ChapterRepository:
                 cursor = connection.execute(
                     """
                     UPDATE chapters SET revision = revision + 1, content_hash = ?,
-                    memory_status = 'stale', updated_at = ?
+                    memory_status = CASE WHEN ? THEN 'stale' ELSE memory_status END,
+                    updated_at = ?
                     WHERE id = ? AND revision = ? AND is_deleted = 0
                     """,
-                    (_hash(content), now.isoformat(), chapter.id, chapter.revision),
+                    (
+                        _hash(content),
+                        int(invalidate_memory),
+                        now.isoformat(),
+                        chapter.id,
+                        chapter.revision,
+                    ),
                 )
                 if cursor.rowcount != 1:
                     raise RuntimeError("chapter changed concurrently")
+                if invalidate_memory:
+                    MemoryDependencyRepository.invalidate_in_connection(
+                        connection,
+                        chapter.id,
+                        chapter.revision + 1,
+                        _hash(content),
+                    )
         except BaseException:
             atomic_write_text(canonical, previous)
             snapshot.unlink(missing_ok=True)

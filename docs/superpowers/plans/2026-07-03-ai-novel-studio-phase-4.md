@@ -101,12 +101,12 @@
 - `MemoryInvalidationService.invalidate_chapter(chapter_id, new_revision, new_hash)` marks dependent summaries, search documents, candidate memories, and manifests stale while preserving their prior content for audit.
 - Chapter save performs dependency invalidation in the same SQLite transaction as the new chapter revision metadata.
 
-- [ ] Write failing tests for all four summary levels, source provenance, explicit promotion, optimistic revision checks, typo/no-rebuild choice, story-change invalidation, transitive summary staleness, and preservation of stale text.
-- [ ] Run focused tests and confirm missing services.
-- [ ] Implement summary storage/tree and dependency graph.
-- [ ] Integrate invalidation into chapter saves without weakening rollback behavior.
-- [ ] Run focused tests and full suite.
-- [ ] Commit `feat: add summary tree and memory invalidation`.
+- [x] Write failing tests for all four summary levels, source provenance, explicit promotion, optimistic revision checks, typo/no-rebuild choice, story-change invalidation, transitive summary staleness, and preservation of stale text.
+- [x] Run focused tests and confirm missing services.
+- [x] Implement summary storage/tree and dependency graph.
+- [x] Integrate invalidation into chapter saves without weakening rollback behavior.
+- [x] Run focused tests and full suite.
+- [x] Commit `feat: add summary tree and memory invalidation`.
 
 ### Task 5: FTS5 history indexing and time-bounded retrieval
 
