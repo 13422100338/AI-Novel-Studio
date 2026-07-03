@@ -3,11 +3,22 @@ from ai_novel_studio.infrastructure.llm.config_repository import (
     ModelConfigRepository,
     ModelConfiguration,
 )
+from ai_novel_studio.infrastructure.llm.contract_runner import (
+    ContractValidationError,
+    JsonField,
+    JsonObjectContract,
+    LLMContractRunner,
+)
 from ai_novel_studio.infrastructure.llm.credential_store import (
     CredentialStore,
     CredentialStoreError,
     MemoryCredentialStore,
     WindowsCredentialStore,
+)
+from ai_novel_studio.infrastructure.llm.gateway import (
+    LLMGateway,
+    MissingCredentialError,
+    MissingProviderAdapterError,
 )
 from ai_novel_studio.infrastructure.llm.model_catalog import (
     CapabilityProbe,
@@ -29,6 +40,7 @@ from ai_novel_studio.infrastructure.llm.provider_profile import (
     ProviderProfile,
     TaskRoutes,
 )
+from ai_novel_studio.infrastructure.llm.retry_policy import RetryPolicy
 from ai_novel_studio.infrastructure.llm.schemas import (
     LLMMessage,
     LLMRequest,
@@ -41,20 +53,32 @@ from ai_novel_studio.infrastructure.llm.schemas import (
     StreamEventKind,
     TaskPurpose,
 )
+from ai_novel_studio.infrastructure.llm.usage_tracker import (
+    UsageRecord,
+    UsageSnapshot,
+    UsageTracker,
+)
 
 __all__ = [
     "CapabilityProbe",
     "CapabilityProbeResult",
+    "ContractValidationError",
     "CredentialStore",
     "CredentialStoreError",
     "HttpTransport",
+    "JsonField",
+    "JsonObjectContract",
+    "LLMContractRunner",
+    "LLMGateway",
     "LLMMessage",
     "LLMRequest",
     "LLMResponse",
     "LLMStreamEvent",
     "LLMUsage",
     "MemoryCredentialStore",
+    "MissingCredentialError",
     "MissingModelRouteError",
+    "MissingProviderAdapterError",
     "ModelCapabilities",
     "ModelCatalog",
     "ModelConfigError",
@@ -68,10 +92,14 @@ __all__ = [
     "ProviderProfile",
     "ProviderProtocolError",
     "ProviderRequestError",
+    "RetryPolicy",
     "StreamEventKind",
     "TaskPurpose",
     "TaskRoutes",
     "TransportResponse",
     "UrllibTransport",
+    "UsageRecord",
+    "UsageSnapshot",
+    "UsageTracker",
     "WindowsCredentialStore",
 ]

@@ -96,13 +96,13 @@
 - `LLMContractRunner.run_json(..., contract) -> dict[str, object]` extracts fenced or plain JSON, validates required fields, and performs at most one correction call.
 - `UsageTracker.snapshot() -> UsageSnapshot` separates actual values from estimates and reports cache status as known/unknown.
 
-- [ ] **Step 1: Write failing tests** for route selection, missing keys, retry before content, no retry after partial content, one contract correction, second failure stop, usage aggregation, cache-unknown display, and price calculation.
-- [ ] **Step 2: Run focused tests and confirm expected failures.**
-- [ ] **Step 3: Implement gateway and bounded retry policy.**
-- [ ] **Step 4: Implement text/JSON contracts and explicit `ContractValidationError`.**
-- [ ] **Step 5: Implement usage tracking with actual/estimated flags.**
-- [ ] **Step 6: Run focused tests, full suite, Ruff, and mypy.**
-- [ ] **Step 7: Commit** `feat: add validated model gateway and usage tracking`.
+- [x] **Step 1: Write failing tests** for route selection, missing keys, retry before content, no retry after partial content, one contract correction, second failure stop, usage aggregation, cache-unknown display, and price calculation.
+- [x] **Step 2: Run focused tests and confirm expected failures.**
+- [x] **Step 3: Implement gateway and bounded retry policy.**
+- [x] **Step 4: Implement text/JSON contracts and explicit `ContractValidationError`.**
+- [x] **Step 5: Implement usage tracking with actual/estimated flags.**
+- [x] **Step 6: Run focused tests, full suite, Ruff, and mypy.**
+- [x] **Step 7: Commit** `feat: add validated model gateway and usage tracking`.
 
 ### Task 5: Phase 3 model task service and background coordinator
 
