@@ -120,12 +120,12 @@
 - `HistoryRetriever.search(query, before_chapter_id, participants=(), limit=20)` combines FTS5 rank, manual pin weight, participant match, chapter distance, review state, and temporal exclusion.
 - Results include stable source ID, chapter ID, revision, hash, excerpt, score components, and stale flag.
 
-- [ ] Write failing tests for Chinese/ASCII FTS queries, stable upsert, participant boost, pinned boost, stale demotion, current/future exclusion, deterministic tie-breaking, and no vector dependency.
-- [ ] Run focused tests and confirm missing search layer.
-- [ ] Implement FTS synchronization and bounded snippets.
-- [ ] Implement deterministic scoring and source tracing.
-- [ ] Run focused tests and full suite.
-- [ ] Commit `feat: add temporal fts history retrieval`.
+- [x] Write failing tests for Chinese/ASCII FTS queries, stable upsert, participant boost, pinned boost, stale demotion, current/future exclusion, deterministic tie-breaking, and no vector dependency.
+- [x] Run focused tests and confirm missing search layer.
+- [x] Implement FTS synchronization and bounded snippets.
+- [x] Implement deterministic scoring and source tracing.
+- [x] Run focused tests and full suite.
+- [x] Commit `feat: add temporal fts history retrieval`.
 
 ### Task 6: Token budget, Context Manifest, and dynamic context builder
 
