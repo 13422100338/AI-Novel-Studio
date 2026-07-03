@@ -142,13 +142,13 @@
 - `ContextBuilder.build(request) -> BuiltContext` preserves required blocks, chooses recent full chapters before older summaries, adds relevant FTS evidence, uses whole-block fallbacks, and records every omission.
 - `ContextManifestRepository.save(manifest)` atomically writes reviewable JSON under `.ai_pipeline/manifests` and stores its database reference.
 
-- [ ] Write failing tests for the 128K/16K/4K = 108K calculation, user-limit overflow, required overflow, no middle truncation, previous-chapter preference, fallback selection, deterministic ordering, and complete inclusion/omission manifest fields.
-- [ ] Run focused tests and confirm missing context types.
-- [ ] Implement a deterministic conservative estimator and budget allocator.
-- [ ] Implement manifest serialization and atomic persistence.
-- [ ] Implement context assembly independent of models and UI.
-- [ ] Run focused tests, full suite, Ruff, and mypy.
-- [ ] Commit `feat: add reviewable dynamic context builder`.
+- [x] Write failing tests for the 128K/16K/4K = 108K calculation, user-limit overflow, required overflow, no middle truncation, previous-chapter preference, fallback selection, deterministic ordering, and complete inclusion/omission manifest fields.
+- [x] Run focused tests and confirm missing context types.
+- [x] Implement a deterministic conservative estimator and budget allocator.
+- [x] Implement manifest serialization and atomic persistence.
+- [x] Implement context assembly independent of models and UI.
+- [x] Run focused tests, full suite, Ruff, and mypy.
+- [x] Commit `feat: add reviewable dynamic context builder`.
 
 ### Task 7: Candidate memory extraction and review workspace binding
 
