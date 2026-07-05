@@ -250,14 +250,17 @@ git commit -m "feat: compile time-bounded chapter briefs"
 - Create: `src/ai_novel_studio/application/generation_context_service.py`
 - Create: `src/ai_novel_studio/core/context/prose_prompt.py`
 - Modify: `src/ai_novel_studio/core/context/context_manifest.py`
+- Create: `src/ai_novel_studio/infrastructure/storage/generation_repository.py` with only
+  preparation persistence; Task 6 extends it with the complete transition table.
+- Modify: `src/ai_novel_studio/infrastructure/storage/chapter_repository.py`
 - Test: `tests/integration/generation/test_generation_context.py`
 
 **Interfaces:**
-- `GenerationPreparationRequest(chapter_id, mode, brief_id, output_token_limit, model_capabilities, target_words)`.
+- `GenerationPreparationRequest(chapter_id, mode, brief_id, output_token_limit, model_capabilities, target_words, model_provider_id, model_id, safety_margin)`.
 - `GenerationContextService.prepare(request) -> PreparedGeneration` creates a `PREPARING` run, validates BASIC/STANDARD rules, builds whole blocks, persists Manifest, and advances run to `READY`.
 - `build_prose_messages(requirement, brief, selected_blocks) -> tuple[LLMMessage, ...]` uses stable system prefix and final “only prose” task.
 
-- [ ] **Step 1: Write failing tests** for BASIC without Brief, STANDARD requiring current FROZEN Brief, STRICT rejection, stale Brief rejection, user output limit preservation, model limit overflow, required block overflow before API call, recent-full preference, manifest/run linkage, and exact message order.
+- [x] **Step 1: Write failing tests** for BASIC without Brief, STANDARD requiring current FROZEN Brief, STRICT rejection, stale Brief rejection, user output limit preservation, model limit overflow, required block overflow before API call, recent-full preference, manifest/run linkage, and exact message order.
 
 ```python
 with pytest.raises(StrictModeUnavailableError):
@@ -266,20 +269,20 @@ assert prepared.run.output_token_limit == 32_000
 assert prepared.messages[-1].content.endswith("只输出本章正文。")
 ```
 
-- [ ] **Step 2: Run focused tests and verify RED.**
+- [x] **Step 2: Run focused tests and verify RED.**
 
 ```powershell
 .venv\Scripts\python.exe -m pytest tests\integration\generation\test_generation_context.py -q -p no:cacheprovider --basetemp .test-temp\phase5-task5-red
 ```
 
-- [ ] **Step 3: Implement preparation and prompt building.** Add repository update support to ContextManifest persistence rather than letting UI or model code write run linkage.
+- [x] **Step 3: Implement preparation and prompt building.** Persist run linkage through repositories rather than letting UI or model code write it.
 
 ```python
 budget = TokenBudget(context_window, request.output_token_limit, safety_margin)
 budget.validate_model_output_limit(model_capabilities.max_output_tokens)
 ```
 
-- [ ] **Step 4: Run focused/full tests and static gates.**
+- [x] **Step 4: Run focused/full tests and static gates.**
 
 ```powershell
 .venv\Scripts\python.exe -m pytest -q -p no:cacheprovider --basetemp .test-temp\phase5-task5-full
@@ -287,17 +290,17 @@ budget.validate_model_output_limit(model_capabilities.max_output_tokens)
 .venv\Scripts\python.exe -m mypy src
 ```
 
-- [ ] **Step 5: Commit.**
+- [x] **Step 5: Commit.**
 
 ```powershell
-git add src/ai_novel_studio/application/generation_context_service.py src/ai_novel_studio/core/context/prose_prompt.py src/ai_novel_studio/core/context/context_manifest.py tests/integration/generation/test_generation_context.py
+git add src/ai_novel_studio/application/generation_context_service.py src/ai_novel_studio/core/context/prose_prompt.py src/ai_novel_studio/core/context/context_manifest.py src/ai_novel_studio/infrastructure/storage/generation_repository.py src/ai_novel_studio/infrastructure/storage/chapter_repository.py tests/integration/generation/test_generation_context.py
 git commit -m "feat: prepare traceable prose context"
 ```
 
 ### Task 6: GenerationRun、追加检查点与单写手约束
 
 **Files:**
-- Create: `src/ai_novel_studio/infrastructure/storage/generation_repository.py`
+- Modify: `src/ai_novel_studio/infrastructure/storage/generation_repository.py`
 - Create: `src/ai_novel_studio/infrastructure/storage/checkpoint_repository.py`
 - Test: `tests/integration/generation/test_generation_state_and_checkpoints.py`
 

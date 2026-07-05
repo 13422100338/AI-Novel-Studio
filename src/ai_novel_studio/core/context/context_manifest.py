@@ -122,6 +122,32 @@ class ContextManifestRepository:
             raise
         return path
 
+    def load(self, manifest_id: str) -> ContextManifest:
+        with self.project.database.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM context_manifests WHERE id = ? AND status = 'CURRENT'",
+                (manifest_id,),
+            ).fetchone()
+        if row is None:
+            raise KeyError(f"unknown context manifest: {manifest_id}")
+        path = (self.project.layout.root / row["content_path"]).resolve()
+        root = self.project.layout.root.resolve()
+        if not path.is_relative_to(root):
+            raise ValueError("上下文清单路径越出项目目录")
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        return ContextManifest(
+            id=payload["id"],
+            chapter_id=payload["chapter_id"],
+            run_id=payload["run_id"],
+            input_token_limit=payload["input_token_limit"],
+            output_token_limit=payload["output_token_limit"],
+            estimated_input_tokens=payload["estimated_input_tokens"],
+            selected=tuple(SelectedManifestItem(**item) for item in payload["selected"]),
+            omitted=tuple(OmittedManifestItem(**item) for item in payload["omitted"]),
+            warnings=tuple(payload["warnings"]),
+            created_at=datetime.fromisoformat(payload["created_at"]),
+        )
+
 
 def utc_now() -> datetime:
     return datetime.now(UTC)

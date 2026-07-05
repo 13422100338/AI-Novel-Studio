@@ -138,6 +138,33 @@ class ChapterRepository:
             connection.close()
         return [_chapter_from_row(row) for row in rows]
 
+    def list_before(self, chapter_id: str) -> list[Chapter]:
+        """Return non-deleted chapters before the target in canonical book order."""
+        validate_id(chapter_id)
+        with self.project.database.connect() as connection:
+            rows = connection.execute(
+                """
+                WITH target AS (
+                    SELECT v.sort_index AS volume_order, c.sort_index AS chapter_order
+                    FROM chapters c
+                    JOIN volumes v ON v.id = c.volume_id
+                    WHERE c.id = ? AND c.is_deleted = 0
+                )
+                SELECT c.*
+                FROM chapters c
+                JOIN volumes v ON v.id = c.volume_id
+                CROSS JOIN target t
+                WHERE c.is_deleted = 0
+                  AND (
+                    v.sort_index < t.volume_order
+                    OR (v.sort_index = t.volume_order AND c.sort_index < t.chapter_order)
+                  )
+                ORDER BY v.sort_index, c.sort_index, c.id
+                """,
+                (chapter_id,),
+            ).fetchall()
+        return [_chapter_from_row(row) for row in rows]
+
     def read_content(self, chapter_id: str) -> str:
         chapter = self.get_chapter(chapter_id, include_deleted=False)
         return (self.project.layout.root / chapter.content_path).read_text(encoding="utf-8")
