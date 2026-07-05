@@ -16,12 +16,44 @@ class GenerationStateError(RuntimeError):
     pass
 
 
+LEGAL_GENERATION_TRANSITIONS = {
+    GenerationStatus.PREPARING: {GenerationStatus.READY, GenerationStatus.FAILED},
+    GenerationStatus.READY: {GenerationStatus.STREAMING, GenerationStatus.FAILED},
+    GenerationStatus.STREAMING: {
+        GenerationStatus.PARTIAL,
+        GenerationStatus.COMPLETED,
+        GenerationStatus.FAILED,
+    },
+    GenerationStatus.PARTIAL: {
+        GenerationStatus.ACCEPTED,
+        GenerationStatus.DISCARDED,
+    },
+    GenerationStatus.COMPLETED: {
+        GenerationStatus.ACCEPTED,
+        GenerationStatus.DISCARDED,
+    },
+    GenerationStatus.FAILED: set(),
+    GenerationStatus.ACCEPTED: set(),
+    GenerationStatus.DISCARDED: set(),
+}
+
+_UPDATABLE_FIELDS = {
+    "context_manifest_id",
+    "accepted_chapter_revision",
+    "input_tokens",
+    "output_tokens",
+    "cached_input_tokens",
+    "reasoning_tokens",
+    "failure_code",
+    "failure_message",
+}
+
+
 def _now() -> datetime:
     return datetime.now(UTC)
 
 
 class GenerationRepository:
-    """Minimal run persistence used during preparation; Task 6 extends transitions."""
 
     def __init__(self, project: ProjectRepository) -> None:
         self.project = project
@@ -77,34 +109,74 @@ class GenerationRepository:
         return self.get(run_id)
 
     def mark_ready(self, run_id: str, context_manifest_id: str) -> GenerationRun:
-        now = _now().isoformat()
-        with self.project.database.connect() as connection, connection:
-            cursor = connection.execute(
-                """
-                UPDATE generation_runs
-                SET status = 'READY', context_manifest_id = ?, updated_at = ?
-                WHERE id = ? AND status = 'PREPARING'
-                """,
-                (context_manifest_id, now, run_id),
-            )
-        if cursor.rowcount != 1:
-            raise GenerationStateError("只有 PREPARING 任务可以进入 READY")
-        return self.get(run_id)
+        return self.transition(
+            run_id,
+            GenerationStatus.PREPARING,
+            GenerationStatus.READY,
+            context_manifest_id=context_manifest_id,
+        )
 
     def fail_preparation(self, run_id: str, code: str, message: str) -> GenerationRun:
+        return self.transition(
+            run_id,
+            GenerationStatus.PREPARING,
+            GenerationStatus.FAILED,
+            failure_code=code,
+            failure_message=message,
+        )
+
+    def transition(
+        self,
+        run_id: str,
+        expected_status: GenerationStatus,
+        target_status: GenerationStatus,
+        **fields: object,
+    ) -> GenerationRun:
+        unsupported = set(fields) - _UPDATABLE_FIELDS
+        if unsupported:
+            raise ValueError(f"不支持的更新字段：{', '.join(sorted(unsupported))}")
+        if target_status not in LEGAL_GENERATION_TRANSITIONS[expected_status]:
+            raise GenerationStateError(
+                f"非法生成状态转换：{expected_status.value} -> {target_status.value}"
+            )
+        if target_status == GenerationStatus.READY and not fields.get(
+            "context_manifest_id"
+        ):
+            raise GenerationStateError("READY 状态必须绑定 Context Manifest")
+        if target_status == GenerationStatus.ACCEPTED and fields.get(
+            "accepted_chapter_revision"
+        ) is None:
+            raise GenerationStateError("ACCEPTED 状态必须记录采用的章节修订")
+
         now = _now().isoformat()
+        assignments = ["status = ?", "updated_at = ?"]
+        values: list[object] = [target_status.value, now]
+        for field, value in fields.items():
+            assignments.append(f"{field} = ?")
+            values.append(value)
+        if target_status in {
+            GenerationStatus.PARTIAL,
+            GenerationStatus.COMPLETED,
+            GenerationStatus.FAILED,
+        }:
+            assignments.append("completed_at = ?")
+            values.append(now)
+        if target_status == GenerationStatus.ACCEPTED:
+            assignments.append("accepted_at = ?")
+            values.append(now)
+        values.extend((run_id, expected_status.value))
         with self.project.database.connect() as connection, connection:
             cursor = connection.execute(
-                """
-                UPDATE generation_runs
-                SET status = 'FAILED', failure_code = ?, failure_message = ?,
-                    updated_at = ?, completed_at = ?
-                WHERE id = ? AND status = 'PREPARING'
-                """,
-                (code, message, now, now, run_id),
+                f"UPDATE generation_runs SET {', '.join(assignments)} "
+                "WHERE id = ? AND status = ?",
+                tuple(values),
             )
         if cursor.rowcount != 1:
-            raise GenerationStateError("只有 PREPARING 任务可以记录准备失败")
+            current = self.get(run_id)
+            raise GenerationStateError(
+                f"生成任务状态已变化：预期 {expected_status.value}，"
+                f"当前 {current.status.value}"
+            )
         return self.get(run_id)
 
     def get(self, run_id: str) -> GenerationRun:

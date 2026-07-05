@@ -310,7 +310,7 @@ git commit -m "feat: prepare traceable prose context"
 - `CheckpointRepository.append(run_id, text, finish_reason=None) -> GenerationCheckpoint` atomically writes cumulative text and inserts the next sequence.
 - `latest(run_id) -> GenerationCheckpoint | None` verifies path stays inside project root and hash matches.
 
-- [ ] **Step 1: Write failing tests** for all legal/illegal transitions, active-writer conflicts, cumulative append-only checkpoints, sequence uniqueness, atomic file failure rollback, path traversal rejection, hash mismatch, and preservation of previous valid checkpoint.
+- [x] **Step 1: Write failing tests** for all legal/illegal transitions, active-writer conflicts, cumulative append-only checkpoints, sequence uniqueness, atomic file failure rollback, path traversal rejection, hash mismatch, and preservation of previous valid checkpoint.
 
 ```python
 first = checkpoints.append(run.id, "第一段")
@@ -319,13 +319,13 @@ assert first.sequence == 0 and second.sequence == 1
 assert checkpoints.read(first.id) == "第一段"
 ```
 
-- [ ] **Step 2: Run focused tests and verify RED.**
+- [x] **Step 2: Run focused tests and verify RED.**
 
 ```powershell
 .venv\Scripts\python.exe -m pytest tests\integration\generation\test_generation_state_and_checkpoints.py -q -p no:cacheprovider --basetemp .test-temp\phase5-task6-red
 ```
 
-- [ ] **Step 3: Implement repositories** using `atomic_write_text`, project-relative paths, optimistic status updates, and database rollback when file persistence fails. Never overwrite earlier checkpoint files.
+- [x] **Step 3: Implement repositories** using `atomic_write_text`, project-relative paths, optimistic status updates, and database rollback when file persistence fails. Never overwrite earlier checkpoint files.
 
 ```python
 LEGAL_GENERATION_TRANSITIONS = {
@@ -339,7 +339,7 @@ LEGAL_GENERATION_TRANSITIONS = {
 }
 ```
 
-- [ ] **Step 4: Run focused/full tests and static gates.**
+- [x] **Step 4: Run focused/full tests and static gates.**
 
 ```powershell
 .venv\Scripts\python.exe -m pytest -q -p no:cacheprovider --basetemp .test-temp\phase5-task6-full
@@ -347,7 +347,7 @@ LEGAL_GENERATION_TRANSITIONS = {
 .venv\Scripts\python.exe -m mypy src
 ```
 
-- [ ] **Step 5: Commit.**
+- [x] **Step 5: Commit.**
 
 ```powershell
 git add src/ai_novel_studio/infrastructure/storage/generation_repository.py src/ai_novel_studio/infrastructure/storage/checkpoint_repository.py tests/integration/generation/test_generation_state_and_checkpoints.py
