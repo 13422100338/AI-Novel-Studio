@@ -369,7 +369,7 @@ git commit -m "feat: add recoverable generation runs"
 - REASONING is emitted separately and never added to draft text.
 - Coordinator exposes Qt signals: `draft_chunk(str)`, `usage_changed(object)`, `run_changed(object)`, `failed(str)`.
 
-- [ ] **Step 1: Write failing tests** for exact prompt/Token forwarding, single paid call, text ordering, reasoning isolation, usage persistence, threshold checkpoints, completion, partial failure with/without text, cancellation, and coordinator non-blocking signals.
+- [x] **Step 1: Write failing tests** for exact prompt/Token forwarding, single paid call, text ordering, reasoning isolation, usage persistence, threshold checkpoints, completion, partial failure with/without text, cancellation, and coordinator non-blocking signals.
 
 ```python
 events = tuple(service.stream(run.id))
@@ -380,13 +380,13 @@ assert latest is not None
 assert checkpoints.read(latest.id) == "第一段第二段"
 ```
 
-- [ ] **Step 2: Run focused tests and verify RED.**
+- [x] **Step 2: Run focused tests and verify RED.**
 
 ```powershell
 .venv\Scripts\python.exe -m pytest tests\unit\application\test_prose_generation_service.py tests\ui\test_prose_generation_coordinator.py -q -p no:cacheprovider --basetemp .test-temp\phase5-task7-red
 ```
 
-- [ ] **Step 3: Implement service and coordinator.** The service transitions `READY -> STREAMING` before the gateway call; any exception is sanitized before persistence/UI emission.
+- [x] **Step 3: Implement service and coordinator.** The service transitions `READY -> STREAMING` before the gateway call; any exception is sanitized before persistence/UI emission.
 
 ```python
 for event in gateway.stream(TaskPurpose.PROSE_GENERATION, messages, output_limit):
@@ -396,7 +396,7 @@ for event in gateway.stream(TaskPurpose.PROSE_GENERATION, messages, output_limit
         yield ProseGenerationEvent.reasoning(event.text)
 ```
 
-- [ ] **Step 4: Run focused/full tests and static gates.**
+- [x] **Step 4: Run focused/full tests and static gates.**
 
 ```powershell
 .venv\Scripts\python.exe -m pytest -q -p no:cacheprovider --basetemp .test-temp\phase5-task7-full
@@ -404,7 +404,7 @@ for event in gateway.stream(TaskPurpose.PROSE_GENERATION, messages, output_limit
 .venv\Scripts\python.exe -m mypy src
 ```
 
-- [ ] **Step 5: Commit.**
+- [x] **Step 5: Commit.**
 
 ```powershell
 git add src/ai_novel_studio/application/prose_generation_service.py src/ai_novel_studio/application/prose_generation_coordinator.py tests/unit/application/test_prose_generation_service.py tests/ui/test_prose_generation_coordinator.py
