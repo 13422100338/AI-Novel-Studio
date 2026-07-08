@@ -17,12 +17,21 @@ class GenerationStateError(RuntimeError):
 
 
 LEGAL_GENERATION_TRANSITIONS = {
-    GenerationStatus.PREPARING: {GenerationStatus.READY, GenerationStatus.FAILED},
-    GenerationStatus.READY: {GenerationStatus.STREAMING, GenerationStatus.FAILED},
+    GenerationStatus.PREPARING: {
+        GenerationStatus.READY,
+        GenerationStatus.FAILED,
+        GenerationStatus.DISCARDED,
+    },
+    GenerationStatus.READY: {
+        GenerationStatus.STREAMING,
+        GenerationStatus.FAILED,
+        GenerationStatus.DISCARDED,
+    },
     GenerationStatus.STREAMING: {
         GenerationStatus.PARTIAL,
         GenerationStatus.COMPLETED,
         GenerationStatus.FAILED,
+        GenerationStatus.DISCARDED,
     },
     GenerationStatus.PARTIAL: {
         GenerationStatus.ACCEPTED,
@@ -32,7 +41,7 @@ LEGAL_GENERATION_TRANSITIONS = {
         GenerationStatus.ACCEPTED,
         GenerationStatus.DISCARDED,
     },
-    GenerationStatus.FAILED: set(),
+    GenerationStatus.FAILED: {GenerationStatus.DISCARDED},
     GenerationStatus.ACCEPTED: set(),
     GenerationStatus.DISCARDED: set(),
 }
@@ -158,6 +167,7 @@ class GenerationRepository:
             GenerationStatus.PARTIAL,
             GenerationStatus.COMPLETED,
             GenerationStatus.FAILED,
+            GenerationStatus.DISCARDED,
         }:
             assignments.append("completed_at = ?")
             values.append(now)
@@ -179,6 +189,20 @@ class GenerationRepository:
             )
         return self.get(run_id)
 
+    def list_by_statuses(
+        self, statuses: tuple[GenerationStatus, ...]
+    ) -> tuple[GenerationRun, ...]:
+        if not statuses:
+            return ()
+        placeholders = ", ".join("?" for _ in statuses)
+        with self.project.database.connect() as connection:
+            rows = connection.execute(
+                f"SELECT * FROM generation_runs WHERE status IN ({placeholders}) "
+                "ORDER BY started_at, id",
+                tuple(status.value for status in statuses),
+            ).fetchall()
+        return tuple(self._run_from_row(row) for row in rows)
+
     def get(self, run_id: str) -> GenerationRun:
         with self.project.database.connect() as connection:
             row = connection.execute(
@@ -186,6 +210,10 @@ class GenerationRepository:
             ).fetchone()
         if row is None:
             raise KeyError(f"unknown generation run: {run_id}")
+        return self._run_from_row(row)
+
+    @staticmethod
+    def _run_from_row(row: sqlite3.Row) -> GenerationRun:
         return GenerationRun(
             id=row["id"],
             chapter_id=row["chapter_id"],

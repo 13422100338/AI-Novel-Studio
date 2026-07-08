@@ -425,7 +425,7 @@ git commit -m "feat: stream prose into durable checkpoints"
 - `GenerationRecoveryService.scan() -> tuple[RecoverableGeneration, ...]` returns PREPARING/READY/STREAMING/PARTIAL runs and never calls a model.
 - Acceptance snapshots prior正文, writes checkpoint text, records accepted chapter revision, and triggers existing memory invalidation.
 
-- [ ] **Step 1: Write failing tests** proving formal正文 unchanged before accept, completed acceptance, explicit partial acceptance, default partial rejection, concurrent chapter revision rejection, duplicate acceptance rejection, version snapshot creation, hash validation, memory invalidation, discard preservation, and no API calls during recovery.
+- [x] **Step 1: Write failing tests** proving formal正文 unchanged before accept, completed acceptance, explicit partial acceptance, default partial rejection, concurrent chapter revision rejection, duplicate acceptance rejection, version snapshot creation, hash validation, memory invalidation, discard preservation, and no API calls during recovery.
 
 ```python
 assert chapters.read_content(chapter.id) == "旧正文"
@@ -434,13 +434,13 @@ assert chapters.read_content(chapter.id) == "生成正文"
 assert chapters.list_versions(chapter.id)[0].content_hash == old_hash
 ```
 
-- [ ] **Step 2: Run focused tests and verify RED.**
+- [x] **Step 2: Run focused tests and verify RED.**
 
 ```powershell
 .venv\Scripts\python.exe -m pytest tests\integration\generation\test_generation_acceptance_and_recovery.py -q -p no:cacheprovider --basetemp .test-temp\phase5-task8-red
 ```
 
-- [ ] **Step 3: Implement acceptance and recovery.** Add an expected-revision guard to `ChapterRepository.save_content`; if the chapter changed, preserve the run/checkpoint and reject adoption.
+- [x] **Step 3: Implement acceptance and recovery.** Add an expected-revision guard to `ChapterRepository.save_content`; if the chapter changed, preserve the run/checkpoint and reject adoption.
 
 ```python
 updated = chapters.save_content(
@@ -452,7 +452,7 @@ updated = chapters.save_content(
 )
 ```
 
-- [ ] **Step 4: Run focused/full tests and static gates.**
+- [x] **Step 4: Run focused/full tests and static gates.**
 
 ```powershell
 .venv\Scripts\python.exe -m pytest -q -p no:cacheprovider --basetemp .test-temp\phase5-task8-full
@@ -460,7 +460,7 @@ updated = chapters.save_content(
 .venv\Scripts\python.exe -m mypy src
 ```
 
-- [ ] **Step 5: Commit.**
+- [x] **Step 5: Commit.**
 
 ```powershell
 git add src/ai_novel_studio/application/generation_acceptance_service.py src/ai_novel_studio/application/generation_recovery_service.py src/ai_novel_studio/infrastructure/storage/chapter_repository.py tests/integration/generation/test_generation_acceptance_and_recovery.py

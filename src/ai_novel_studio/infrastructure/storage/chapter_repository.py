@@ -13,6 +13,10 @@ from ai_novel_studio.infrastructure.storage.memory_dependency_repository import 
 from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
 
 
+class StaleChapterRevisionError(RuntimeError):
+    pass
+
+
 def _now() -> datetime:
     return datetime.now(UTC)
 
@@ -177,8 +181,14 @@ class ChapterRepository:
         source: str,
         reason: str,
         invalidate_memory: bool = True,
+        expected_revision: int | None = None,
     ) -> Chapter:
         chapter = self.get_chapter(chapter_id, include_deleted=False)
+        if expected_revision is not None and chapter.revision != expected_revision:
+            raise StaleChapterRevisionError(
+                "chapter revision changed: "
+                f"expected {expected_revision}, current {chapter.revision}"
+            )
         canonical = self.project.layout.root / chapter.content_path
         previous = canonical.read_text(encoding="utf-8")
         version_id = new_id()
