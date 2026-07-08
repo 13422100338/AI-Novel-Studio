@@ -480,7 +480,7 @@ git commit -m "feat: accept and recover generated drafts safely"
 - `ManuscriptPanel` exposes mode, Token limit, generated-draft viewer, cancel/adopt/discard/retry signals, and a separate formal正文 editor.
 - `MainWindow` injects Phase 5 services when a project runtime is available; offline demo does not write storage or call a model.
 
-- [ ] **Step 1: Write failing UI tests** for BASIC enabled, STANDARD disabled without FROZEN Brief, STRICT disabled with explanation, freeze/clone metadata, prepare confirmation, streaming draft separation, cancel, partial label, adopt confirmation, recovery entry, and Token usage fields.
+- [x] **Step 1: Write failing UI tests** for BASIC enabled, STANDARD disabled without FROZEN Brief, STRICT disabled with explanation, freeze/clone metadata, prepare confirmation, streaming draft separation, cancel, partial label, adopt confirmation, recovery entry, and Token usage fields.
 
 ```python
 panel.mode_combo.setCurrentText("标准")
@@ -490,13 +490,13 @@ assert panel.generate_button.isEnabled() is True
 assert panel.editor.toPlainText() == "正式正文未变化"
 ```
 
-- [ ] **Step 2: Run focused tests and verify RED.**
+- [x] **Step 2: Run focused tests and verify RED.**
 
 ```powershell
 .venv\Scripts\python.exe -m pytest tests\ui\test_phase_5_brief_and_generation.py -q -p no:cacheprovider --basetemp .test-temp\phase5-task9-red
 ```
 
-- [ ] **Step 3: Implement service-driven UI binding** with Qt signals only. Do not call SQLite or provider adapters from widgets. Keep current black/white theme and existing resizable layout.
+- [x] **Step 3: Implement service-driven UI binding** with Qt signals only. Do not call SQLite or provider adapters from widgets. Keep current black/white theme and existing resizable layout.
 
 ```python
 self.generation_requested.emit(
@@ -505,7 +505,7 @@ self.generation_requested.emit(
 )
 ```
 
-- [ ] **Step 4: Run UI/full tests and static gates.**
+- [x] **Step 4: Run UI/full tests and static gates.**
 
 ```powershell
 .venv\Scripts\python.exe -m pytest tests\ui -q -p no:cacheprovider --basetemp .test-temp\phase5-task9-ui
@@ -514,7 +514,7 @@ self.generation_requested.emit(
 .venv\Scripts\python.exe -m mypy src
 ```
 
-- [ ] **Step 5: Commit.**
+- [x] **Step 5: Commit.**
 
 ```powershell
 git add src/ai_novel_studio/ui/pages/brief_dialog.py src/ai_novel_studio/ui/panels/manuscript_panel.py src/ai_novel_studio/ui/main_window.py tests/ui/test_phase_5_brief_and_generation.py

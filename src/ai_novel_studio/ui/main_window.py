@@ -1,3 +1,5 @@
+from typing import Any
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QFrame,
@@ -26,13 +28,18 @@ from ai_novel_studio.ui.theme import application_stylesheet
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, model_runtime: ModelRuntime | None = None) -> None:
+    def __init__(
+        self,
+        model_runtime: ModelRuntime | None = None,
+        generation_runtime: Any | None = None,
+    ) -> None:
         super().__init__()
         self.setWindowTitle("AI Novel Studio")
         self.setMinimumSize(1100, 680)
         self.resize(1440, 900)
         self.setStyleSheet(application_stylesheet())
         self.model_runtime = model_runtime or ModelRuntime.create_default()
+        self.generation_runtime = generation_runtime
 
         self.data = WorkspaceDemoData.sample()
         self.brief_dialog: BriefDialog | None = None
@@ -75,6 +82,15 @@ class MainWindow(QMainWindow):
         self.chapter_sidebar.style_requested.connect(self.open_style_rules_window)
         self.chapter_sidebar.audit_requested.connect(self.open_audit_window)
         self.manuscript_panel.audit_requested.connect(self.open_audit_window)
+        self.manuscript_panel.generation_requested.connect(self.request_prose_generation)
+        self.manuscript_panel.generation_cancel_requested.connect(
+            self.cancel_prose_generation
+        )
+        self.manuscript_panel.draft_accept_requested.connect(self.accept_prose_generation)
+        self.manuscript_panel.draft_discard_requested.connect(
+            self.discard_prose_generation
+        )
+        self.manuscript_panel.recovery_requested.connect(self.recover_prose_generation)
         self.top_bar.settings_requested.connect(self.open_settings_dialog)
         coordinator = self.model_runtime.coordinator
         coordinator.chat_chunk.connect(self.plot_chat_panel.append_assistant_chunk)
@@ -84,6 +100,7 @@ class MainWindow(QMainWindow):
         coordinator.audit_ready.connect(self.apply_model_audit)
         coordinator.task_failed.connect(self.show_model_error)
         coordinator.usage_changed.connect(self.update_usage)
+        self._bind_generation_runtime()
 
     def open_brief_dialog(self) -> None:
         if self.brief_dialog is None:
@@ -140,6 +157,35 @@ class MainWindow(QMainWindow):
             self.manuscript_panel.output_token_limit.value(),
         )
 
+    def request_prose_generation(
+        self,
+        mode: object,
+        output_token_limit: int,
+        target_words: int,
+    ) -> None:
+        if self.generation_runtime is None:
+            self.manuscript_panel.show_generation_error("正文生成运行时尚未连接")
+            return
+        self.generation_runtime.prepare_and_start(
+            mode, output_token_limit, target_words
+        )
+
+    def cancel_prose_generation(self) -> None:
+        if self.generation_runtime is not None:
+            self.generation_runtime.cancel_current()
+
+    def accept_prose_generation(self) -> None:
+        if self.generation_runtime is not None:
+            self.generation_runtime.accept_current()
+
+    def discard_prose_generation(self) -> None:
+        if self.generation_runtime is not None:
+            self.generation_runtime.discard_current()
+
+    def recover_prose_generation(self) -> None:
+        if self.generation_runtime is not None:
+            self.generation_runtime.recover()
+
     def apply_model_audit(self, value: object) -> None:
         if self.audit_window is not None and isinstance(value, StyleAuditResult):
             self.audit_window.apply_model_audit(value)
@@ -157,6 +203,26 @@ class MainWindow(QMainWindow):
     def update_usage(self, value: object) -> None:
         if isinstance(value, UsageSnapshot):
             self.top_bar.update_usage(value)
+
+    def _bind_generation_runtime(self) -> None:
+        if self.generation_runtime is None:
+            return
+        self.manuscript_panel.set_phase5_generation_enabled(
+            True, frozen_brief_available=False
+        )
+        self.generation_runtime.draft_chunk.connect(
+            self.manuscript_panel.append_generation_draft
+        )
+        self.generation_runtime.run_changed.connect(
+            self.manuscript_panel.apply_generation_status
+        )
+        self.generation_runtime.failed.connect(self.manuscript_panel.show_generation_error)
+        self.generation_runtime.accepted.connect(
+            self.manuscript_panel.apply_accepted_generation
+        )
+        self.generation_runtime.discarded.connect(
+            self.manuscript_panel.discard_generation_draft
+        )
 
     def _conversation_messages(self) -> tuple[LLMMessage, ...]:
         return tuple(
