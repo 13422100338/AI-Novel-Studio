@@ -1,7 +1,7 @@
 import sqlite3
 from collections.abc import Callable
 
-LATEST_SCHEMA_VERSION = 3
+LATEST_SCHEMA_VERSION = 4
 
 
 def _migration_1(connection: sqlite3.Connection) -> None:
@@ -382,10 +382,113 @@ def _migration_3(connection: sqlite3.Connection) -> None:
         connection.execute(statement)
 
 
+def _migration_4(connection: sqlite3.Connection) -> None:
+    statements = (
+        """
+        CREATE TABLE audit_runs (
+            id TEXT PRIMARY KEY,
+            chapter_id TEXT NOT NULL REFERENCES chapters(id),
+            target_kind TEXT NOT NULL CHECK(target_kind IN (
+                'GENERATED_DRAFT', 'FORMAL_CHAPTER'
+            )),
+            target_id TEXT NOT NULL,
+            target_revision INTEGER NOT NULL CHECK(target_revision >= 0),
+            target_hash TEXT NOT NULL,
+            mode TEXT NOT NULL CHECK(mode IN ('BASIC', 'STANDARD', 'STRICT')),
+            status TEXT NOT NULL CHECK(status IN (
+                'PREPARING', 'RULE_CHECKED', 'MODEL_CHECKED', 'COMPLETED', 'FAILED'
+            )),
+            model_provider_id TEXT,
+            model_id TEXT,
+            prompt_version TEXT NOT NULL,
+            input_tokens INTEGER CHECK(input_tokens >= 0),
+            output_tokens INTEGER CHECK(output_tokens >= 0),
+            cached_input_tokens INTEGER CHECK(cached_input_tokens >= 0),
+            reasoning_tokens INTEGER CHECK(reasoning_tokens >= 0),
+            failure_code TEXT,
+            failure_message TEXT,
+            started_at TEXT NOT NULL,
+            completed_at TEXT
+        )
+        """,
+        """
+        CREATE TABLE audit_findings (
+            id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL REFERENCES audit_runs(id),
+            category TEXT NOT NULL CHECK(category IN (
+                'STYLE', 'REQUIREMENT', 'CHARACTER', 'KNOWLEDGE',
+                'CLUE', 'CANON', 'TIMELINE', 'FORMAT'
+            )),
+            severity TEXT NOT NULL CHECK(severity IN (
+                'INFO', 'WARNING', 'ERROR', 'BLOCKER'
+            )),
+            source TEXT NOT NULL CHECK(source IN ('DETERMINISTIC', 'MODEL')),
+            location_json TEXT NOT NULL,
+            evidence TEXT NOT NULL,
+            explanation TEXT NOT NULL,
+            related_source_json TEXT NOT NULL,
+            confidence REAL NOT NULL CHECK(confidence >= 0 AND confidence <= 1),
+            status TEXT NOT NULL CHECK(status IN (
+                'OPEN', 'ACCEPTED_REPAIR', 'REJECTED',
+                'FALSE_POSITIVE', 'CONVERTED_TO_CANON'
+            )),
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """,
+        """
+        CREATE TABLE repair_proposals (
+            id TEXT PRIMARY KEY,
+            finding_id TEXT NOT NULL REFERENCES audit_findings(id),
+            target_revision INTEGER NOT NULL CHECK(target_revision >= 0),
+            target_hash TEXT NOT NULL,
+            strategy TEXT NOT NULL CHECK(strategy IN (
+                'REPLACE_TEXT', 'INSERT_TEXT', 'DELETE_TEXT', 'NOTE_ONLY'
+            )),
+            target_text TEXT NOT NULL DEFAULT '',
+            replacement_text TEXT NOT NULL DEFAULT '',
+            patch_json TEXT NOT NULL,
+            explanation TEXT NOT NULL,
+            risk_note TEXT NOT NULL,
+            status TEXT NOT NULL CHECK(status IN (
+                'DRAFT', 'VALIDATED', 'APPLIED', 'REJECTED', 'STALE', 'INVALID'
+            )),
+            created_at TEXT NOT NULL,
+            applied_at TEXT
+        )
+        """,
+        """
+        CREATE TABLE provenance_events (
+            id TEXT PRIMARY KEY,
+            chapter_id TEXT NOT NULL REFERENCES chapters(id),
+            chapter_revision_before INTEGER NOT NULL CHECK(chapter_revision_before >= 0),
+            chapter_revision_after INTEGER NOT NULL CHECK(chapter_revision_after >= 0),
+            event_type TEXT NOT NULL CHECK(event_type IN (
+                'REPAIR_APPLIED', 'FINDING_REJECTED',
+                'FALSE_POSITIVE', 'CANON_NOTE_CREATED'
+            )),
+            source_audit_run_id TEXT REFERENCES audit_runs(id),
+            source_finding_id TEXT REFERENCES audit_findings(id),
+            source_repair_id TEXT REFERENCES repair_proposals(id),
+            summary TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """,
+        "CREATE INDEX audit_runs_chapter ON audit_runs(chapter_id, started_at)",
+        "CREATE INDEX audit_runs_target ON audit_runs(target_kind, target_id, target_revision)",
+        "CREATE INDEX audit_findings_run_status ON audit_findings(run_id, status, severity)",
+        "CREATE INDEX repair_proposals_finding ON repair_proposals(finding_id, status)",
+        "CREATE INDEX provenance_events_chapter ON provenance_events(chapter_id, created_at)",
+    )
+    for statement in statements:
+        connection.execute(statement)
+
+
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     1: _migration_1,
     2: _migration_2,
     3: _migration_3,
+    4: _migration_4,
 }
 
 

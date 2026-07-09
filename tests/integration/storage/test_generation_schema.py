@@ -51,7 +51,7 @@ def _legacy_v2_connection(path):  # type: ignore[no-untyped-def]
     return connection
 
 
-def test_schema_v3_adds_generation_tables_and_preserves_v2_data(tmp_path) -> None:  # type: ignore[no-untyped-def]
+def test_latest_schema_keeps_generation_tables_and_preserves_v2_data(tmp_path) -> None:  # type: ignore[no-untyped-def]
     connection = _legacy_v2_connection(tmp_path / "legacy-v2.sqlite3")
     MigrationManager(connection).migrate()
     try:
@@ -74,7 +74,7 @@ def test_schema_v3_adds_generation_tables_and_preserves_v2_data(tmp_path) -> Non
     finally:
         connection.close()
 
-    assert version == LATEST_SCHEMA_VERSION == 3
+    assert version == LATEST_SCHEMA_VERSION == 4
     assert title == "旧港状态"
     assert {
         "chapter_requirements",
