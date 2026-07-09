@@ -120,6 +120,20 @@ class CheckpointRepository:
         self._verified_text(checkpoint)
         return checkpoint
 
+    def list_for_run(self, run_id: str) -> tuple[GenerationCheckpoint, ...]:
+        with self.project.database.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM generation_checkpoints
+                WHERE run_id = ? ORDER BY sequence
+                """,
+                (run_id,),
+            ).fetchall()
+        checkpoints = tuple(self._checkpoint(row) for row in rows)
+        for checkpoint in checkpoints:
+            self._verified_text(checkpoint)
+        return checkpoints
+
     def read(self, checkpoint_id: str) -> str:
         return self._verified_text(self.get(checkpoint_id))
 

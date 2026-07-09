@@ -60,10 +60,11 @@ def load_terms(path: Path) -> tuple[str, ...]:
 def scan_tree(root: Path, terms: tuple[str, ...]) -> list[Finding]:
     findings: list[Finding] = []
     for path in root.rglob("*"):
+        relative_parts = path.relative_to(root).parts
         if (
             not path.is_file()
             or path.name in EXCLUDED_FILES
-            or any(part in EXCLUDED_DIRS for part in path.parts)
+            or any(part in EXCLUDED_DIRS for part in relative_parts)
         ):
             continue
         raw = path.read_bytes()

@@ -537,7 +537,7 @@ git commit -m "feat: connect phase 5 generation workspace"
 - Version becomes `0.5.0` in package and build metadata.
 - ADR documents ownership, legal transitions, prompt order, Token policy, checkpoint format, adoption boundary, recovery, and Phase 5/6/7 separation.
 
-- [ ] **Step 1: Add failing version and pressure tests.** Create 100+ synthetic chapters, prepare STANDARD context, stream a long synthetic response through multiple checkpoints, recover it, and accept it without committing generated databases/files.
+- [x] **Step 1: Add failing version and pressure tests.** Create 100+ synthetic chapters, prepare STANDARD context, stream a long synthetic response through multiple checkpoints, recover it, and accept it without committing generated databases/files.
 
 ```python
 assert ai_novel_studio.__version__ == "0.5.0"
@@ -545,14 +545,14 @@ assert len(checkpoints.list_for_run(run.id)) >= 3
 assert recovery.scan()[0].run_id == run.id
 ```
 
-- [ ] **Step 2: Update version and documentation.** Do not include real names, private paths, manuscripts, keys, model response bodies, local databases, or build caches.
+- [x] **Step 2: Update version and documentation.** Do not include real names, private paths, manuscripts, keys, model response bodies, local databases, or build caches.
 
 ```toml
 [project]
 version = "0.5.0"
 ```
 
-- [ ] **Step 3: Run final source gates with controlled temp.**
+- [x] **Step 3: Run final source gates with controlled temp.**
 
 ```powershell
 .venv\Scripts\python.exe -m pytest -q -p no:cacheprovider --basetemp .test-temp\phase5-final
@@ -561,7 +561,7 @@ version = "0.5.0"
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify_release.ps1
 ```
 
-- [ ] **Step 4: Build and probe Windows EXE.** Require the build script to stop on any native command failure; start the EXE offscreen, confirm it remains alive for five seconds, then stop the probe.
+- [x] **Step 4: Build and probe Windows EXE.** Require the build script to stop on any native command failure; start the EXE offscreen, confirm it remains alive for five seconds, then stop the probe.
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/build_windows.ps1

@@ -302,3 +302,20 @@ Model memory extraction now validates both the top-level JSON contract and every
 All extracted records remain `MODEL_EXTRACTED/REVIEW`; the memory workspace exposes separate edit
 and promotion intents and blocks locked records before a storage mutation is attempted. These
 interfaces do not activate prose generation, frozen Briefs, automatic repair, or Agent tool calls.
+
+## Phase 5 implementation note
+
+Phase 5 was implemented on 2026-07-09. It adds protected Current Chapter Requirement persistence,
+reviewable Chapter Brief lifecycle, time-bounded Brief compilation, generation context preparation,
+Context Manifest linkage, streamed prose drafts, cumulative checkpoints, generation recovery,
+explicit draft acceptance, explicit discard, and UI controls that keep AI草稿 separate from formal
+chapter正文.
+
+The user-selected output Token limit is passed through to the prose run unchanged and is only
+rejected when the declared model capability cannot support it. The prose model never writes formal
+manuscript content directly: the chapter file changes only through `GenerationAcceptanceService`
+and `ChapterRepository.save_content` with an expected chapter revision guard.
+
+Restart recovery scans durable local state and checkpoints without automatically starting a second
+provider call. Strict-mode audit/repair, provenance export, and Agent tool loops remain later phase
+work.
