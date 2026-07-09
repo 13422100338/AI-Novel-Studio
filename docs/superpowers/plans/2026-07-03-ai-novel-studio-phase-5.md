@@ -569,7 +569,7 @@ $env:QT_QPA_PLATFORM = "offscreen"
 $process = Start-Process dist\AI-Novel-Studio\AI-Novel-Studio.exe -PassThru -WindowStyle Hidden
 ```
 
-- [ ] **Step 5: Commit, fast-forward merge, delete feature branch, and sync Desktop.** Re-run Desktop tests using the development interpreter with Desktop `PYTHONPATH`, run Desktop privacy verification, compare EXE SHA-256, and do not push GitHub.
+- [x] **Step 5: Commit, fast-forward merge, delete feature branch, and sync Desktop.** Re-run Desktop tests using the development interpreter with Desktop `PYTHONPATH`, run Desktop privacy verification, compare EXE SHA-256, and do not push GitHub.
 
 ```powershell
 git add README.md docs src pyproject.toml tests
