@@ -1,3 +1,4 @@
+from ai_novel_studio.infrastructure.storage.agent_repository import AgentRepository
 from ai_novel_studio.infrastructure.storage.backup_service import BackupService
 from ai_novel_studio.infrastructure.storage.chapter_repository import ChapterRepository
 from ai_novel_studio.infrastructure.storage.integrity import IntegrityChecker
@@ -8,6 +9,7 @@ from ai_novel_studio.infrastructure.storage.project_repository import ProjectRep
 
 __all__ = [
     "BackupService",
+    "AgentRepository",
     "ChapterRepository",
     "IntegrityChecker",
     "MigrationManager",

@@ -46,6 +46,7 @@ def test_advanced_route_precedes_default_dual_model_route() -> None:
     )
 
     assert routes.resolve(TaskPurpose.PLOT_DISCUSSION) == plot
+    assert routes.resolve(TaskPurpose.AGENT_ASSISTANT) == plot
     assert routes.resolve(TaskPurpose.CHAPTER_REQUIREMENT) == plot
     assert routes.resolve(TaskPurpose.BRIEF_NORMALIZATION) == plot
     assert routes.resolve(TaskPurpose.PROSE_GENERATION) == prose
@@ -81,4 +82,3 @@ def test_request_accepts_user_selected_200000_token_limit() -> None:
     )
 
     assert request.output_token_limit == 200_000
-

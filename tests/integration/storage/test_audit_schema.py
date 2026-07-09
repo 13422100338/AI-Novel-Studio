@@ -98,7 +98,7 @@ def test_schema_v4_adds_audit_tables_and_preserves_v3_data(tmp_path) -> None:  #
     finally:
         connection.close()
 
-    assert version == LATEST_SCHEMA_VERSION == 4
+    assert version == LATEST_SCHEMA_VERSION == 5
     assert title == "Old Chapter"
     assert {
         "audit_runs",
@@ -210,4 +210,3 @@ def test_schema_v4_migration_is_idempotent(tmp_path) -> None:  # type: ignore[no
     connection.close()
 
     assert count == 1
-

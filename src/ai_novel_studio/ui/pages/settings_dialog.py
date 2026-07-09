@@ -146,10 +146,12 @@ class SettingsDialog(QDialog):
         self.plot_model_combo = self._route_combo("剧情商讨模型", route_box)
         self.prose_model_combo = self._route_combo("正文创作模型", route_box)
         self.brief_model_combo = self._route_combo("Brief 整理模型", route_box)
+        self.agent_model_combo = self._route_combo("Agent 助手模型", route_box)
         self.audit_model_combo = self._route_combo("文风审校模型", route_box)
         route_form.addRow("剧情商讨", self.plot_model_combo)
         route_form.addRow("正文创作", self.prose_model_combo)
         route_form.addRow("Brief 整理（可覆盖）", self.brief_model_combo)
+        route_form.addRow("Agent 助手（可覆盖）", self.agent_model_combo)
         route_form.addRow("文风审校（可覆盖）", self.audit_model_combo)
         hint = QLabel(
             "剧情与正文模型相互独立。高级任务未指定时继承默认路线；程序不会在失败后自动改用其他付费模型。",
@@ -398,6 +400,7 @@ class SettingsDialog(QDialog):
             self.plot_model_combo: current.plot,
             self.prose_model_combo: current.prose,
             self.brief_model_combo: self._override(current, TaskPurpose.BRIEF_NORMALIZATION),
+            self.agent_model_combo: self._override(current, TaskPurpose.AGENT_ASSISTANT),
             self.audit_model_combo: self._override(current, TaskPurpose.STYLE_AUDIT),
         }
         for combo, selected in selections.items():
@@ -433,9 +436,12 @@ class SettingsDialog(QDialog):
             self._store_current_profile()
             overrides: list[tuple[TaskPurpose, ModelRoute]] = []
             brief = self.brief_model_combo.currentData()
+            agent = self.agent_model_combo.currentData()
             audit = self.audit_model_combo.currentData()
             if isinstance(brief, ModelRoute):
                 overrides.append((TaskPurpose.BRIEF_NORMALIZATION, brief))
+            if isinstance(agent, ModelRoute):
+                overrides.append((TaskPurpose.AGENT_ASSISTANT, agent))
             if isinstance(audit, ModelRoute):
                 overrides.append((TaskPurpose.STYLE_AUDIT, audit))
             configuration = ModelConfiguration(

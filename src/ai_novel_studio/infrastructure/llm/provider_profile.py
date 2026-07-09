@@ -36,6 +36,7 @@ class ProviderProfile:
 
 _PLOT_PURPOSES = {
     TaskPurpose.PLOT_DISCUSSION,
+    TaskPurpose.AGENT_ASSISTANT,
     TaskPurpose.CHAPTER_REQUIREMENT,
     TaskPurpose.BRIEF_NORMALIZATION,
     TaskPurpose.MEMORY_EXTRACTION,
@@ -64,4 +65,3 @@ class TaskRoutes:
         if self.prose is None:
             raise MissingModelRouteError("尚未配置正文创作模型")
         return self.prose
-

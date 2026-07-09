@@ -6,6 +6,7 @@ from enum import StrEnum
 
 class TaskPurpose(StrEnum):
     PLOT_DISCUSSION = "plot_discussion"
+    AGENT_ASSISTANT = "agent_assistant"
     CHAPTER_REQUIREMENT = "chapter_requirement"
     BRIEF_NORMALIZATION = "brief_normalization"
     PROSE_GENERATION = "prose_generation"

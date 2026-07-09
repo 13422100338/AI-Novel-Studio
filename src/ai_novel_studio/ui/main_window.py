@@ -18,6 +18,7 @@ from ai_novel_studio.application.model_runtime import ModelRuntime
 from ai_novel_studio.application.model_tasks import NormalizedBrief, StyleAuditResult
 from ai_novel_studio.infrastructure.llm import LLMMessage, UsageSnapshot
 from ai_novel_studio.ui.demo_data import WorkspaceDemoData
+from ai_novel_studio.ui.pages.agent_trace_window import AgentTraceWindow
 from ai_novel_studio.ui.pages.audit_window import AuditWindow
 from ai_novel_studio.ui.pages.brief_dialog import BriefDialog
 from ai_novel_studio.ui.pages.detached_chat_window import DetachedChatWindow
@@ -36,6 +37,7 @@ class MainWindow(QMainWindow):
         self,
         model_runtime: ModelRuntime | None = None,
         generation_runtime: Any | None = None,
+        agent_runtime: Any | None = None,
     ) -> None:
         super().__init__()
         self.setWindowTitle("AI Novel Studio")
@@ -44,6 +46,7 @@ class MainWindow(QMainWindow):
         self.setStyleSheet(application_stylesheet())
         self.model_runtime = model_runtime or ModelRuntime.create_default()
         self.generation_runtime = generation_runtime
+        self.agent_runtime = agent_runtime
         self.deterministic_audit_service = DeterministicAuditService()
 
         self.data = WorkspaceDemoData.sample()
@@ -52,6 +55,8 @@ class MainWindow(QMainWindow):
         self.memory_window: MemoryWindow | None = None
         self.style_rules_window: StyleRulesWindow | None = None
         self.audit_window: AuditWindow | None = None
+        self.agent_trace_window: AgentTraceWindow | None = None
+        self.last_agent_result: Any | None = None
         self.settings_dialog: SettingsDialog | None = None
         surface = QWidget(self)
         surface.setObjectName("appSurface")
@@ -83,6 +88,7 @@ class MainWindow(QMainWindow):
         self.plot_chat_panel.message_sent.connect(self.request_plot_reply)
         self.plot_chat_panel.chapter_requirement_requested.connect(self.request_requirement)
         self.plot_chat_panel.detach_requested.connect(self.open_detached_chat)
+        self.plot_chat_panel.agent_trace_requested.connect(self.open_agent_trace_window)
         self.chapter_sidebar.memory_requested.connect(self.open_memory_window)
         self.chapter_sidebar.style_requested.connect(self.open_style_rules_window)
         self.chapter_sidebar.audit_requested.connect(self.open_audit_window)
@@ -116,12 +122,44 @@ class MainWindow(QMainWindow):
         self.brief_dialog.activateWindow()
 
     def request_plot_reply(self, _message: str) -> None:
+        if self.plot_chat_panel.agent_mode_enabled():
+            self.request_agent_plot_reply(_message)
+            return
         self.plot_chat_panel.begin_assistant_response()
         self.model_runtime.coordinator.start_chat(
             self._conversation_messages(),
             self.manuscript_panel.editor.toPlainText(),
             self.manuscript_panel.output_token_limit.value(),
         )
+
+    def request_agent_plot_reply(self, message: str) -> None:
+        self.plot_chat_panel.begin_assistant_response()
+        if self.agent_runtime is None:
+            self.plot_chat_panel.show_model_error("Agent 运行时尚未连接")
+            return
+        try:
+            result = self.agent_runtime.discuss_plot_with_tools(
+                user_message=message,
+                current_manuscript=self.manuscript_panel.editor.toPlainText(),
+                chapter_requirement=self.manuscript_panel.chapter_requirement.toPlainText(),
+                chapter_id="ui-current-chapter",
+                model_provider_id="ui-agent",
+                model_id="ui-agent",
+                output_token_limit=self.manuscript_panel.output_token_limit.value(),
+            )
+        except Exception as exc:  # pragma: no cover - UI safety net
+            self.plot_chat_panel.show_model_error(str(exc))
+            return
+        self.last_agent_result = result
+        status = getattr(result, "status", None)
+        status_value = getattr(status, "value", str(status))
+        if status_value == "COMPLETED":
+            self.plot_chat_panel.append_assistant_chunk(result.final_answer)
+            self.plot_chat_panel.finish_assistant_response()
+        else:
+            self.plot_chat_panel.show_model_error(
+                getattr(result, "failure_message", None) or "Agent 调用失败"
+            )
 
     def request_requirement(self) -> None:
         if self.manuscript_panel.requirement_locked():
@@ -278,6 +316,23 @@ class MainWindow(QMainWindow):
             )
             self.audit_window.model_audit_requested.connect(self.request_model_audit)
         self._show_workspace_window(self.audit_window)
+
+    def open_agent_trace_window(self) -> None:
+        result = self.last_agent_result
+        if result is None:
+            result = type(
+                "EmptyAgentTrace",
+                (),
+                {
+                    "run_id": "暂无",
+                    "status": type("Status", (), {"value": "NO_RUN"})(),
+                    "final_answer": "",
+                    "failure_code": None,
+                    "failure_message": None,
+                },
+            )()
+        self.agent_trace_window = AgentTraceWindow(result, (), (), self)
+        self._show_workspace_window(self.agent_trace_window)
 
     def open_settings_dialog(self) -> None:
         if self.settings_dialog is None:

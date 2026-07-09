@@ -2,6 +2,7 @@ from collections.abc import Iterable
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
+    QCheckBox,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -20,6 +21,7 @@ class PlotChatPanel(QFrame):
     message_sent = Signal(str)
     chapter_requirement_requested = Signal()
     detach_requested = Signal()
+    agent_trace_requested = Signal()
 
     def __init__(
         self,
@@ -45,6 +47,14 @@ class PlotChatPanel(QFrame):
         self.detach_button.setToolTip("独立显示当前对话")
         self.detach_button.setVisible(allow_detach)
         self.detach_button.clicked.connect(self.detach_requested)
+        self.agent_mode_toggle = QCheckBox("Agent 模式", self)
+        self.agent_mode_toggle.setObjectName("agentModeToggle")
+        self.agent_mode_toggle.setToolTip("开启后，剧情商讨会使用只读工具检索记忆库与章节证据。")
+        self.agent_trace_button = QPushButton("工具追踪", self)
+        self.agent_trace_button.setObjectName("agentTraceButton")
+        self.agent_trace_button.setAccessibleName("查看 Agent 工具追踪")
+        self.agent_trace_button.setToolTip("查看最近一次 Agent 工具调用与证据来源")
+        self.agent_trace_button.clicked.connect(self.agent_trace_requested)
 
         header = QHBoxLayout()
         title_stack = QVBoxLayout()
@@ -53,6 +63,8 @@ class PlotChatPanel(QFrame):
         title_stack.addWidget(self.model_label)
         header.addLayout(title_stack)
         header.addStretch(1)
+        header.addWidget(self.agent_mode_toggle)
+        header.addWidget(self.agent_trace_button)
         header.addWidget(self.detach_button)
 
         self.scroll_area = QScrollArea(self)
@@ -108,6 +120,9 @@ class PlotChatPanel(QFrame):
 
     def message_snapshot(self) -> tuple[DemoMessage, ...]:
         return tuple(self._messages)
+
+    def agent_mode_enabled(self) -> bool:
+        return self.agent_mode_toggle.isChecked()
 
     def begin_assistant_response(self) -> None:
         if self._streaming_bubble is not None:

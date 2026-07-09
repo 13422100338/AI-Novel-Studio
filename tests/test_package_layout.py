@@ -26,6 +26,7 @@ def test_phase_one_storage_api_is_exported() -> None:
 
     expected = {
         "BackupService",
+        "AgentRepository",
         "ChapterRepository",
         "IntegrityChecker",
         "MigrationManager",
@@ -59,9 +60,9 @@ def test_phase_one_modules_are_importable() -> None:
         assert import_module(module) is not None
 
 
-def test_phase_six_package_version_matches_build_metadata() -> None:
+def test_phase_seven_package_version_matches_build_metadata() -> None:
     root = Path(__file__).parents[1]
     metadata = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
 
-    assert ai_novel_studio.__version__ == "0.6.0"
+    assert ai_novel_studio.__version__ == "0.7.0"
     assert metadata["project"]["version"] == ai_novel_studio.__version__

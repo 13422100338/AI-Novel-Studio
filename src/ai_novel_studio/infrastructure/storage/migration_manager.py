@@ -1,7 +1,7 @@
 import sqlite3
 from collections.abc import Callable
 
-LATEST_SCHEMA_VERSION = 4
+LATEST_SCHEMA_VERSION = 5
 
 
 def _migration_1(connection: sqlite3.Connection) -> None:
@@ -484,11 +484,86 @@ def _migration_4(connection: sqlite3.Connection) -> None:
         connection.execute(statement)
 
 
+def _migration_5(connection: sqlite3.Connection) -> None:
+    statements = (
+        """
+        CREATE TABLE agent_runs (
+            id TEXT PRIMARY KEY,
+            chapter_id TEXT REFERENCES chapters(id),
+            purpose TEXT NOT NULL CHECK(purpose IN (
+                'PLOT_DISCUSSION', 'REVISION_PLAN', 'AUDIT_EXPLANATION'
+            )),
+            status TEXT NOT NULL CHECK(status IN (
+                'PREPARING', 'RUNNING', 'WAITING_FOR_MODEL', 'WAITING_FOR_TOOL',
+                'COMPLETED', 'FAILED', 'CANCELLED'
+            )),
+            model_provider_id TEXT NOT NULL,
+            model_id TEXT NOT NULL,
+            prompt_version TEXT NOT NULL,
+            max_iterations INTEGER NOT NULL CHECK(max_iterations > 0),
+            max_tool_calls INTEGER NOT NULL CHECK(max_tool_calls >= 0),
+            max_tool_result_chars INTEGER NOT NULL CHECK(max_tool_result_chars > 0),
+            used_iterations INTEGER NOT NULL DEFAULT 0 CHECK(used_iterations >= 0),
+            used_tool_calls INTEGER NOT NULL DEFAULT 0 CHECK(used_tool_calls >= 0),
+            input_tokens INTEGER CHECK(input_tokens >= 0),
+            output_tokens INTEGER CHECK(output_tokens >= 0),
+            cached_input_tokens INTEGER CHECK(cached_input_tokens >= 0),
+            reasoning_tokens INTEGER CHECK(reasoning_tokens >= 0),
+            failure_code TEXT,
+            failure_message TEXT,
+            started_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            completed_at TEXT
+        )
+        """,
+        """
+        CREATE TABLE agent_turns (
+            id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL REFERENCES agent_runs(id),
+            sequence INTEGER NOT NULL CHECK(sequence >= 0),
+            role TEXT NOT NULL CHECK(role IN ('SYSTEM', 'USER', 'ASSISTANT', 'TOOL')),
+            content TEXT NOT NULL,
+            content_hash TEXT NOT NULL,
+            omitted INTEGER NOT NULL DEFAULT 0 CHECK(omitted IN (0, 1)),
+            created_at TEXT NOT NULL,
+            UNIQUE(run_id, sequence)
+        )
+        """,
+        """
+        CREATE TABLE agent_tool_calls (
+            id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL REFERENCES agent_runs(id),
+            turn_id TEXT REFERENCES agent_turns(id),
+            sequence INTEGER NOT NULL CHECK(sequence >= 0),
+            tool_name TEXT NOT NULL,
+            arguments_json TEXT NOT NULL,
+            status TEXT NOT NULL CHECK(status IN (
+                'REQUESTED', 'VALIDATED', 'EXECUTED', 'REJECTED', 'FAILED', 'OMITTED'
+            )),
+            result_json TEXT NOT NULL DEFAULT '{}',
+            result_chars INTEGER NOT NULL DEFAULT 0 CHECK(result_chars >= 0),
+            source_refs_json TEXT NOT NULL DEFAULT '[]',
+            failure_code TEXT,
+            failure_message TEXT,
+            created_at TEXT NOT NULL,
+            completed_at TEXT,
+            UNIQUE(run_id, sequence)
+        )
+        """,
+        "CREATE INDEX agent_runs_chapter ON agent_runs(chapter_id, started_at)",
+        "CREATE INDEX agent_turns_run ON agent_turns(run_id, sequence)",
+        "CREATE INDEX agent_tool_calls_run ON agent_tool_calls(run_id, sequence)",
+    )
+    for statement in statements:
+        connection.execute(statement)
+
+
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     1: _migration_1,
     2: _migration_2,
     3: _migration_3,
     4: _migration_4,
+    5: _migration_5,
 }
 
 

@@ -93,6 +93,7 @@ def test_settings_exposes_independent_plot_prose_and_advanced_routes(qtbot: QtBo
     assert dialog.plot_model_combo.count() == 3
     assert dialog.prose_model_combo.count() == 3
     assert dialog.brief_model_combo.count() == 3
+    assert dialog.agent_model_combo.count() == 3
     assert dialog.audit_model_combo.count() == 3
     dialog.plot_model_combo.setCurrentIndex(1)
     dialog.prose_model_combo.setCurrentIndex(2)
@@ -100,6 +101,38 @@ def test_settings_exposes_independent_plot_prose_and_advanced_routes(qtbot: QtBo
     saved = controller.save_calls[0][0]
     assert saved.routes.plot == ModelRoute(profile.id, "plot-model")
     assert saved.routes.prose == ModelRoute(profile.id, "prose-model")
+
+
+def test_settings_can_override_agent_assistant_route(qtbot: QtBot) -> None:
+    controller = FakeSettingsController()
+    dialog = SettingsDialog(controller=controller)
+    qtbot.addWidget(dialog)
+    dialog.connection_name.setText("第三方中转")
+    dialog.base_url.setText("https://relay.example/v1")
+    dialog.refresh_models_button.click()
+    profile = controller.refresh_calls[-1][0]
+    controller.models_loaded.emit(
+        profile.id,
+        (
+            ModelProfile(profile.id, "plot-model", "Plot"),
+            ModelProfile(profile.id, "agent-model", "Agent"),
+        ),
+    )
+
+    dialog.plot_model_combo.setCurrentIndex(1)
+    dialog.prose_model_combo.setCurrentIndex(1)
+    agent_index = next(
+        index
+        for index in range(dialog.agent_model_combo.count())
+        if dialog.agent_model_combo.itemData(index) == ModelRoute(profile.id, "agent-model")
+    )
+    dialog.agent_model_combo.setCurrentIndex(agent_index)
+    dialog.save_button.click()
+
+    from ai_novel_studio.infrastructure.llm import TaskPurpose
+
+    overrides = dict(controller.save_calls[0][0].routes.overrides)
+    assert overrides[TaskPurpose.AGENT_ASSISTANT] == ModelRoute(profile.id, "agent-model")
 
 
 def test_settings_can_probe_selected_model_capabilities(qtbot: QtBot) -> None:
