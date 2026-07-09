@@ -146,12 +146,12 @@ class SettingsDialog(QDialog):
         self.plot_model_combo = self._route_combo("剧情商讨模型", route_box)
         self.prose_model_combo = self._route_combo("正文创作模型", route_box)
         self.brief_model_combo = self._route_combo("Brief 整理模型", route_box)
-        self.agent_model_combo = self._route_combo("Agent 助手模型", route_box)
+        self.agent_model_combo = self._route_combo("工具检索模型", route_box)
         self.audit_model_combo = self._route_combo("文风审校模型", route_box)
         route_form.addRow("剧情商讨", self.plot_model_combo)
         route_form.addRow("正文创作", self.prose_model_combo)
         route_form.addRow("Brief 整理（可覆盖）", self.brief_model_combo)
-        route_form.addRow("Agent 助手（可覆盖）", self.agent_model_combo)
+        route_form.addRow("工具检索（可覆盖）", self.agent_model_combo)
         route_form.addRow("文风审校（可覆盖）", self.audit_model_combo)
         hint = QLabel(
             "剧情与正文模型相互独立。高级任务未指定时继承默认路线；程序不会在失败后自动改用其他付费模型。",

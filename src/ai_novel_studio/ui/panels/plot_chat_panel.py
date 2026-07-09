@@ -47,13 +47,15 @@ class PlotChatPanel(QFrame):
         self.detach_button.setToolTip("独立显示当前对话")
         self.detach_button.setVisible(allow_detach)
         self.detach_button.clicked.connect(self.detach_requested)
-        self.agent_mode_toggle = QCheckBox("Agent 模式", self)
+        self.agent_mode_toggle = QCheckBox("工具检索", self)
         self.agent_mode_toggle.setObjectName("agentModeToggle")
-        self.agent_mode_toggle.setToolTip("开启后，剧情商讨会使用只读工具检索记忆库与章节证据。")
-        self.agent_trace_button = QPushButton("工具追踪", self)
+        self.agent_mode_toggle.setToolTip(
+            "开启后，剧情商讨模型可通过只读工具查询章节、记忆、人物、伏笔、正典与审校证据；不会自动修改正文或记忆库。"
+        )
+        self.agent_trace_button = QPushButton("证据追踪", self)
         self.agent_trace_button.setObjectName("agentTraceButton")
-        self.agent_trace_button.setAccessibleName("查看 Agent 工具追踪")
-        self.agent_trace_button.setToolTip("查看最近一次 Agent 工具调用与证据来源")
+        self.agent_trace_button.setAccessibleName("查看证据追踪")
+        self.agent_trace_button.setToolTip("查看最近一次只读工具调用与证据来源")
         self.agent_trace_button.clicked.connect(self.agent_trace_requested)
 
         header = QHBoxLayout()

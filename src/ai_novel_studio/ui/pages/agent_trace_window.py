@@ -22,7 +22,7 @@ class AgentTraceWindow(QMainWindow):
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Agent 工具追踪")
+        self.setWindowTitle("证据追踪")
         self.resize(820, 560)
         status = getattr(getattr(run, "status", None), "value", str(getattr(run, "status", "")))
         self.status_label = QLabel(f"Run: {getattr(run, 'run_id', '')} · {status}", self)

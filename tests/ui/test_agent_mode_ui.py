@@ -49,7 +49,9 @@ def test_agent_mode_toggle_defaults_off(qtbot):  # type: ignore[no-untyped-def]
     qtbot.addWidget(window)
 
     assert not window.plot_chat_panel.agent_mode_enabled()
-    assert window.plot_chat_panel.agent_mode_toggle.text()
+    assert window.plot_chat_panel.agent_mode_toggle.text() == "工具检索"
+    assert window.plot_chat_panel.agent_trace_button.text() == "证据追踪"
+    assert window.plot_chat_panel.agent_trace_button.accessibleName() == "查看证据追踪"
 
 
 def test_normal_plot_chat_still_uses_existing_coordinator(qtbot):  # type: ignore[no-untyped-def]
@@ -96,6 +98,7 @@ def test_trace_window_displays_turns_tool_calls_and_omissions(qtbot):  # type: i
     window = AgentTraceWindow(run, turns, tool_calls)
     qtbot.addWidget(window)
 
+    assert window.windowTitle() == "证据追踪"
     assert window.turn_table.rowCount() == 2
     assert window.tool_table.rowCount() == 1
     assert "COMPLETED" in window.status_label.text()
