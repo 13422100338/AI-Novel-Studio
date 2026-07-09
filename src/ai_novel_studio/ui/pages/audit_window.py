@@ -1,3 +1,5 @@
+from collections.abc import Iterable
+
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QHBoxLayout,
@@ -16,6 +18,7 @@ from ai_novel_studio.ui.demo_data import WorkspaceDemoData
 
 
 class AuditWindow(QMainWindow):
+    deterministic_audit_requested = Signal()
     model_audit_requested = Signal()
 
     def __init__(self, data: WorkspaceDemoData, parent: QWidget | None = None) -> None:
@@ -46,6 +49,11 @@ class AuditWindow(QMainWindow):
         self.tabs.addTab(self.deterministic_table, "确定性检查")
         self.tabs.addTab(self.model_table, "模型审校")
 
+        self.run_deterministic_audit_button = QPushButton("运行确定性检查", surface)
+        self.run_deterministic_audit_button.setAccessibleName("运行当前章节确定性审校")
+        self.run_deterministic_audit_button.clicked.connect(
+            self.deterministic_audit_requested
+        )
         accept_button = QPushButton("接受标记", surface)
         accept_button.setAccessibleName("接受当前审校标记")
         reject_button = QPushButton("忽略标记", surface)
@@ -57,6 +65,7 @@ class AuditWindow(QMainWindow):
         self.run_model_audit_button.setAccessibleName("使用审校模型检查当前章节")
         self.run_model_audit_button.clicked.connect(self.model_audit_requested)
         actions = QHBoxLayout()
+        actions.addWidget(self.run_deterministic_audit_button)
         actions.addWidget(accept_button)
         actions.addWidget(reject_button)
         actions.addWidget(self.run_model_audit_button)
@@ -87,3 +96,37 @@ class AuditWindow(QMainWindow):
                 self.model_table.setItem(row, column, QTableWidgetItem(value))
         self.run_model_audit_button.setEnabled(True)
         self.run_model_audit_button.setText("重新运行模型审校")
+
+    def apply_deterministic_findings(self, findings: Iterable[object]) -> None:
+        rows = []
+        for finding in findings:
+            source = getattr(
+                getattr(finding, "source", ""),
+                "value",
+                getattr(finding, "source", ""),
+            )
+            category = getattr(
+                getattr(finding, "category", ""),
+                "value",
+                getattr(finding, "category", ""),
+            )
+            severity = getattr(
+                getattr(finding, "severity", ""),
+                "value",
+                getattr(finding, "severity", ""),
+            )
+            explanation = getattr(finding, "explanation", "")
+            evidence = getattr(finding, "evidence", "")
+            rows.append(
+                (
+                    str(source or "DETERMINISTIC"),
+                    f"{category} / {severity}: {explanation}",
+                    str(evidence),
+                )
+            )
+        self.deterministic_table.setRowCount(len(rows))
+        for row, values in enumerate(rows):
+            for column, value in enumerate(values):
+                self.deterministic_table.setItem(row, column, QTableWidgetItem(value))
+        self.run_deterministic_audit_button.setEnabled(True)
+        self.run_deterministic_audit_button.setText("重新运行确定性检查")

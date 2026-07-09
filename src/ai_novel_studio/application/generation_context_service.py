@@ -37,10 +37,6 @@ from ai_novel_studio.infrastructure.storage.generation_repository import Generat
 from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
 
 
-class StrictModeUnavailableError(ValueError):
-    pass
-
-
 class StandardModeBriefError(ValueError):
     pass
 
@@ -140,8 +136,6 @@ class GenerationContextService:
     def _validated_brief(
         self, request: GenerationPreparationRequest
     ) -> ChapterBrief | None:
-        if request.mode == CreationMode.STRICT:
-            raise StrictModeUnavailableError("严格模式将在后续阶段开放")
         if request.mode == CreationMode.BASIC:
             return None
         if request.brief_id is None:

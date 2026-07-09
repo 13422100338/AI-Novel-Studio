@@ -60,8 +60,7 @@ def test_generation_controls_follow_mode_and_brief_state(qtbot: QtBot) -> None:
     panel.set_frozen_brief_available(True)
     assert panel.generate_button.isEnabled() is True
     panel.set_creation_mode(CreationMode.STRICT)
-    assert panel.generate_button.isEnabled() is False
-    assert "阶段 6" in panel.generate_button.toolTip()
+    assert panel.generate_button.isEnabled() is True
 
 
 def test_generation_request_emits_mode_token_limit_and_target_words(

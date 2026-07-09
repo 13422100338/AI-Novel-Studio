@@ -329,13 +329,10 @@ class ManuscriptPanel(QFrame):
             self.generate_button.setToolTip("阶段 5 接入章节生成管线后可用")
             return
         mode = self.current_creation_mode()
-        if mode == CreationMode.STRICT:
+        needs_brief = mode in {CreationMode.STANDARD, CreationMode.STRICT}
+        if needs_brief and not self._frozen_brief_available:
             self.generate_button.setEnabled(False)
-            self.generate_button.setToolTip("严格模式将在阶段 6 审校与修复管线开放")
-            return
-        if mode == CreationMode.STANDARD and not self._frozen_brief_available:
-            self.generate_button.setEnabled(False)
-            self.generate_button.setToolTip("标准模式需要先冻结当前章 Brief")
+            self.generate_button.setToolTip("标准/严格模式需要先冻结当前章 Brief")
             return
         if self.cancel_generation_button.isEnabled():
             self.generate_button.setEnabled(False)

@@ -10,6 +10,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ai_novel_studio.application.deterministic_audit_service import (
+    DeterministicAuditRequest,
+    DeterministicAuditService,
+)
 from ai_novel_studio.application.model_runtime import ModelRuntime
 from ai_novel_studio.application.model_tasks import NormalizedBrief, StyleAuditResult
 from ai_novel_studio.infrastructure.llm import LLMMessage, UsageSnapshot
@@ -40,6 +44,7 @@ class MainWindow(QMainWindow):
         self.setStyleSheet(application_stylesheet())
         self.model_runtime = model_runtime or ModelRuntime.create_default()
         self.generation_runtime = generation_runtime
+        self.deterministic_audit_service = DeterministicAuditService()
 
         self.data = WorkspaceDemoData.sample()
         self.brief_dialog: BriefDialog | None = None
@@ -157,6 +162,22 @@ class MainWindow(QMainWindow):
             self.manuscript_panel.output_token_limit.value(),
         )
 
+    def request_deterministic_audit(self) -> None:
+        if self.audit_window is not None:
+            self.audit_window.run_deterministic_audit_button.setEnabled(False)
+            self.audit_window.run_deterministic_audit_button.setText("检查中…")
+        findings = self.deterministic_audit_service.run(
+            DeterministicAuditRequest(
+                chapter_id="ui-current-chapter",
+                target_text=self.manuscript_panel.editor.toPlainText(),
+                target_revision=0,
+                target_hash="ui-preview",
+                requirement_content=self.manuscript_panel.chapter_requirement.toPlainText(),
+            )
+        )
+        if self.audit_window is not None:
+            self.audit_window.apply_deterministic_findings(findings)
+
     def request_prose_generation(
         self,
         mode: object,
@@ -252,6 +273,9 @@ class MainWindow(QMainWindow):
     def open_audit_window(self) -> None:
         if self.audit_window is None:
             self.audit_window = AuditWindow(self.data, self)
+            self.audit_window.deterministic_audit_requested.connect(
+                self.request_deterministic_audit
+            )
             self.audit_window.model_audit_requested.connect(self.request_model_audit)
         self._show_workspace_window(self.audit_window)
 

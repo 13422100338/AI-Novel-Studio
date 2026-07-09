@@ -157,7 +157,7 @@ def test_phase_5_pipeline_handles_hundred_chapter_pressure_recovery_and_acceptan
     assert chapters.read_content(current.id) == expected_draft
 
 
-def test_package_version_is_phase_5_release() -> None:
+def test_package_version_is_phase_6_release() -> None:
     import ai_novel_studio
 
-    assert ai_novel_studio.__version__ == "0.5.0"
+    assert ai_novel_studio.__version__ == "0.6.0"

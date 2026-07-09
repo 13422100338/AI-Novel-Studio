@@ -51,6 +51,7 @@ def test_audit_window_separates_deterministic_and_model_findings(qtbot: QtBot) -
     assert window.model_table.rowCount() == 1
     assert window.repair_button.isEnabled() is False
     assert "阶段 6" in window.repair_button.toolTip()
+    assert window.run_deterministic_audit_button.isEnabled() is True
 
 
 def test_main_window_reuses_memory_style_and_audit_windows(qtbot: QtBot) -> None:
@@ -68,3 +69,21 @@ def test_main_window_reuses_memory_style_and_audit_windows(qtbot: QtBot) -> None
 
     window.manuscript_panel.audit_requested.emit()
     assert window.audit_window is not None
+
+
+def test_main_window_runs_deterministic_audit_on_current_editor(qtbot: QtBot) -> None:
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.open_audit_window()
+    assert window.audit_window is not None
+    window.manuscript_panel.chapter_requirement.setPlainText("must: find the letter")
+    window.manuscript_panel.editor.setPlainText("Of course, here is the chapter.")
+
+    window.audit_window.run_deterministic_audit_button.click()
+
+    assert window.audit_window.deterministic_table.rowCount() >= 2
+    evidence = [
+        window.audit_window.deterministic_table.item(row, 2).text()
+        for row in range(window.audit_window.deterministic_table.rowCount())
+    ]
+    assert any("find the letter" in item for item in evidence)

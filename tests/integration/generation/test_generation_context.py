@@ -7,7 +7,6 @@ from ai_novel_studio.application.generation_context_service import (
     GenerationContextService,
     GenerationPreparationRequest,
     StandardModeBriefError,
-    StrictModeUnavailableError,
 )
 from ai_novel_studio.core.brief.source_fingerprint import BriefSourceSnapshot
 from ai_novel_studio.core.context.context_builder import RequiredContextOverflowError
@@ -127,7 +126,7 @@ def test_basic_preparation_preserves_output_limit_and_links_manifest(
     assert workspace["manifests"].load(prepared.manifest.id) == prepared.manifest
 
 
-def test_standard_requires_current_frozen_brief_and_strict_is_unavailable(
+def test_standard_and_strict_require_current_frozen_brief(
     tmp_path: Path,
 ) -> None:
     workspace = _workspace(tmp_path)
@@ -136,8 +135,17 @@ def test_standard_requires_current_frozen_brief_and_strict_is_unavailable(
         workspace["service"].prepare(
             _request(workspace, mode=CreationMode.STANDARD, brief_id=None)
         )
-    with pytest.raises(StrictModeUnavailableError, match="严格模式"):
+    with pytest.raises(StandardModeBriefError, match="冻结 Brief"):
         workspace["service"].prepare(_request(workspace, mode=CreationMode.STRICT))
+    strict = workspace["service"].prepare(
+        _request(
+            workspace,
+            mode=CreationMode.STRICT,
+            brief_id=workspace["brief"].id,
+        )
+    )
+    assert strict.run.status == GenerationStatus.READY
+    assert strict.run.mode == CreationMode.STRICT
 
     workspace["briefs"].mark_stale_for_source(
         "CHAPTER_REQUIREMENT",

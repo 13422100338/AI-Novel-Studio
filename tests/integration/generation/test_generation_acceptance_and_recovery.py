@@ -18,8 +18,16 @@ from ai_novel_studio.core.context.context_manifest import (
     create_manifest_id,
     utc_now,
 )
+from ai_novel_studio.domain.audit import (
+    AuditFindingCategory,
+    AuditFindingSource,
+    AuditRunStatus,
+    AuditSeverity,
+    AuditTargetKind,
+)
 from ai_novel_studio.domain.generation import CreationMode, GenerationStatus
 from ai_novel_studio.domain.memory import MemoryStatus, SummaryLevel
+from ai_novel_studio.infrastructure.storage.audit_repository import AuditRepository
 from ai_novel_studio.infrastructure.storage.chapter_repository import (
     ChapterRepository,
     StaleChapterRevisionError,
@@ -64,6 +72,19 @@ def _preparing(runs: GenerationRepository, chapter_id: str):
     )
 
 
+def _preparing_with_mode(runs: GenerationRepository, chapter_id: str, mode: CreationMode):
+    return runs.create_preparing(
+        chapter_id=chapter_id,
+        mode=mode,
+        brief_id=None,
+        brief_revision=None,
+        model_provider_id="provider",
+        model_id="writer",
+        output_token_limit=3000,
+        prompt_version="prose-v1",
+    )
+
+
 def _ready(project: ProjectRepository, runs: GenerationRepository, run):
     manifest = ContextManifest(
         create_manifest_id(),
@@ -91,6 +112,16 @@ def _streaming(project: ProjectRepository, runs: GenerationRepository, chapter_i
     return runs.transition(ready.id, GenerationStatus.READY, GenerationStatus.STREAMING)
 
 
+def _streaming_with_mode(
+    project: ProjectRepository,
+    runs: GenerationRepository,
+    chapter_id: str,
+    mode: CreationMode,
+):
+    ready = _ready(project, runs, _preparing_with_mode(runs, chapter_id, mode))
+    return runs.transition(ready.id, GenerationStatus.READY, GenerationStatus.STREAMING)
+
+
 def _completed_run(
     project: ProjectRepository,
     runs: GenerationRepository,
@@ -99,6 +130,23 @@ def _completed_run(
     draft: str = "generated prose",
 ):
     streaming = _streaming(project, runs, chapter_id)
+    checkpoints.append(streaming.id, draft, finish_reason="stop")
+    return runs.transition(
+        streaming.id,
+        GenerationStatus.STREAMING,
+        GenerationStatus.COMPLETED,
+        output_tokens=200,
+    )
+
+
+def _completed_strict_run(
+    project: ProjectRepository,
+    runs: GenerationRepository,
+    checkpoints: CheckpointRepository,
+    chapter_id: str,
+    draft: str = "generated prose",
+):
+    streaming = _streaming_with_mode(project, runs, chapter_id, CreationMode.STRICT)
     checkpoints.append(streaming.id, draft, finish_reason="stop")
     return runs.transition(
         streaming.id,
@@ -232,6 +280,63 @@ def test_discard_preserves_checkpoint_and_does_not_change_formal_prose(
     assert checkpoints.read(latest.id) == "discarded draft"
     with pytest.raises(GenerationAcceptanceError, match="discarded"):
         service.accept(run.id, expected_chapter_revision=0)
+
+
+def test_strict_generation_requires_completed_audit_before_acceptance(tmp_path: Path) -> None:
+    project, chapters, chapter, runs, checkpoints, _ = _workspace(tmp_path)
+    audits = AuditRepository(project)
+    service = GenerationAcceptanceService(project, runs, checkpoints, chapters, audits)
+    run = _completed_strict_run(project, runs, checkpoints, chapter.id, "strict draft")
+
+    with pytest.raises(GenerationAcceptanceError, match="strict"):
+        service.accept(run.id, expected_chapter_revision=0)
+
+    audit_run = audits.create_run(
+        chapter_id=chapter.id,
+        target_kind=AuditTargetKind.GENERATED_DRAFT,
+        target_id=run.id,
+        target_revision=0,
+        target_hash=_sha256("strict draft"),
+        mode=CreationMode.STRICT,
+        status=AuditRunStatus.COMPLETED,
+        prompt_version="deterministic-v1",
+    )
+    audits.add_finding(
+        run_id=audit_run.id,
+        category=AuditFindingCategory.FORMAT,
+        severity=AuditSeverity.ERROR,
+        source=AuditFindingSource.DETERMINISTIC,
+        location_json="{}",
+        evidence="problem",
+        explanation="blocking issue",
+        related_source_json="[]",
+        confidence=1.0,
+    )
+
+    with pytest.raises(GenerationAcceptanceError, match="blocking"):
+        service.accept(run.id, expected_chapter_revision=0)
+
+
+def test_strict_generation_accepts_after_clean_completed_audit(tmp_path: Path) -> None:
+    project, chapters, chapter, runs, checkpoints, _ = _workspace(tmp_path)
+    audits = AuditRepository(project)
+    service = GenerationAcceptanceService(project, runs, checkpoints, chapters, audits)
+    run = _completed_strict_run(project, runs, checkpoints, chapter.id, "strict draft")
+    audits.create_run(
+        chapter_id=chapter.id,
+        target_kind=AuditTargetKind.GENERATED_DRAFT,
+        target_id=run.id,
+        target_revision=0,
+        target_hash=_sha256("strict draft"),
+        mode=CreationMode.STRICT,
+        status=AuditRunStatus.COMPLETED,
+        prompt_version="deterministic-v1",
+    )
+
+    accepted = service.accept(run.id, expected_chapter_revision=0)
+
+    assert accepted.run.status == GenerationStatus.ACCEPTED
+    assert chapters.read_content(chapter.id) == "strict draft"
 
 
 def test_recovery_scan_returns_only_recoverable_runs_and_never_calls_model(

@@ -2,8 +2,20 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from ai_novel_studio.domain.audit import (
+    AuditFindingStatus,
+    AuditRunStatus,
+    AuditSeverity,
+    AuditTargetKind,
+)
 from ai_novel_studio.domain.chapter import Chapter
-from ai_novel_studio.domain.generation import GenerationCheckpoint, GenerationRun, GenerationStatus
+from ai_novel_studio.domain.generation import (
+    CreationMode,
+    GenerationCheckpoint,
+    GenerationRun,
+    GenerationStatus,
+)
+from ai_novel_studio.infrastructure.storage.audit_repository import AuditRepository
 from ai_novel_studio.infrastructure.storage.chapter_repository import ChapterRepository
 from ai_novel_studio.infrastructure.storage.checkpoint_repository import CheckpointRepository
 from ai_novel_studio.infrastructure.storage.generation_repository import (
@@ -31,11 +43,13 @@ class GenerationAcceptanceService:
         runs: GenerationRepository | None = None,
         checkpoints: CheckpointRepository | None = None,
         chapters: ChapterRepository | None = None,
+        audits: AuditRepository | None = None,
     ) -> None:
         self.project = project
         self.runs = runs or GenerationRepository(project)
         self.checkpoints = checkpoints or CheckpointRepository(project, self.runs)
         self.chapters = chapters or ChapterRepository(project)
+        self.audits = audits or AuditRepository(project)
 
     def accept(
         self,
@@ -50,6 +64,7 @@ class GenerationAcceptanceService:
         if checkpoint is None:
             raise GenerationAcceptanceError("generation run has no checkpoint to accept")
         draft = self.checkpoints.read(checkpoint.id)
+        self._validate_strict_audit(run)
         chapter = self.chapters.save_content(
             run.chapter_id,
             draft,
@@ -72,6 +87,32 @@ class GenerationAcceptanceService:
                 f"generation run is already terminal: {run.status.value}"
             )
         return self.runs.transition(run.id, run.status, GenerationStatus.DISCARDED)
+
+    def _validate_strict_audit(self, run: GenerationRun) -> None:
+        if run.mode != CreationMode.STRICT:
+            return
+        runs = self.audits.list_runs_for_target(
+            target_kind=AuditTargetKind.GENERATED_DRAFT,
+            target_id=run.id,
+        )
+        completed = next(
+            (audit_run for audit_run in runs if audit_run.status == AuditRunStatus.COMPLETED),
+            None,
+        )
+        if completed is None:
+            raise GenerationAcceptanceError(
+                "strict generation requires a completed audit before acceptance"
+            )
+        blockers = [
+            finding
+            for finding in self.audits.list_findings(completed.id)
+            if finding.status == AuditFindingStatus.OPEN
+            and finding.severity in {AuditSeverity.ERROR, AuditSeverity.BLOCKER}
+        ]
+        if blockers:
+            raise GenerationAcceptanceError(
+                "strict generation has blocking audit findings"
+            )
 
     @staticmethod
     def _validate_acceptance_status(
