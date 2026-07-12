@@ -131,3 +131,21 @@ class ProjectRepository:
                 ),
             )
         return volume
+
+    def rename_volume(self, volume_id: str, title: str) -> Volume:
+        validate_id(volume_id)
+        normalized = title.strip()
+        if not normalized:
+            raise ValueError("volume title cannot be empty")
+        now = _now()
+        with self.database.connect() as connection, connection:
+            cursor = connection.execute(
+                "UPDATE volumes SET title = ?, updated_at = ? WHERE id = ?",
+                (normalized, now.isoformat(), volume_id),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError(f"unknown volume: {volume_id}")
+        for volume in self.list_volumes():
+            if volume.id == volume_id:
+                return volume
+        raise KeyError(f"unknown volume: {volume_id}")

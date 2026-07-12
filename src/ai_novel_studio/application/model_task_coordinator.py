@@ -6,6 +6,7 @@ from typing import Protocol
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal, Slot
 
 from ai_novel_studio.application.model_tasks import (
+    ChatSummaryResult,
     NormalizedBrief,
     StyleAuditResult,
 )
@@ -43,6 +44,10 @@ class ModelTaskPort(Protocol):
         rules: tuple[str, ...],
         output_token_limit: int,
     ) -> StyleAuditResult: ...
+
+    def summarize_chat(
+        self, existing_summary: str, transcript: str, output_token_limit: int
+    ) -> ChatSummaryResult: ...
 
 
 class _ResultJob(QRunnable):
@@ -98,6 +103,7 @@ class ModelTaskCoordinator(QObject):
     requirement_ready = Signal(str)
     brief_ready = Signal(object)
     audit_ready = Signal(object)
+    chat_summary_ready = Signal(object)
     task_failed = Signal(str)
     usage_changed = Signal(object)
 
@@ -156,6 +162,19 @@ class ModelTaskCoordinator(QObject):
         self._start_result(
             lambda: self.service.audit_style(manuscript, rules, output_token_limit),
             lambda value: self._emit_result(self.audit_ready.emit, value),
+        )
+
+    def start_chat_summary(
+        self,
+        existing_summary: str,
+        transcript: str,
+        output_token_limit: int,
+    ) -> None:
+        self._start_result(
+            lambda: self.service.summarize_chat(
+                existing_summary, transcript, output_token_limit
+            ),
+            lambda value: self._emit_result(self.chat_summary_ready.emit, value),
         )
 
     def _start_result(

@@ -1,7 +1,7 @@
 import sqlite3
 from collections.abc import Callable
 
-LATEST_SCHEMA_VERSION = 5
+LATEST_SCHEMA_VERSION = 6
 
 
 def _migration_1(connection: sqlite3.Connection) -> None:
@@ -558,12 +558,46 @@ def _migration_5(connection: sqlite3.Connection) -> None:
         connection.execute(statement)
 
 
+def _migration_6(connection: sqlite3.Connection) -> None:
+    statements = (
+        """
+        CREATE TABLE chat_sessions (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            summary TEXT NOT NULL DEFAULT '',
+            summarized_through_sequence INTEGER NOT NULL DEFAULT -1
+                CHECK(summarized_through_sequence >= -1),
+            summary_revision INTEGER NOT NULL DEFAULT 0 CHECK(summary_revision >= 0),
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """,
+        """
+        CREATE TABLE chat_messages (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL REFERENCES chat_sessions(id),
+            sequence INTEGER NOT NULL CHECK(sequence >= 0),
+            chapter_id TEXT REFERENCES chapters(id),
+            role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
+            content TEXT NOT NULL,
+            content_hash TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            UNIQUE(session_id, sequence)
+        )
+        """,
+        "CREATE INDEX chat_messages_session ON chat_messages(session_id, sequence)",
+    )
+    for statement in statements:
+        connection.execute(statement)
+
+
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     1: _migration_1,
     2: _migration_2,
     3: _migration_3,
     4: _migration_4,
     5: _migration_5,
+    6: _migration_6,
 }
 
 

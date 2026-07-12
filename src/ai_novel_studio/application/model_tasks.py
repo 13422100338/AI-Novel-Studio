@@ -45,6 +45,11 @@ class StyleAuditResult:
     findings: tuple[StyleAuditFinding, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class ChatSummaryResult:
+    summary: str
+
+
 class ModelTaskService:
     def __init__(self, gateway: LLMGateway) -> None:
         self.gateway = gateway
@@ -52,6 +57,34 @@ class ModelTaskService:
 
     def usage_snapshot(self) -> UsageSnapshot:
         return self.gateway.usage_tracker.snapshot()
+
+    def summarize_chat(
+        self,
+        existing_summary: str,
+        transcript: str,
+        output_token_limit: int,
+    ) -> ChatSummaryResult:
+        contract = JsonObjectContract((JsonField("summary", str),))
+        messages = (
+            LLMMessage(
+                "system",
+                "你负责维护长篇小说项目的剧情商讨摘要。输出 JSON。保留已经确认的决定、"
+                "人物动机、因果关系、伏笔、被否决方案及未解决问题；不得把建议写成既定事实。",
+            ),
+            LLMMessage(
+                "user",
+                f"已有摘要：\n{existing_summary or '（无）'}\n\n"
+                f"需要合并的较早对话：\n{transcript}\n\n"
+                '返回格式：{"summary":"更新后的完整长期摘要"}',
+            ),
+        )
+        data = self.contracts.run_json(
+            TaskPurpose.PLOT_DISCUSSION,
+            messages,
+            output_token_limit,
+            contract,
+        )
+        return ChatSummaryResult(self._text(data, "summary"))
 
     def stream_chat(
         self,

@@ -25,6 +25,7 @@ def test_memory_window_explains_system_and_exposes_editable_layers(qtbot: QtBot)
         "正典",
         "叙事线索",
         "过期依赖",
+        "设定资料整理",
     ]
     editor = window.editors["人物知识"]
     assert editor.isReadOnly() is False
@@ -39,7 +40,7 @@ def test_style_window_separates_rules_samples_and_candidates(qtbot: QtBot) -> No
     assert _tab_titles(window.tabs) == ["分层规则", "人工样章", "AI 候选"]
     assert window.rules_table.rowCount() == 3
     assert window.human_sample.isReadOnly() is True
-    assert window.candidate_editor.isReadOnly() is False
+    assert window.candidate_editor.isReadOnly() is True
 
 
 def test_audit_window_separates_deterministic_and_model_findings(qtbot: QtBot) -> None:

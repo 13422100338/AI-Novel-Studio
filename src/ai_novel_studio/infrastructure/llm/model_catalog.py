@@ -60,6 +60,7 @@ class CapabilityProbe:
         usage_reporting: bool | None = None
         streaming: bool | None = None
         strict_json: bool | None = None
+        tools: bool | None = None
         try:
             response = adapter.complete(self._request(model_id, "只回复 ok"), profile, api_key)
             basic_chat = bool(response.text.strip())
@@ -81,20 +82,31 @@ class CapabilityProbe:
             streaming = False
         try:
             response = adapter.complete(
-                self._request(model_id, '只回复 {"ok": true}', json_mode=True),
+                self._request(
+                    model_id,
+                    'Return valid JSON only. Use exactly this JSON object: {"ok": true}',
+                    json_mode=True,
+                    output_token_limit=128,
+                ),
                 profile,
                 api_key,
             )
             strict_json = isinstance(json.loads(response.text), dict)
         except (ProviderError, ValueError, json.JSONDecodeError):
             strict_json = False
+        probe_tools = getattr(adapter, "probe_tools", None)
+        if callable(probe_tools):
+            try:
+                tools = bool(probe_tools(profile, api_key, model_id))
+            except (ProviderError, ValueError):
+                tools = False
         return CapabilityProbeResult(
             basic_chat=basic_chat,
             model_listing=model_listing,
             streaming=streaming,
             strict_json=strict_json,
             reasoning=reasoning,
-            tools=None,
+            tools=tools,
             usage_reporting=usage_reporting,
         )
 
@@ -117,11 +129,12 @@ class CapabilityProbe:
         *,
         stream: bool = False,
         json_mode: bool = False,
+        output_token_limit: int = 32,
     ) -> LLMRequest:
         return LLMRequest(
             model_id=model_id,
             messages=(LLMMessage("user", instruction),),
-            output_token_limit=32,
+            output_token_limit=output_token_limit,
             temperature=0,
             stream=stream,
             json_mode=json_mode,

@@ -44,6 +44,13 @@ class FakeAgentRuntime:
         return AgentLoopResult("run-1", AgentRunStatus.COMPLETED, "Agent 回答")
 
 
+def test_coordinator_only_runtime_keeps_memory_build_available_offline(qtbot):  # type: ignore[no-untyped-def]
+    window = MainWindow(model_runtime=FakeRuntime())
+    qtbot.addWidget(window)
+
+    assert window.manuscript_memory_build_service.analyzer is None
+
+
 def test_agent_mode_toggle_defaults_off(qtbot):  # type: ignore[no-untyped-def]
     window = MainWindow(model_runtime=FakeRuntime())
     qtbot.addWidget(window)

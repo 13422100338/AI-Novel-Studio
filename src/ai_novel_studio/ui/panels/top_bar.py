@@ -23,11 +23,15 @@ class TopBar(QFrame):
         title_layout.addWidget(self.project_label)
         title_layout.addWidget(self.volume_label)
 
+        if data.project_title == "雾港来信":
+            metric_values = ("约 18.6K", "8K", "¥0.18", "有效")
+        else:
+            metric_values = ("0", "8K", "未估算", "未加载")
         self.metrics = {
-            "input": MetricChip("输入", "约 18.6K", self),
-            "output": MetricChip("输出上限", "8K", self),
-            "cost": MetricChip("预计费用", "¥0.18", self),
-            "memory": MetricChip("记忆", "有效", self),
+            "input": MetricChip("输入", metric_values[0], self),
+            "output": MetricChip("输出上限", metric_values[1], self),
+            "cost": MetricChip("预计费用", metric_values[2], self),
+            "memory": MetricChip("记忆", metric_values[3], self),
         }
         self.settings_button = QPushButton("设置", self)
         self.settings_button.setObjectName("settingsButton")
@@ -47,7 +51,7 @@ class TopBar(QFrame):
     def update_usage(self, snapshot: UsageSnapshot) -> None:
         self.metrics["input"].set_value(self._token_text(snapshot.input_tokens))
         self.metrics["output"].set_value(self._token_text(snapshot.output_tokens))
-        cost = "未知" if snapshot.cost is None else f"¥{snapshot.cost:.3f}"
+        cost = "未估算" if snapshot.cost is None else f"¥{snapshot.cost:.3f}"
         self.metrics["cost"].set_value(cost)
         cache = (
             self._token_text(snapshot.cached_input_tokens)
@@ -55,6 +59,10 @@ class TopBar(QFrame):
             else "未知"
         )
         self.metrics["memory"].set_value(f"缓存 {cache}")
+
+    def update_project(self, title: str, subtitle: str) -> None:
+        self.project_label.setText(title)
+        self.volume_label.setText(subtitle)
 
     @staticmethod
     def _token_text(value: int) -> str:

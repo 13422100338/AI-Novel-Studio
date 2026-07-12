@@ -193,3 +193,18 @@ def test_second_invalid_contract_response_stops_without_guessing() -> None:
 
     assert len(gateway.calls) == 2
 
+
+def test_empty_first_json_response_can_issue_correction_without_empty_assistant() -> None:
+    gateway = ContractGateway(["", '{"title":"正式要求"}'])
+    runner = LLMContractRunner(gateway)  # type: ignore[arg-type]
+    contract = JsonObjectContract((JsonField("title", str),))
+
+    result = runner.run_json(
+        TaskPurpose.BRIEF_NORMALIZATION,
+        (LLMMessage("user", "整理"),),
+        1000,
+        contract,
+    )
+
+    assert result == {"title": "正式要求"}
+    assert [message.role for message in gateway.calls[1]] == ["user", "user"]

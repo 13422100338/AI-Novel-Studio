@@ -4,6 +4,7 @@ from PySide6.QtCore import Qt
 from pytestqt.qtbot import QtBot
 
 from ai_novel_studio.application.memory_workspace_service import (
+    MemoryWorkspaceField,
     MemoryWorkspaceRecord,
     MemoryWorkspaceService,
 )
@@ -57,6 +58,57 @@ class UiGateway:
         )
         return self.record
 
+    def update_fields(
+        self,
+        record_id: str,
+        source_type: str,
+        fields: dict[str, str],
+        expected_revision: int,
+    ) -> MemoryWorkspaceRecord:
+        raise AssertionError("summary test must not use structured editing")
+
+
+class StructuredUiGateway(UiGateway):
+    def __init__(self) -> None:
+        super().__init__()
+        self.record = replace(
+            self.record,
+            id="state-1",
+            category="人物状态",
+            title="人物状态：林默",
+            content="心理：警惕",
+            source_type="CHARACTER_STATE",
+            revision=0,
+            fields=(MemoryWorkspaceField("psychology", "心理状态", "警惕", multiline=True),),
+        )
+        self.saved_fields: dict[str, str] = {}
+
+    def update_fields(
+        self,
+        record_id: str,
+        source_type: str,
+        fields: dict[str, str],
+        expected_revision: int,
+    ) -> MemoryWorkspaceRecord:
+        assert (record_id, source_type, expected_revision) == (
+            "state-1",
+            "CHARACTER_STATE",
+            0,
+        )
+        self.saved_fields = fields
+        self.record = replace(
+            self.record,
+            content=f"心理：{fields['psychology']}",
+            review_status=ReviewStatus.APPROVED,
+            promotable=False,
+            fields=(
+                MemoryWorkspaceField(
+                    "psychology", "心理状态", fields["psychology"], multiline=True
+                ),
+            ),
+        )
+        return self.record
+
 
 def test_memory_window_binds_metadata_edit_and_explicit_promotion(qtbot: QtBot) -> None:
     gateway = UiGateway()
@@ -77,3 +129,17 @@ def test_memory_window_binds_metadata_edit_and_explicit_promotion(qtbot: QtBot) 
     assert gateway.promote_count == 1
     assert "APPROVED" in window.metadata_label.text()
     assert window.promote_button.isEnabled() is False
+
+
+def test_memory_window_saves_structured_character_fields(qtbot: QtBot) -> None:
+    gateway = StructuredUiGateway()
+    window = MemoryWindow(WorkspaceDemoData.sample())
+    qtbot.addWidget(window)
+    window.bind(MemoryWorkspaceService(gateway), "chapter-2")
+
+    psychology = window.field_widgets["人物状态"]["psychology"]
+    psychology.setPlainText("警惕但坚定")  # type: ignore[attr-defined]
+    qtbot.mouseClick(window.save_button, Qt.MouseButton.LeftButton)
+
+    assert gateway.saved_fields == {"psychology": "警惕但坚定"}
+    assert "APPROVED" in window.metadata_label.text()

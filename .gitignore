@@ -15,3 +15,5 @@ dist/
 *.sqlite3
 *.db
 user-projects/
+models.json
+PROJECT_LOCATION.md

@@ -79,7 +79,7 @@ def test_generation_request_emits_mode_token_limit_and_target_words(
     assert signal.args == [CreationMode.BASIC, 32000, 4200]
 
 
-def test_streaming_draft_is_separate_from_formal_editor_and_can_be_discarded(
+def test_streaming_draft_previews_in_formal_editor_and_can_be_discarded(
     qtbot: QtBot,
 ) -> None:
     panel = ManuscriptPanel(WorkspaceDemoData.sample())
@@ -90,7 +90,8 @@ def test_streaming_draft_is_separate_from_formal_editor_and_can_be_discarded(
     panel.append_generation_draft("AI draft part")
     panel.apply_generation_status(GenerationStatus.COMPLETED)
 
-    assert panel.editor.toPlainText() == old_formal_text
+    assert panel.editor.toPlainText() == "AI draft part"
+    assert panel.editor.isReadOnly() is True
     assert panel.generated_draft_editor.toPlainText() == "AI draft part"
     assert panel.adopt_draft_button.isEnabled() is True
     assert panel.discard_draft_button.isEnabled() is True
@@ -99,6 +100,7 @@ def test_streaming_draft_is_separate_from_formal_editor_and_can_be_discarded(
 
     assert panel.generated_draft_editor.toPlainText() == ""
     assert panel.editor.toPlainText() == old_formal_text
+    assert panel.editor.isReadOnly() is False
 
 
 def test_partial_generation_is_labelled_and_requires_explicit_adoption(
@@ -113,7 +115,7 @@ def test_partial_generation_is_labelled_and_requires_explicit_adoption(
 
     assert "部分" in panel.pipeline_status_label.text()
     assert panel.adopt_draft_button.text() == "采用部分草稿"
-    assert panel.editor.toPlainText() != "partial text"
+    assert panel.editor.toPlainText() == "partial text"
 
 
 def test_main_window_wires_phase5_runtime_without_direct_storage_access(
@@ -131,7 +133,7 @@ def test_main_window_wires_phase5_runtime_without_direct_storage_access(
     runtime.draft_chunk.emit("draft")
     runtime.run_changed.emit(GenerationStatus.COMPLETED)
     assert window.manuscript_panel.generated_draft_editor.toPlainText() == "draft"
-    assert window.manuscript_panel.editor.toPlainText() != "draft"
+    assert window.manuscript_panel.editor.toPlainText() == "draft"
 
     window.manuscript_panel.adopt_draft_button.click()
     assert runtime.accept_calls == 1

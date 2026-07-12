@@ -75,6 +75,21 @@ class CharacterMemoryRepository:
         aliases = tuple(str(value) for value in json.loads(row["aliases_json"]))
         return Character(row["id"], row["canonical_name"], aliases, row["profile"])
 
+    def list_characters(self) -> tuple[Character, ...]:
+        with self.project.database.connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM characters ORDER BY created_at, id"
+            ).fetchall()
+        return tuple(
+            Character(
+                row["id"],
+                row["canonical_name"],
+                tuple(str(value) for value in json.loads(row["aliases_json"])),
+                row["profile"],
+            )
+            for row in rows
+        )
+
     def append_state(
         self,
         character_id: str,

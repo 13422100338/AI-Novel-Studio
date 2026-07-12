@@ -72,7 +72,6 @@ class ProviderAdapter(Protocol):
         api_key: str,
     ) -> Iterator[LLMStreamEvent]: ...
 
-
 class UrllibTransport:
     def request(
         self,
@@ -145,6 +144,60 @@ class OpenAICompatibleAdapter:
         self._require_success(response)
         return self._response(self._json_object(response.body), request.model_id)
 
+    def probe_tools(
+        self, profile: ProviderProfile, api_key: str, model_id: str
+    ) -> bool:
+        payload = {
+            "model": model_id,
+            "messages": [{
+                "role": "user",
+                "content": (
+                    "You must call the capability_probe function now with value exactly ok. "
+                    "Do not answer in text."
+                ),
+            }],
+            "tools": [{
+                "type": "function",
+                "function": {
+                    "name": "capability_probe",
+                    "description": "Harmlessly verifies native tool call support.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"value": {"type": "string"}},
+                        "required": ["value"],
+                        "additionalProperties": False,
+                    },
+                },
+            }],
+            "max_tokens": 128,
+            "temperature": 0,
+            "stream": False,
+        }
+        response = self._transport.request(
+            "POST",
+            f"{profile.base_url}/chat/completions",
+            self._headers(api_key),
+            json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            profile.timeout_seconds,
+        )
+        self._require_success(response)
+        data = self._json_object(response.body)
+        choices = self._list(data.get("choices"), "choices")
+        if not choices:
+            return False
+        message = self._mapping(
+            self._mapping(choices[0], "choice").get("message"), "message"
+        )
+        calls = message.get("tool_calls")
+        if not isinstance(calls, list):
+            return False
+        return any(
+            isinstance(call, dict)
+            and isinstance(call.get("function"), dict)
+            and call["function"].get("name") == "capability_probe"
+            for call in calls
+        )
+
     def stream(
         self,
         request: LLMRequest,
@@ -211,6 +264,10 @@ class OpenAICompatibleAdapter:
             payload["stream_options"] = {"include_usage": True}
         if request.json_mode:
             payload["response_format"] = {"type": "json_object"}
+            if request.model_id.casefold().startswith("deepseek-"):
+                # DeepSeek 的 max_tokens 包含思考 token。结构化任务若保留默认
+                # 思考模式，可能耗尽额度后返回空 content，导致有效 JSON 丢失。
+                payload["thinking"] = {"type": "disabled"}
         return json.dumps(payload, ensure_ascii=False).encode("utf-8")
 
     @classmethod

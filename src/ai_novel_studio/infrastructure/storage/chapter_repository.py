@@ -173,6 +173,21 @@ class ChapterRepository:
         chapter = self.get_chapter(chapter_id, include_deleted=False)
         return (self.project.layout.root / chapter.content_path).read_text(encoding="utf-8")
 
+    def rename_chapter(self, chapter_id: str, title: str) -> Chapter:
+        chapter = self.get_chapter(chapter_id, include_deleted=False)
+        normalized = title.strip()
+        if not normalized:
+            raise ValueError("chapter title cannot be empty")
+        with self.project.database.connect() as connection, connection:
+            cursor = connection.execute(
+                "UPDATE chapters SET title = ?, updated_at = ? "
+                "WHERE id = ? AND is_deleted = 0",
+                (normalized, _now().isoformat(), chapter.id),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError(f"unknown chapter: {chapter.id}")
+        return self.get_chapter(chapter.id, include_deleted=False)
+
     def save_content(
         self,
         chapter_id: str,

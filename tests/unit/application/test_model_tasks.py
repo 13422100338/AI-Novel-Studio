@@ -1,6 +1,7 @@
 from collections.abc import Iterator
 
 from ai_novel_studio.application.model_tasks import (
+    ChatSummaryResult,
     ModelTaskService,
     NormalizedBrief,
     StyleAuditResult,
@@ -49,6 +50,26 @@ def test_plot_chat_prompt_keeps_rules_first_and_user_turn_last() -> None:
     assert "当前正文片段" in messages[-2].content
     assert messages[-1] == conversation[-1]
     assert events[-1].kind == StreamEventKind.COMPLETED
+
+
+def test_chat_summary_preserves_long_term_decisions_in_validated_json() -> None:
+    gateway = FakeGateway(
+        ['{"summary":"已确认主角前往旧港；寄信人身份仍未解决。"}']
+    )
+    service = ModelTaskService(gateway)  # type: ignore[arg-type]
+
+    result = service.summarize_chat(
+        "已确认保留来信。",
+        "user: 下一章去旧港\nassistant: 可以，但不要揭晓寄信人",
+        2000,
+    )
+
+    assert result == ChatSummaryResult("已确认主角前往旧港；寄信人身份仍未解决。")
+    purpose, messages, limit, kwargs = gateway.calls[0]
+    assert purpose == TaskPurpose.PLOT_DISCUSSION
+    assert limit == 2000
+    assert kwargs["json_mode"] is True
+    assert "不得把建议写成既定事实" in messages[0].content
 
 
 def test_requirement_draft_uses_plot_route_and_returns_nonempty_formal_instruction() -> None:
@@ -106,4 +127,3 @@ def test_style_audit_returns_findings_without_modifying_manuscript() -> None:
     assert result.summary == "人物声音略显一致"
     assert result.findings[0].evidence == "两人用词相同"
     assert gateway.calls[0][0] == TaskPurpose.STYLE_AUDIT
-

@@ -71,3 +71,21 @@ def test_chapter_selection_emits_stable_demo_id(qtbot: QtBot) -> None:
         sidebar.chapter_tree.setCurrentItem(chapter_item)
 
     assert blocker.args == ["chapter-2"]
+
+
+def test_chapter_management_buttons_emit_selected_project_targets(qtbot: QtBot) -> None:
+    sidebar = ChapterSidebar(WorkspaceDemoData.sample())
+    qtbot.addWidget(sidebar)
+    chapter_item = sidebar.chapter_tree.topLevelItem(0).child(0)
+    sidebar.chapter_tree.setCurrentItem(chapter_item)
+
+    with qtbot.waitSignal(sidebar.chapter_create_requested, timeout=1000) as create:
+        sidebar.new_chapter_button.click()
+    with qtbot.waitSignal(sidebar.rename_requested, timeout=1000) as rename:
+        sidebar.rename_button.click()
+    with qtbot.waitSignal(sidebar.delete_requested, timeout=1000) as delete:
+        sidebar.delete_button.click()
+
+    assert create.args == ["volume-1"]
+    assert rename.args == ["chapter", "chapter-1"]
+    assert delete.args == ["chapter", "chapter-1"]

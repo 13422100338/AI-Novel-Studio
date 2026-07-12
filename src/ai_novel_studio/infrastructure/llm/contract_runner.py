@@ -90,7 +90,13 @@ class LLMContractRunner:
                 "上一次输出不符合合同。只返回修正后的 JSON，不要解释。具体错误："
                 f"{first_error}",
             )
-            corrected_messages = (*messages, LLMMessage("assistant", response.text), correction)
+            corrected_messages = messages
+            if response.text.strip():
+                corrected_messages = (
+                    *corrected_messages,
+                    LLMMessage("assistant", response.text),
+                )
+            corrected_messages = (*corrected_messages, correction)
             corrected = self.gateway.complete(
                 purpose,
                 corrected_messages,

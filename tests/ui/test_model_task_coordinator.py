@@ -3,7 +3,11 @@ from collections.abc import Iterator
 from pytestqt.qtbot import QtBot
 
 from ai_novel_studio.application.model_task_coordinator import ModelTaskCoordinator
-from ai_novel_studio.application.model_tasks import NormalizedBrief, StyleAuditResult
+from ai_novel_studio.application.model_tasks import (
+    ChatSummaryResult,
+    NormalizedBrief,
+    StyleAuditResult,
+)
 from ai_novel_studio.infrastructure.llm import LLMMessage, LLMStreamEvent, StreamEventKind
 
 
@@ -21,6 +25,9 @@ class FakeTaskService:
 
     def audit_style(self, manuscript, rules, limit):  # type: ignore[no-untyped-def]
         return StyleAuditResult("通过", ())
+
+    def summarize_chat(self, existing, transcript, limit):  # type: ignore[no-untyped-def]
+        return ChatSummaryResult("长期摘要")
 
 
 def test_coordinator_emits_stream_chunks_in_order_without_blocking_ui(qtbot: QtBot) -> None:
@@ -43,6 +50,15 @@ def test_coordinator_returns_requirement_result(qtbot: QtBot) -> None:
     assert signal.args == ["正式要求"]
 
 
+def test_coordinator_returns_chat_summary(qtbot: QtBot) -> None:
+    coordinator = ModelTaskCoordinator(FakeTaskService())  # type: ignore[arg-type]
+
+    with qtbot.waitSignal(coordinator.chat_summary_ready, timeout=2000) as signal:
+        coordinator.start_chat_summary("旧摘要", "较早对话", 1000)
+
+    assert signal.args == [ChatSummaryResult("长期摘要")]
+
+
 class FailingTaskService(FakeTaskService):
     def draft_chapter_requirement(self, conversation, manuscript, limit):  # type: ignore[no-untyped-def]
         raise RuntimeError("provider echoed sk-private-value")
@@ -56,4 +72,3 @@ def test_coordinator_sanitizes_unexpected_worker_errors(qtbot: QtBot) -> None:
 
     assert "sk-private-value" not in signal.args[0]
     assert "模型任务失败" in signal.args[0]
-

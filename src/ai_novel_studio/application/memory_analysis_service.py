@@ -99,14 +99,54 @@ _CONTRACT = JsonObjectContract(
 )
 
 _SYSTEM_PROMPT = """你是长篇小说记忆提取器。只分析用户给出的当前章正文。
-返回一个 JSON 对象，必须包含 summary、character_states、canon、clues、knowledge、style。
-所有数组项都必须使用明确字段；不确定的信息不要猜测，也不要标记为已确认。
-你的输出只是待人工审查的候选记录，不能覆盖已有正典。"""
+只返回一个 JSON 对象，不要输出思考过程、Markdown 代码围栏或解释文字。
+
+顶层必须包含以下字段：
+- summary: 字符串。使用以下固定 Markdown 小节组织有效信息：
+  ## 剧情概况
+  ## 关键情节点
+  ## 人物成长
+  ## 伏笔与未决问题
+  ## 连续性要点
+- character_states: 数组。每项字段为 character_name、motivation、psychology、
+  current_goal、relationships、recent_activity。
+- canon: 数组。每项字段为 title、detail。
+- clues: 数组。每项字段为 clue_type、title、detail、action。
+  clue_type 只能是 FORESHADOW、MISDIRECTION、OPEN_QUESTION、AUTHOR_PROMISE、
+  ATMOSPHERIC_HINT；action 只能是 PLANT、REINFORCE、REDIRECT、REVEAL、
+  RESOLVE、ABANDON。
+- knowledge: 数组。每项字段为 subject_type、subject_id、title、detail、state。
+  subject_type 只能是 CHARACTER 或 READER；CHARACTER 的 subject_id 填人物姓名，
+  READER 的 subject_id 填 READER；state 只能是 UNKNOWN、SUSPECTED、
+  MISUNDERSTOOD、KNOWN、FORGOTTEN。
+- style: 数组。每项字段为 scope_type、scope_id、rule_type、rule_text。
+  scope_type 只能是 BOOK、GENRE_OR_SCENE、CHARACTER、CHAPTER；CHAPTER 的
+  scope_id 必须使用输入里的 source_chapter_id，CHARACTER 的 scope_id 填人物姓名。
+
+摘要不是缩写正文：只保留会影响后续创作的事件因果、人物变化、承诺、伏笔、
+未决冲突、世界规则和连续性事实。没有内容的数组返回 []。不确定的信息不要猜测。
+所有结果只是待人工审查候选，不能覆盖已有正典。"""
+
+_SYSTEM_PROMPT += (
+    "\n字段类型示例（内容仅用于说明格式）：\n"
+    '{"summary":"## 剧情概况\\n本章概况\\n## 关键情节点\\n- 事件'
+    '\\n## 人物成长\\n- 变化\\n## 伏笔与未决问题\\n- 问题'
+    '\\n## 连续性要点\\n- 事实","character_states":['
+    '{"character_name":"甲","motivation":"查明真相","psychology":"警惕",'
+    '"current_goal":"核对线索","relationships":"暂不信任乙",'
+    '"recent_activity":"收到来信"}],"canon":[],"clues":[],'
+    '"knowledge":[],"style":[]}\n'
+)
 
 
 class MemoryAnalysisService:
-    def __init__(self, runner: LLMContractRunner, *, output_token_limit: int = 4_000) -> None:
-        if not 1 <= output_token_limit <= 200_000:
+    def __init__(
+        self,
+        runner: LLMContractRunner,
+        *,
+        output_token_limit: int | None = None,
+    ) -> None:
+        if output_token_limit is not None and not 1 <= output_token_limit <= 200_000:
             raise ValueError("记忆提取输出 Token 上限必须在 1 到 200000 之间")
         self._runner = runner
         self._output_token_limit = output_token_limit
@@ -132,7 +172,7 @@ class MemoryAnalysisService:
         payload = self._runner.run_json(
             TaskPurpose.MEMORY_EXTRACTION,
             messages,
-            self._output_token_limit,
+            self._output_limit_for(text),
             _CONTRACT,
         )
         return MemoryCandidateBundle(
@@ -162,6 +202,15 @@ class MemoryAnalysisService:
             ),
         )
 
+    def _output_limit_for(self, text: str) -> int:
+        if self._output_token_limit is not None:
+            return self._output_token_limit
+        # 这是防止异常长输出的安全上限，不是摘要目标长度。模型仍按当前章的
+        # 信息密度决定实际输出量，但记忆提取不会继承正文创作的超大额度。
+        # 结构化记忆同时包含摘要、人物、正典、线索、知识与文风数组；过低
+        # 会在 JSON 字符串中途截断。上限随章节长度增长，模型仍可提前结束。
+        return min(6_000, max(2_400, 2_200 + len(text) // 5))
+
 
 def _required_list(payload: dict[str, object], field: str) -> list[object]:
     value = payload[field]
@@ -176,6 +225,33 @@ def _required_string(payload: dict[str, object], field: str, *, path: str = "") 
         location = f"{path}.{field}" if path else field
         raise MemoryCandidateValidationError(f"字段 {location} 必须是非空字符串")
     return value.strip()
+
+
+def _string(payload: dict[str, object], field: str, *, path: str) -> str:
+    value = payload.get(field)
+    try:
+        return _text_value(value)
+    except MemoryCandidateValidationError as error:
+        raise MemoryCandidateValidationError(
+            f"字段 {path}.{field} 必须是文本、文本数组或文本对象"
+        ) from error
+
+
+def _text_value(value: object) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, list):
+        return "；".join(part for item in value if (part := _text_value(item)))
+    if isinstance(value, dict):
+        parts: list[str] = []
+        for key, item in value.items():
+            detail = _text_value(item)
+            if detail:
+                parts.append(f"{key}：{detail}")
+        return "；".join(parts)
+    raise MemoryCandidateValidationError("不支持的文本值类型")
 
 
 def _object(value: object, path: str) -> dict[str, object]:
@@ -201,11 +277,11 @@ def _character_state(value: object, index: int) -> CharacterStateCandidate:
     item = _object(value, path)
     return CharacterStateCandidate(
         _required_string(item, "character_name", path=path),
-        _required_string(item, "motivation", path=path),
-        _required_string(item, "psychology", path=path),
-        _required_string(item, "current_goal", path=path),
-        _required_string(item, "relationships", path=path),
-        _required_string(item, "recent_activity", path=path),
+        _string(item, "motivation", path=path),
+        _string(item, "psychology", path=path),
+        _string(item, "current_goal", path=path),
+        _string(item, "relationships", path=path),
+        _string(item, "recent_activity", path=path),
     )
 
 

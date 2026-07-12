@@ -141,20 +141,20 @@ class SettingsDialog(QDialog):
         connection_form.addRow("", self.probe_capabilities_button)
         connection_form.addRow("", self.capability_status)
 
-        route_box = QGroupBox("双模型与任务路由", page)
+        route_box = QGroupBox("默认模型与任务覆盖", page)
         route_form = QFormLayout(route_box)
         self.plot_model_combo = self._route_combo("剧情商讨模型", route_box)
         self.prose_model_combo = self._route_combo("正文创作模型", route_box)
         self.brief_model_combo = self._route_combo("Brief 整理模型", route_box)
         self.agent_model_combo = self._route_combo("工具检索模型", route_box)
         self.audit_model_combo = self._route_combo("文风审校模型", route_box)
-        route_form.addRow("剧情商讨", self.plot_model_combo)
-        route_form.addRow("正文创作", self.prose_model_combo)
+        route_form.addRow("剧情商讨（默认）", self.plot_model_combo)
+        route_form.addRow("正文创作（默认）", self.prose_model_combo)
         route_form.addRow("Brief 整理（可覆盖）", self.brief_model_combo)
         route_form.addRow("工具检索（可覆盖）", self.agent_model_combo)
         route_form.addRow("文风审校（可覆盖）", self.audit_model_combo)
         hint = QLabel(
-            "剧情与正文模型相互独立。高级任务未指定时继承默认路线；程序不会在失败后自动改用其他付费模型。",
+            "默认模型负责同类基础任务；“可覆盖”可为某项高级任务指定专用模型，未指定时继承对应默认模型。程序不会在失败后自动改用其他付费模型。",
             route_box,
         )
         hint.setWordWrap(True)
@@ -232,9 +232,7 @@ class SettingsDialog(QDialog):
             return
         self._current_provider_id = ""
         self._providers.pop(provider_id, None)
-        self._models = {
-            key: model for key, model in self._models.items() if key[0] != provider_id
-        }
+        self._models = {key: model for key, model in self._models.items() if key[0] != provider_id}
         index = self.connection_combo.currentIndex()
         self.connection_combo.removeItem(index)
         if not self.connection_combo.count():
@@ -317,9 +315,7 @@ class SettingsDialog(QDialog):
         ):
             self._show_error("模型列表格式无效")
             return
-        self._models = {
-            key: value for key, value in self._models.items() if key[0] != provider_id
-        }
+        self._models = {key: value for key, value in self._models.items() if key[0] != provider_id}
         for model in models:
             self._models[(model.provider_id, model.model_id)] = model
         self._refresh_available_models()
@@ -337,9 +333,7 @@ class SettingsDialog(QDialog):
             ),
             key=lambda item: item.model_id,
         ):
-            self.available_model_combo.addItem(
-                model.display_name or model.model_id, model.model_id
-            )
+            self.available_model_combo.addItem(model.display_name or model.model_id, model.model_id)
         index = self.available_model_combo.findData(selected)
         if index >= 0:
             self.available_model_combo.setCurrentIndex(index)
@@ -403,10 +397,14 @@ class SettingsDialog(QDialog):
             self.agent_model_combo: self._override(current, TaskPurpose.AGENT_ASSISTANT),
             self.audit_model_combo: self._override(current, TaskPurpose.STYLE_AUDIT),
         }
+        default_combos = {self.plot_model_combo, self.prose_model_combo}
         for combo, selected in selections.items():
             combo.blockSignals(True)
             combo.clear()
-            combo.addItem("未配置 / 继承默认", None)
+            combo.addItem(
+                "未配置" if combo in default_combos else "未配置 / 继承对应默认模型",
+                None,
+            )
             for model in sorted(
                 self._models.values(), key=lambda item: (item.provider_id, item.model_id)
             ):

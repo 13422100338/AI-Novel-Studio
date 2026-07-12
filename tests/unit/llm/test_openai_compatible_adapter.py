@@ -55,9 +55,14 @@ def _profile() -> ProviderProfile:
     )
 
 
-def _request(*, stream: bool = False, json_mode: bool = False) -> LLMRequest:
+def _request(
+    *,
+    stream: bool = False,
+    json_mode: bool = False,
+    model_id: str = "novel-pro",
+) -> LLMRequest:
     return LLMRequest(
-        model_id="novel-pro",
+        model_id=model_id,
         messages=(LLMMessage("system", "规则"), LLMMessage("user", "请求")),
         output_token_limit=32_000,
         temperature=0.4,
@@ -111,6 +116,24 @@ def test_complete_parses_text_reasoning_and_detailed_usage() -> None:
     assert request_body is not None
     assert b'"max_tokens": 32000' in request_body
     assert b'"response_format": {"type": "json_object"}' in request_body
+
+
+def test_deepseek_json_request_disables_thinking_to_preserve_final_content() -> None:
+    body = b'''{
+      "model":"deepseek-v4-pro",
+      "choices":[{"message":{"content":"{\\"ok\\":true}"},"finish_reason":"stop"}]
+    }'''
+    transport = FakeTransport([TransportResponse(200, body)])
+
+    OpenAICompatibleAdapter(transport).complete(
+        _request(json_mode=True, model_id="deepseek-v4-pro"),
+        _profile(),
+        "sk-private",
+    )
+
+    request_body = transport.calls[0][3]
+    assert request_body is not None
+    assert b'"thinking": {"type": "disabled"}' in request_body
 
 
 def test_stream_preserves_text_order_and_emits_usage_then_completion() -> None:
@@ -172,3 +195,24 @@ def test_http_error_never_echoes_api_key_or_response_body() -> None:
     assert "401" in message
     assert "sk-private" not in message
     assert "bad key" not in message
+
+
+def test_tool_probe_sends_function_schema_and_observes_tool_call() -> None:
+    body = b'''{
+      "model":"novel-pro",
+      "choices":[{"message":{"content":null,"tool_calls":[{
+        "id":"call_1","type":"function",
+        "function":{"name":"capability_probe","arguments":"{\\"value\\":\\"ok\\"}"}
+      }]},"finish_reason":"tool_calls"}]
+    }'''
+    transport = FakeTransport([TransportResponse(200, body)])
+    adapter = OpenAICompatibleAdapter(transport)
+
+    supported = adapter.probe_tools(_profile(), "sk-private", "novel-pro")
+
+    assert supported is True
+    request_body = transport.calls[0][3]
+    assert request_body is not None
+    assert b'"tools"' in request_body
+    assert b'"tool_choice"' not in request_body
+    assert b'"capability_probe"' in request_body

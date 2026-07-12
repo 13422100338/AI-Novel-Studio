@@ -59,6 +59,23 @@ def test_project_lock_rejects_second_writer_and_contains_no_path(tmp_path: Path)
     second.release()
 
 
+def test_project_lock_recovers_stale_writer_lock_for_dead_process(tmp_path: Path) -> None:
+    project, _ = _project_with_chapter(tmp_path)
+    lock = ProjectLock(project.layout)
+    impossible_pid = 999_999_999
+    lock.path.write_text(
+        json.dumps({"pid": impossible_pid, "created_at": "2020-01-01T00:00:00+00:00"}),
+        encoding="utf-8",
+    )
+
+    lock.acquire()
+    try:
+        payload = json.loads(lock.path.read_text(encoding="utf-8"))
+        assert payload["pid"] != impossible_pid
+    finally:
+        lock.release()
+
+
 def test_backup_contains_manifest_database_and_canonical_manuscript(tmp_path: Path) -> None:
     project, chapter_id = _project_with_chapter(tmp_path)
     chapter = ChapterRepository(project).get_chapter(chapter_id)

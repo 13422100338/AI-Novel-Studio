@@ -64,7 +64,7 @@ class GenerationAcceptanceService:
         if checkpoint is None:
             raise GenerationAcceptanceError("generation run has no checkpoint to accept")
         draft = self.checkpoints.read(checkpoint.id)
-        self._validate_strict_audit(run)
+        self._validate_strict_audit(run, checkpoint)
         chapter = self.chapters.save_content(
             run.chapter_id,
             draft,
@@ -88,24 +88,29 @@ class GenerationAcceptanceService:
             )
         return self.runs.transition(run.id, run.status, GenerationStatus.DISCARDED)
 
-    def _validate_strict_audit(self, run: GenerationRun) -> None:
+    def _validate_strict_audit(
+        self, run: GenerationRun, checkpoint: GenerationCheckpoint
+    ) -> None:
         if run.mode != CreationMode.STRICT:
             return
         runs = self.audits.list_runs_for_target(
             target_kind=AuditTargetKind.GENERATED_DRAFT,
             target_id=run.id,
         )
-        completed = next(
-            (audit_run for audit_run in runs if audit_run.status == AuditRunStatus.COMPLETED),
-            None,
+        completed = tuple(
+            audit_run
+            for audit_run in runs
+            if audit_run.status == AuditRunStatus.COMPLETED
+            and audit_run.target_hash == checkpoint.content_hash
         )
-        if completed is None:
+        if not completed:
             raise GenerationAcceptanceError(
-                "strict generation requires a completed audit before acceptance"
+                "strict generation requires a completed audit for the current draft"
             )
         blockers = [
             finding
-            for finding in self.audits.list_findings(completed.id)
+            for audit_run in completed
+            for finding in self.audits.list_findings(audit_run.id)
             if finding.status == AuditFindingStatus.OPEN
             and finding.severity in {AuditSeverity.ERROR, AuditSeverity.BLOCKER}
         ]

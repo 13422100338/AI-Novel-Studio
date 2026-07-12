@@ -58,6 +58,36 @@ class WorkspaceDemoData:
     audit_findings: tuple[tuple[str, str, str], ...]
 
     @classmethod
+    def empty(cls) -> "WorkspaceDemoData":
+        return cls(
+            project_title="未打开项目",
+            current_volume="请新建或打开一个小说项目",
+            volumes=(),
+            characters=(),
+            messages=(),
+            brief=DemoBrief(
+                status="",
+                fingerprint="",
+                warnings=(),
+                sources=(),
+                sections=(
+                    ("戏剧功能", ""),
+                    ("必须事件", ""),
+                    ("知识边界", ""),
+                    ("叙事线索", ""),
+                    ("文风", ""),
+                    ("自由空间", ""),
+                ),
+            ),
+            chapter_requirement="",
+            generated_requirement="",
+            chapter_text="",
+            memory_tabs=(),
+            style_rules=(),
+            audit_findings=(),
+        )
+
+    @classmethod
     def sample(cls) -> "WorkspaceDemoData":
         chapters = (
             DemoChapter("chapter-1", "第 1 章", "雪夜来客", 3268, "已确认"),

@@ -163,6 +163,18 @@ class SummaryRepository:
             ).fetchall()
         return tuple(self._summary(row) for row in rows)
 
+    def list_all(self) -> tuple[SummaryNode, ...]:
+        with self.project.database.connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM summary_nodes ORDER BY created_at DESC, id"
+            ).fetchall()
+        return tuple(self._summary(row) for row in rows)
+
+    def source_revisions(
+        self, chapter_ids: tuple[str, ...]
+    ) -> tuple[tuple[str, int, str], ...]:
+        return self._source_revisions(chapter_ids)
+
     def promote(self, summary_id: str, *, expected_revision: int) -> SummaryNode:
         summary = self.get(summary_id)
         if summary.review_status == ReviewStatus.LOCKED:
@@ -207,6 +219,42 @@ class SummaryRepository:
                 (
                     content.strip(),
                     _hash(content.strip()),
+                    _now().isoformat(),
+                    summary_id,
+                    expected_revision,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise StaleSummaryWriteError("摘要修订已变化，请重新载入")
+        return self.get(summary_id)
+
+    def replace_model_candidate(
+        self,
+        summary_id: str,
+        content: str,
+        *,
+        model_profile_id: str,
+        expected_revision: int,
+    ) -> SummaryNode:
+        summary = self.get(summary_id)
+        if summary.review_status != ReviewStatus.REVIEW:
+            raise ProtectedMemoryError("已审查摘要不能被模型升级")
+        if summary.authority != Authority.MODEL_EXTRACTED:
+            raise ProtectedMemoryError("模型不能覆盖人工摘要")
+        if not content.strip() or not model_profile_id.strip():
+            raise ValueError("模型摘要内容和模型标识不能为空")
+        with self.project.database.connect() as connection, connection:
+            cursor = connection.execute(
+                """
+                UPDATE summary_nodes
+                SET content = ?, content_hash = ?, model_profile_id = ?,
+                    revision = revision + 1, updated_at = ?
+                WHERE id = ? AND revision = ?
+                """,
+                (
+                    content.strip(),
+                    _hash(content.strip()),
+                    model_profile_id,
                     _now().isoformat(),
                     summary_id,
                     expected_revision,
@@ -271,4 +319,3 @@ class SummaryRepository:
             int(row["revision"]),
             datetime.fromisoformat(row["created_at"]),
         )
-

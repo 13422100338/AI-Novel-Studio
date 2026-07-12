@@ -112,3 +112,65 @@ def test_empty_source_is_rejected_before_calling_the_model() -> None:
         service.extract_candidates("chapter-1", 0, "  ")
 
     assert gateway.calls == []
+
+
+def test_default_memory_output_budget_is_dynamic_and_bounded() -> None:
+    gateway = RecordingGateway([_valid_payload(), _valid_payload()])
+    service = MemoryAnalysisService(LLMContractRunner(gateway))  # type: ignore[arg-type]
+
+    service.extract_candidates("chapter-short", 0, "短正文" * 100)
+    service.extract_candidates("chapter-long", 0, "长正文" * 10_000)
+
+    short_limit = gateway.calls[0][2]
+    long_limit = gateway.calls[1][2]
+    assert 2_400 <= short_limit < long_limit <= 6_000
+
+
+def test_memory_prompt_declares_nested_enum_values_and_structured_summary() -> None:
+    gateway = RecordingGateway([_valid_payload()])
+    service = MemoryAnalysisService(LLMContractRunner(gateway))  # type: ignore[arg-type]
+
+    service.extract_candidates("chapter-1", 0, "原稿正文")
+
+    system_prompt = gateway.calls[0][1][0].content  # type: ignore[attr-defined]
+    assert "FORESHADOW" in system_prompt
+    assert "PLANT" in system_prompt
+    assert "## 剧情概况" in system_prompt
+
+
+def test_character_state_allows_unknown_fields_as_empty_strings() -> None:
+    payload = json.loads(_valid_payload())
+    payload["character_states"][0]["relationships"] = ""
+    gateway = RecordingGateway([json.dumps(payload, ensure_ascii=False)])
+    service = MemoryAnalysisService(LLMContractRunner(gateway))  # type: ignore[arg-type]
+
+    result = service.extract_candidates("chapter-1", 0, "原稿正文")
+
+    assert result.character_states[0].relationships == ""
+
+
+def test_character_state_normalizes_unknown_null_to_empty_string() -> None:
+    payload = json.loads(_valid_payload())
+    payload["character_states"][0]["relationships"] = None
+    gateway = RecordingGateway([json.dumps(payload, ensure_ascii=False)])
+    service = MemoryAnalysisService(LLMContractRunner(gateway))  # type: ignore[arg-type]
+
+    result = service.extract_candidates("chapter-1", 0, "原稿正文")
+
+    assert result.character_states[0].relationships == ""
+
+
+def test_character_state_normalizes_relationship_object_to_readable_text() -> None:
+    payload = json.loads(_valid_payload())
+    payload["character_states"][0]["relationships"] = {
+        "苏砚": "暂不信任",
+        "来信者": ["身份未知", "保持警惕"],
+    }
+    gateway = RecordingGateway([json.dumps(payload, ensure_ascii=False)])
+    service = MemoryAnalysisService(LLMContractRunner(gateway))  # type: ignore[arg-type]
+
+    result = service.extract_candidates("chapter-1", 0, "原稿正文")
+
+    assert result.character_states[0].relationships == (
+        "苏砚：暂不信任；来信者：身份未知；保持警惕"
+    )

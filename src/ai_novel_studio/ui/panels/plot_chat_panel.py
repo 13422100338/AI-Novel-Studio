@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -22,6 +23,7 @@ class PlotChatPanel(QFrame):
     chapter_requirement_requested = Signal()
     detach_requested = Signal()
     agent_trace_requested = Signal()
+    summary_requested = Signal()
 
     def __init__(
         self,
@@ -57,6 +59,28 @@ class PlotChatPanel(QFrame):
         self.agent_trace_button.setAccessibleName("查看证据追踪")
         self.agent_trace_button.setToolTip("查看最近一次只读工具调用与证据来源")
         self.agent_trace_button.clicked.connect(self.agent_trace_requested)
+        self.summary_button = QPushButton("历史摘要", self)
+        self.summary_button.setAccessibleName("查看和编辑剧情商讨长期摘要")
+        self.summary_button.setToolTip("查看和修改发送给剧情模型的长期商讨摘要")
+        self.summary_button.clicked.connect(self.summary_requested)
+
+        self.advanced_button = QToolButton(self)
+        self.advanced_button.setText("工具 ▾")
+        self.advanced_button.setCheckable(True)
+        self.advanced_button.setAccessibleName("展开剧情商讨工具")
+        self.advanced_button.setToolTip("展开工具检索、证据追踪、历史摘要和独立窗口")
+
+        self.advanced_tools = QFrame(self)
+        self.advanced_tools.setObjectName("plotChatAdvancedTools")
+        advanced_layout = QHBoxLayout(self.advanced_tools)
+        advanced_layout.setContentsMargins(0, 0, 0, 0)
+        advanced_layout.addWidget(self.agent_mode_toggle)
+        advanced_layout.addWidget(self.agent_trace_button)
+        advanced_layout.addWidget(self.summary_button)
+        advanced_layout.addWidget(self.detach_button)
+        advanced_layout.addStretch(1)
+        self.advanced_tools.hide()
+        self.advanced_button.toggled.connect(self._toggle_advanced_tools)
 
         header = QHBoxLayout()
         title_stack = QVBoxLayout()
@@ -65,9 +89,7 @@ class PlotChatPanel(QFrame):
         title_stack.addWidget(self.model_label)
         header.addLayout(title_stack)
         header.addStretch(1)
-        header.addWidget(self.agent_mode_toggle)
-        header.addWidget(self.agent_trace_button)
-        header.addWidget(self.detach_button)
+        header.addWidget(self.advanced_button)
 
         self.scroll_area = QScrollArea(self)
         self.scroll_area.setObjectName("plotChatScroll")
@@ -106,9 +128,14 @@ class PlotChatPanel(QFrame):
         layout.setContentsMargins(12, 12, 12, 10)
         layout.setSpacing(8)
         layout.addLayout(header)
+        layout.addWidget(self.advanced_tools)
         layout.addWidget(self.scroll_area, 1)
         layout.addWidget(self.composer)
         layout.addLayout(composer_actions)
+
+    def _toggle_advanced_tools(self, expanded: bool) -> None:
+        self.advanced_tools.setVisible(expanded)
+        self.advanced_button.setText("工具 ▴" if expanded else "工具 ▾")
 
     def send_current_message(self) -> None:
         text = self.composer.toPlainText().strip()
@@ -122,6 +149,29 @@ class PlotChatPanel(QFrame):
 
     def message_snapshot(self) -> tuple[DemoMessage, ...]:
         return tuple(self._messages)
+
+    def replace_messages(self, messages: Iterable[DemoMessage]) -> None:
+        self._messages = list(messages)
+        self._streaming_bubble = None
+        for bubble in self.message_bubbles:
+            bubble.deleteLater()
+        for row in self.bubble_rows:
+            while row.count():
+                item = row.takeAt(0)
+                widget = item.widget() if item is not None else None
+                if widget is not None:
+                    widget.deleteLater()
+            self.conversation_layout.removeItem(row)
+        self.message_bubbles.clear()
+        self.bubble_rows.clear()
+        for message in self._messages:
+            self._append_bubble(message.role, message.text)
+        self._scroll_to_bottom()
+
+    def append_external_message(self, role: str, text: str) -> None:
+        self._messages.append(DemoMessage(role, text))
+        self._append_bubble(role, text)
+        self._scroll_to_bottom()
 
     def agent_mode_enabled(self) -> bool:
         return self.agent_mode_toggle.isChecked()

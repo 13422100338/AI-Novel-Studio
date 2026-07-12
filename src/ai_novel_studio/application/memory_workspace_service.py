@@ -15,6 +15,15 @@ class StaleMemoryRecordError(RuntimeError):
 
 
 @dataclass(frozen=True, slots=True)
+class MemoryWorkspaceField:
+    key: str
+    label: str
+    value: str
+    choices: tuple[str, ...] = ()
+    multiline: bool = False
+
+
+@dataclass(frozen=True, slots=True)
 class MemoryWorkspaceRecord:
     id: str
     category: str
@@ -30,6 +39,7 @@ class MemoryWorkspaceRecord:
     revision: int
     editable: bool
     promotable: bool
+    fields: tuple[MemoryWorkspaceField, ...] = ()
 
     def __post_init__(self) -> None:
         for field_name, value in (
@@ -60,6 +70,14 @@ class MemoryWorkspaceGateway(Protocol):
     ) -> MemoryWorkspaceRecord: ...
 
     def promote(self, record_id: str, expected_revision: int) -> MemoryWorkspaceRecord: ...
+
+    def update_fields(
+        self,
+        record_id: str,
+        source_type: str,
+        fields: dict[str, str],
+        expected_revision: int,
+    ) -> MemoryWorkspaceRecord: ...
 
 
 class MemoryWorkspaceService:
@@ -105,6 +123,25 @@ class MemoryWorkspaceService:
         promoted = self._gateway.promote(record.id, expected_revision)
         self._records[promoted.id] = promoted
         return promoted
+
+    def edit_fields(
+        self,
+        record_id: str,
+        fields: dict[str, str],
+        *,
+        expected_revision: int,
+    ) -> MemoryWorkspaceRecord:
+        record = self._record(record_id)
+        self._assert_revision(record, expected_revision)
+        if record.review_status == ReviewStatus.LOCKED:
+            raise LockedMemoryRecordError("锁定的人工记忆记录不能直接修改")
+        if not record.editable or not record.fields:
+            raise PermissionError("该记忆记录不支持结构化编辑")
+        updated = self._gateway.update_fields(
+            record.id, record.source_type, fields, expected_revision
+        )
+        self._records[updated.id] = updated
+        return updated
 
     def _record(self, record_id: str) -> MemoryWorkspaceRecord:
         try:

@@ -99,6 +99,50 @@ class StyleRepository:
         rules = [self._rule(row) for row in rows]
         return tuple(sorted(rules, key=lambda rule: (-rule.authority.rank, rule.id)))
 
+    def list_all_rules(self) -> tuple[StyleRule, ...]:
+        with self.project.database.connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM style_rules WHERE status = 'CURRENT' ORDER BY created_at, id"
+            ).fetchall()
+        return tuple(self._rule(row) for row in rows)
+
+    def update_rule(
+        self,
+        rule_id: str,
+        *,
+        scope_type: StyleScope,
+        scope_id: str,
+        rule_type: str,
+        rule_text: str,
+    ) -> StyleRule:
+        rule = self._get_rule(rule_id)
+        if rule.review_status == ReviewStatus.LOCKED:
+            raise ProtectedMemoryError("锁定的文风规则不能修改")
+        if not scope_id.strip() or not rule_type.strip() or not rule_text.strip():
+            raise ValueError("文风规则范围、类型和正文不能为空")
+        with self.project.database.connect() as connection, connection:
+            connection.execute(
+                "UPDATE style_rules SET scope_type = ?, scope_id = ?, rule_type = ?, "
+                "rule_text = ?, authority = 'USER_CONFIRMED', review_status = 'APPROVED', "
+                "updated_at = ? WHERE id = ?",
+                (
+                    scope_type.value,
+                    scope_id.strip(),
+                    rule_type.strip(),
+                    rule_text.strip(),
+                    _now().isoformat(),
+                    rule_id,
+                ),
+            )
+        return self._get_rule(rule_id)
+
+    def delete_rule(self, rule_id: str) -> None:
+        rule = self._get_rule(rule_id)
+        if rule.review_status == ReviewStatus.LOCKED:
+            raise ProtectedMemoryError("锁定的文风规则不能删除")
+        with self.project.database.connect() as connection, connection:
+            connection.execute("DELETE FROM style_rules WHERE id = ?", (rule_id,))
+
     def add_sample(
         self,
         scope_type: StyleScope,
@@ -160,6 +204,13 @@ class StyleRepository:
         samples = [self._sample(row) for row in rows]
         return tuple(sorted(samples, key=lambda item: (-item.authority.rank, item.id)))
 
+    def list_all_samples(self) -> tuple[StyleSample, ...]:
+        with self.project.database.connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM style_samples ORDER BY created_at, id"
+            ).fetchall()
+        return tuple(self._sample(row) for row in rows)
+
     def update_sample(
         self,
         sample_id: str,
@@ -180,6 +231,65 @@ class StyleRepository:
                 (content, _hash(content), _now().isoformat(), sample_id),
             )
         return self._get_sample(sample_id)
+
+    def update_human_sample(
+        self,
+        sample_id: str,
+        *,
+        scope_type: StyleScope,
+        scope_id: str,
+        title: str,
+        content: str,
+    ) -> StyleSample:
+        sample = self._get_sample(sample_id)
+        if sample.immutable:
+            raise ProtectedMemoryError("锁定的人工样章不能修改")
+        if not scope_id.strip() or not title.strip() or not content.strip():
+            raise ValueError("样章范围、标题和内容不能为空")
+        with self.project.database.connect() as connection, connection:
+            connection.execute(
+                "UPDATE style_samples SET scope_type = ?, scope_id = ?, title = ?, "
+                "content = ?, source_type = 'HUMAN', authority = 'USER_CONFIRMED', "
+                "review_status = 'APPROVED', content_hash = ?, updated_at = ? WHERE id = ?",
+                (
+                    scope_type.value,
+                    scope_id.strip(),
+                    title.strip(),
+                    content,
+                    _hash(content),
+                    _now().isoformat(),
+                    sample_id,
+                ),
+            )
+        return self._get_sample(sample_id)
+
+    def lock_sample(self, sample_id: str) -> StyleSample:
+        sample = self._get_sample(sample_id)
+        if sample.source_type != SourceType.HUMAN:
+            raise ProtectedMemoryError("只有人工样章可以锁定")
+        with self.project.database.connect() as connection, connection:
+            connection.execute(
+                "UPDATE style_samples SET immutable = 1, review_status = 'LOCKED', "
+                "authority = 'USER_CONFIRMED', updated_at = ? WHERE id = ?",
+                (_now().isoformat(), sample_id),
+            )
+        return self._get_sample(sample_id)
+
+    def delete_sample(self, sample_id: str) -> None:
+        sample = self._get_sample(sample_id)
+        if sample.immutable:
+            raise ProtectedMemoryError("锁定的人工样章不能删除")
+        with self.project.database.connect() as connection, connection:
+            connection.execute("DELETE FROM style_samples WHERE id = ?", (sample_id,))
+
+    def _get_rule(self, rule_id: str) -> StyleRule:
+        with self.project.database.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM style_rules WHERE id = ?", (rule_id,)
+            ).fetchone()
+        if row is None:
+            raise KeyError(f"unknown style rule: {rule_id}")
+        return self._rule(row)
 
     def _get_sample(self, sample_id: str) -> StyleSample:
         with self.project.database.connect() as connection:
