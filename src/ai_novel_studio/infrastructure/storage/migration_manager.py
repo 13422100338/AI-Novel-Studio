@@ -1,0 +1,628 @@
+import sqlite3
+from collections.abc import Callable
+
+LATEST_SCHEMA_VERSION = 6
+
+
+def _migration_1(connection: sqlite3.Connection) -> None:
+    statements = (
+        """
+        CREATE TABLE projects (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            format_version INTEGER NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """,
+        """
+        CREATE TABLE volumes (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            synopsis TEXT NOT NULL DEFAULT '',
+            sort_index INTEGER NOT NULL CHECK(sort_index >= 0),
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """,
+        """
+        CREATE TABLE chapters (
+            id TEXT PRIMARY KEY,
+            volume_id TEXT NOT NULL REFERENCES volumes(id),
+            declared_number TEXT NOT NULL DEFAULT '',
+            title TEXT NOT NULL,
+            synopsis TEXT NOT NULL DEFAULT '',
+            content_path TEXT NOT NULL UNIQUE,
+            content_hash TEXT NOT NULL,
+            sort_index INTEGER NOT NULL CHECK(sort_index >= 0),
+            revision INTEGER NOT NULL DEFAULT 0 CHECK(revision >= 0),
+            memory_status TEXT NOT NULL DEFAULT 'pending',
+            is_deleted INTEGER NOT NULL DEFAULT 0 CHECK(is_deleted IN (0, 1)),
+            deleted_content_path TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """,
+        """
+        CREATE TABLE chapter_versions (
+            id TEXT PRIMARY KEY,
+            chapter_id TEXT NOT NULL REFERENCES chapters(id),
+            revision INTEGER NOT NULL CHECK(revision >= 0),
+            content_snapshot_path TEXT NOT NULL UNIQUE,
+            source TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            content_hash TEXT NOT NULL,
+            UNIQUE(chapter_id, revision)
+        )
+        """,
+        "CREATE INDEX chapters_volume_order ON chapters(volume_id, sort_index)",
+    )
+    for statement in statements:
+        connection.execute(statement)
+
+
+def _migration_2(connection: sqlite3.Connection) -> None:
+    statements = (
+        """
+        CREATE TABLE characters (
+            id TEXT PRIMARY KEY,
+            canonical_name TEXT NOT NULL,
+            aliases_json TEXT NOT NULL DEFAULT '[]',
+            profile TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """,
+        """
+        CREATE TABLE character_state_events (
+            id TEXT PRIMARY KEY,
+            character_id TEXT NOT NULL REFERENCES characters(id),
+            chapter_id TEXT NOT NULL REFERENCES chapters(id),
+            motivation TEXT NOT NULL DEFAULT '',
+            psychology TEXT NOT NULL DEFAULT '',
+            current_goal TEXT NOT NULL DEFAULT '',
+            relationships TEXT NOT NULL DEFAULT '',
+            recent_activity TEXT NOT NULL DEFAULT '',
+            confidence REAL NOT NULL CHECK(confidence >= 0 AND confidence <= 1),
+            source_type TEXT NOT NULL,
+            review_status TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """,
+        """
+        CREATE TABLE knowledge_items (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            detail TEXT NOT NULL,
+            authority TEXT NOT NULL,
+            review_status TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """,
+        """
+        CREATE TABLE knowledge_state_events (
+            id TEXT PRIMARY KEY,
+            knowledge_id TEXT NOT NULL REFERENCES knowledge_items(id),
+            subject_type TEXT NOT NULL,
+            subject_id TEXT NOT NULL,
+            chapter_id TEXT NOT NULL REFERENCES chapters(id),
+            state TEXT NOT NULL,
+            evidence TEXT NOT NULL DEFAULT '',
+            source_type TEXT NOT NULL,
+            review_status TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """,
+        """
+        CREATE TABLE canon_entries (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            detail TEXT NOT NULL,
+            source_chapter_id TEXT REFERENCES chapters(id),
+            source_paragraph_id TEXT,
+            confidence REAL NOT NULL CHECK(confidence >= 0 AND confidence <= 1),
+            authority TEXT NOT NULL,
+            status TEXT NOT NULL,
+            review_status TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """,
+        """
+        CREATE TABLE narrative_clues (
+            id TEXT PRIMARY KEY,
+            clue_type TEXT NOT NULL,
+            title TEXT NOT NULL,
+            detail TEXT NOT NULL,
+            authority TEXT NOT NULL,
+            status TEXT NOT NULL,
+            review_status TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """,
+        """
+        CREATE TABLE narrative_clue_events (
+            id TEXT PRIMARY KEY,
+            clue_id TEXT NOT NULL REFERENCES narrative_clues(id),
+            chapter_id TEXT NOT NULL REFERENCES chapters(id),
+            action TEXT NOT NULL,
+            detail TEXT NOT NULL DEFAULT '',
+            source_type TEXT NOT NULL,
+            review_status TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """,
+        """
+        CREATE TABLE summary_nodes (
+            id TEXT PRIMARY KEY,
+            level TEXT NOT NULL,
+            scope_id TEXT NOT NULL,
+            content TEXT NOT NULL,
+            source_chapter_ids_json TEXT NOT NULL,
+            source_revisions_json TEXT NOT NULL,
+            content_hash TEXT NOT NULL,
+            model_profile_id TEXT,
+            authority TEXT NOT NULL,
+            review_status TEXT NOT NULL,
+            status TEXT NOT NULL,
+            revision INTEGER NOT NULL DEFAULT 0 CHECK(revision >= 0),
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """,
+        """
+        CREATE TABLE style_rules (
+            id TEXT PRIMARY KEY,
+            scope_type TEXT NOT NULL,
+            scope_id TEXT NOT NULL,
+            rule_type TEXT NOT NULL,
+            rule_text TEXT NOT NULL,
+            limit_per_chapter INTEGER,
+            limit_per_volume INTEGER,
+            limit_per_book INTEGER,
+            authority TEXT NOT NULL,
+            review_status TEXT NOT NULL,
+            status TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """,
+        """
+        CREATE TABLE style_samples (
+            id TEXT PRIMARY KEY,
+            scope_type TEXT NOT NULL,
+            scope_id TEXT NOT NULL,
+            title TEXT NOT NULL,
+            content TEXT NOT NULL,
+            source_type TEXT NOT NULL,
+            authority TEXT NOT NULL,
+            review_status TEXT NOT NULL,
+            immutable INTEGER NOT NULL CHECK(immutable IN (0, 1)),
+            content_hash TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """,
+        """
+        CREATE TABLE memory_dependencies (
+            id TEXT PRIMARY KEY,
+            memory_type TEXT NOT NULL,
+            memory_id TEXT NOT NULL,
+            source_chapter_id TEXT NOT NULL REFERENCES chapters(id),
+            source_revision INTEGER NOT NULL,
+            source_hash TEXT NOT NULL,
+            status TEXT NOT NULL,
+            UNIQUE(memory_type, memory_id, source_chapter_id)
+        )
+        """,
+        """
+        CREATE TABLE memory_documents (
+            id TEXT PRIMARY KEY,
+            document_type TEXT NOT NULL,
+            source_id TEXT NOT NULL,
+            chapter_id TEXT REFERENCES chapters(id),
+            volume_id TEXT REFERENCES volumes(id),
+            source_revision INTEGER NOT NULL DEFAULT 0,
+            source_hash TEXT NOT NULL,
+            title TEXT NOT NULL,
+            content TEXT NOT NULL,
+            participants TEXT NOT NULL DEFAULT '',
+            pinned_weight REAL NOT NULL DEFAULT 0,
+            review_status TEXT NOT NULL,
+            status TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(document_type, source_id)
+        )
+        """,
+        """
+        CREATE VIRTUAL TABLE memory_fts USING fts5(
+            document_id UNINDEXED,
+            title,
+            content,
+            participants,
+            tokenize='trigram'
+        )
+        """,
+        """
+        CREATE TABLE context_manifests (
+            id TEXT PRIMARY KEY,
+            chapter_id TEXT NOT NULL REFERENCES chapters(id),
+            run_id TEXT,
+            content_path TEXT NOT NULL UNIQUE,
+            input_token_limit INTEGER NOT NULL,
+            estimated_input_tokens INTEGER NOT NULL,
+            output_token_limit INTEGER NOT NULL,
+            status TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """,
+        "CREATE INDEX character_states_timeline ON "
+        "character_state_events(character_id, chapter_id, created_at)",
+        "CREATE INDEX knowledge_states_timeline ON "
+        "knowledge_state_events(subject_type, subject_id, chapter_id, created_at)",
+        "CREATE INDEX clue_events_timeline ON "
+        "narrative_clue_events(clue_id, chapter_id, created_at)",
+        "CREATE INDEX summaries_scope ON summary_nodes(level, scope_id, status, review_status)",
+        "CREATE INDEX dependencies_source ON memory_dependencies(source_chapter_id, status)",
+        "CREATE INDEX memory_documents_chapter ON "
+        "memory_documents(chapter_id, status, review_status)",
+    )
+    for statement in statements:
+        connection.execute(statement)
+
+
+def _migration_3(connection: sqlite3.Connection) -> None:
+    statements = (
+        """
+        CREATE TABLE chapter_requirements (
+            id TEXT PRIMARY KEY,
+            chapter_id TEXT NOT NULL UNIQUE REFERENCES chapters(id),
+            content TEXT NOT NULL,
+            is_locked INTEGER NOT NULL CHECK(is_locked IN (0, 1)),
+            revision INTEGER NOT NULL DEFAULT 0 CHECK(revision >= 0),
+            content_hash TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """,
+        """
+        CREATE TABLE chapter_briefs (
+            id TEXT PRIMARY KEY,
+            chapter_id TEXT NOT NULL REFERENCES chapters(id),
+            mode TEXT NOT NULL CHECK(mode IN ('BASIC', 'STANDARD', 'STRICT')),
+            status TEXT NOT NULL CHECK(status IN ('DRAFT', 'FROZEN', 'STALE', 'ARCHIVED')),
+            revision INTEGER NOT NULL DEFAULT 0 CHECK(revision >= 0),
+            dramatic_purpose TEXT NOT NULL,
+            target_length INTEGER NOT NULL CHECK(target_length > 0),
+            story_date TEXT NOT NULL DEFAULT '',
+            pov_character_id TEXT,
+            hard_events_json TEXT NOT NULL DEFAULT '[]',
+            soft_goals_json TEXT NOT NULL DEFAULT '[]',
+            prohibited_changes_json TEXT NOT NULL DEFAULT '[]',
+            creative_freedom_json TEXT NOT NULL DEFAULT '[]',
+            participants_json TEXT NOT NULL DEFAULT '[]',
+            knowledge_json TEXT NOT NULL DEFAULT '[]',
+            clue_actions_json TEXT NOT NULL DEFAULT '[]',
+            style_rules_json TEXT NOT NULL DEFAULT '[]',
+            warnings_json TEXT NOT NULL DEFAULT '[]',
+            source_fingerprint TEXT NOT NULL,
+            content_hash TEXT NOT NULL,
+            cloned_from_id TEXT REFERENCES chapter_briefs(id),
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            frozen_at TEXT
+        )
+        """,
+        """
+        CREATE TABLE brief_sources (
+            id TEXT PRIMARY KEY,
+            brief_id TEXT NOT NULL REFERENCES chapter_briefs(id),
+            source_type TEXT NOT NULL,
+            source_id TEXT NOT NULL,
+            source_revision INTEGER NOT NULL CHECK(source_revision >= 0),
+            source_hash TEXT NOT NULL,
+            required INTEGER NOT NULL CHECK(required IN (0, 1)),
+            UNIQUE(brief_id, source_type, source_id)
+        )
+        """,
+        """
+        CREATE TABLE generation_runs (
+            id TEXT PRIMARY KEY,
+            chapter_id TEXT NOT NULL REFERENCES chapters(id),
+            mode TEXT NOT NULL CHECK(mode IN ('BASIC', 'STANDARD', 'STRICT')),
+            status TEXT NOT NULL CHECK(status IN (
+                'PREPARING', 'READY', 'STREAMING', 'PARTIAL',
+                'COMPLETED', 'FAILED', 'ACCEPTED', 'DISCARDED'
+            )),
+            brief_id TEXT REFERENCES chapter_briefs(id),
+            brief_revision INTEGER CHECK(brief_revision >= 0),
+            context_manifest_id TEXT REFERENCES context_manifests(id),
+            model_provider_id TEXT NOT NULL,
+            model_id TEXT NOT NULL,
+            output_token_limit INTEGER NOT NULL CHECK(output_token_limit > 0),
+            prompt_version TEXT NOT NULL,
+            accepted_chapter_revision INTEGER CHECK(accepted_chapter_revision >= 0),
+            input_tokens INTEGER CHECK(input_tokens >= 0),
+            output_tokens INTEGER CHECK(output_tokens >= 0),
+            cached_input_tokens INTEGER CHECK(cached_input_tokens >= 0),
+            reasoning_tokens INTEGER CHECK(reasoning_tokens >= 0),
+            failure_code TEXT,
+            failure_message TEXT,
+            started_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            completed_at TEXT,
+            accepted_at TEXT
+        )
+        """,
+        """
+        CREATE TABLE generation_checkpoints (
+            id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL REFERENCES generation_runs(id),
+            sequence INTEGER NOT NULL CHECK(sequence >= 0),
+            text_path TEXT NOT NULL UNIQUE,
+            content_hash TEXT NOT NULL,
+            finish_reason TEXT,
+            created_at TEXT NOT NULL,
+            UNIQUE(run_id, sequence)
+        )
+        """,
+        "CREATE INDEX chapter_briefs_status ON chapter_briefs(chapter_id, status, revision)",
+        "CREATE INDEX brief_sources_lookup ON brief_sources(source_type, source_id)",
+        "CREATE INDEX generation_runs_chapter ON generation_runs(chapter_id, started_at)",
+        """
+        CREATE UNIQUE INDEX generation_one_active_writer
+        ON generation_runs(chapter_id)
+        WHERE status IN ('PREPARING', 'READY', 'STREAMING')
+        """,
+    )
+    for statement in statements:
+        connection.execute(statement)
+
+
+def _migration_4(connection: sqlite3.Connection) -> None:
+    statements = (
+        """
+        CREATE TABLE audit_runs (
+            id TEXT PRIMARY KEY,
+            chapter_id TEXT NOT NULL REFERENCES chapters(id),
+            target_kind TEXT NOT NULL CHECK(target_kind IN (
+                'GENERATED_DRAFT', 'FORMAL_CHAPTER'
+            )),
+            target_id TEXT NOT NULL,
+            target_revision INTEGER NOT NULL CHECK(target_revision >= 0),
+            target_hash TEXT NOT NULL,
+            mode TEXT NOT NULL CHECK(mode IN ('BASIC', 'STANDARD', 'STRICT')),
+            status TEXT NOT NULL CHECK(status IN (
+                'PREPARING', 'RULE_CHECKED', 'MODEL_CHECKED', 'COMPLETED', 'FAILED'
+            )),
+            model_provider_id TEXT,
+            model_id TEXT,
+            prompt_version TEXT NOT NULL,
+            input_tokens INTEGER CHECK(input_tokens >= 0),
+            output_tokens INTEGER CHECK(output_tokens >= 0),
+            cached_input_tokens INTEGER CHECK(cached_input_tokens >= 0),
+            reasoning_tokens INTEGER CHECK(reasoning_tokens >= 0),
+            failure_code TEXT,
+            failure_message TEXT,
+            started_at TEXT NOT NULL,
+            completed_at TEXT
+        )
+        """,
+        """
+        CREATE TABLE audit_findings (
+            id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL REFERENCES audit_runs(id),
+            category TEXT NOT NULL CHECK(category IN (
+                'STYLE', 'REQUIREMENT', 'CHARACTER', 'KNOWLEDGE',
+                'CLUE', 'CANON', 'TIMELINE', 'FORMAT'
+            )),
+            severity TEXT NOT NULL CHECK(severity IN (
+                'INFO', 'WARNING', 'ERROR', 'BLOCKER'
+            )),
+            source TEXT NOT NULL CHECK(source IN ('DETERMINISTIC', 'MODEL')),
+            location_json TEXT NOT NULL,
+            evidence TEXT NOT NULL,
+            explanation TEXT NOT NULL,
+            related_source_json TEXT NOT NULL,
+            confidence REAL NOT NULL CHECK(confidence >= 0 AND confidence <= 1),
+            status TEXT NOT NULL CHECK(status IN (
+                'OPEN', 'ACCEPTED_REPAIR', 'REJECTED',
+                'FALSE_POSITIVE', 'CONVERTED_TO_CANON'
+            )),
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """,
+        """
+        CREATE TABLE repair_proposals (
+            id TEXT PRIMARY KEY,
+            finding_id TEXT NOT NULL REFERENCES audit_findings(id),
+            target_revision INTEGER NOT NULL CHECK(target_revision >= 0),
+            target_hash TEXT NOT NULL,
+            strategy TEXT NOT NULL CHECK(strategy IN (
+                'REPLACE_TEXT', 'INSERT_TEXT', 'DELETE_TEXT', 'NOTE_ONLY'
+            )),
+            target_text TEXT NOT NULL DEFAULT '',
+            replacement_text TEXT NOT NULL DEFAULT '',
+            patch_json TEXT NOT NULL,
+            explanation TEXT NOT NULL,
+            risk_note TEXT NOT NULL,
+            status TEXT NOT NULL CHECK(status IN (
+                'DRAFT', 'VALIDATED', 'APPLIED', 'REJECTED', 'STALE', 'INVALID'
+            )),
+            created_at TEXT NOT NULL,
+            applied_at TEXT
+        )
+        """,
+        """
+        CREATE TABLE provenance_events (
+            id TEXT PRIMARY KEY,
+            chapter_id TEXT NOT NULL REFERENCES chapters(id),
+            chapter_revision_before INTEGER NOT NULL CHECK(chapter_revision_before >= 0),
+            chapter_revision_after INTEGER NOT NULL CHECK(chapter_revision_after >= 0),
+            event_type TEXT NOT NULL CHECK(event_type IN (
+                'REPAIR_APPLIED', 'FINDING_REJECTED',
+                'FALSE_POSITIVE', 'CANON_NOTE_CREATED'
+            )),
+            source_audit_run_id TEXT REFERENCES audit_runs(id),
+            source_finding_id TEXT REFERENCES audit_findings(id),
+            source_repair_id TEXT REFERENCES repair_proposals(id),
+            summary TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """,
+        "CREATE INDEX audit_runs_chapter ON audit_runs(chapter_id, started_at)",
+        "CREATE INDEX audit_runs_target ON audit_runs(target_kind, target_id, target_revision)",
+        "CREATE INDEX audit_findings_run_status ON audit_findings(run_id, status, severity)",
+        "CREATE INDEX repair_proposals_finding ON repair_proposals(finding_id, status)",
+        "CREATE INDEX provenance_events_chapter ON provenance_events(chapter_id, created_at)",
+    )
+    for statement in statements:
+        connection.execute(statement)
+
+
+def _migration_5(connection: sqlite3.Connection) -> None:
+    statements = (
+        """
+        CREATE TABLE agent_runs (
+            id TEXT PRIMARY KEY,
+            chapter_id TEXT REFERENCES chapters(id),
+            purpose TEXT NOT NULL CHECK(purpose IN (
+                'PLOT_DISCUSSION', 'REVISION_PLAN', 'AUDIT_EXPLANATION'
+            )),
+            status TEXT NOT NULL CHECK(status IN (
+                'PREPARING', 'RUNNING', 'WAITING_FOR_MODEL', 'WAITING_FOR_TOOL',
+                'COMPLETED', 'FAILED', 'CANCELLED'
+            )),
+            model_provider_id TEXT NOT NULL,
+            model_id TEXT NOT NULL,
+            prompt_version TEXT NOT NULL,
+            max_iterations INTEGER NOT NULL CHECK(max_iterations > 0),
+            max_tool_calls INTEGER NOT NULL CHECK(max_tool_calls >= 0),
+            max_tool_result_chars INTEGER NOT NULL CHECK(max_tool_result_chars > 0),
+            used_iterations INTEGER NOT NULL DEFAULT 0 CHECK(used_iterations >= 0),
+            used_tool_calls INTEGER NOT NULL DEFAULT 0 CHECK(used_tool_calls >= 0),
+            input_tokens INTEGER CHECK(input_tokens >= 0),
+            output_tokens INTEGER CHECK(output_tokens >= 0),
+            cached_input_tokens INTEGER CHECK(cached_input_tokens >= 0),
+            reasoning_tokens INTEGER CHECK(reasoning_tokens >= 0),
+            failure_code TEXT,
+            failure_message TEXT,
+            started_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            completed_at TEXT
+        )
+        """,
+        """
+        CREATE TABLE agent_turns (
+            id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL REFERENCES agent_runs(id),
+            sequence INTEGER NOT NULL CHECK(sequence >= 0),
+            role TEXT NOT NULL CHECK(role IN ('SYSTEM', 'USER', 'ASSISTANT', 'TOOL')),
+            content TEXT NOT NULL,
+            content_hash TEXT NOT NULL,
+            omitted INTEGER NOT NULL DEFAULT 0 CHECK(omitted IN (0, 1)),
+            created_at TEXT NOT NULL,
+            UNIQUE(run_id, sequence)
+        )
+        """,
+        """
+        CREATE TABLE agent_tool_calls (
+            id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL REFERENCES agent_runs(id),
+            turn_id TEXT REFERENCES agent_turns(id),
+            sequence INTEGER NOT NULL CHECK(sequence >= 0),
+            tool_name TEXT NOT NULL,
+            arguments_json TEXT NOT NULL,
+            status TEXT NOT NULL CHECK(status IN (
+                'REQUESTED', 'VALIDATED', 'EXECUTED', 'REJECTED', 'FAILED', 'OMITTED'
+            )),
+            result_json TEXT NOT NULL DEFAULT '{}',
+            result_chars INTEGER NOT NULL DEFAULT 0 CHECK(result_chars >= 0),
+            source_refs_json TEXT NOT NULL DEFAULT '[]',
+            failure_code TEXT,
+            failure_message TEXT,
+            created_at TEXT NOT NULL,
+            completed_at TEXT,
+            UNIQUE(run_id, sequence)
+        )
+        """,
+        "CREATE INDEX agent_runs_chapter ON agent_runs(chapter_id, started_at)",
+        "CREATE INDEX agent_turns_run ON agent_turns(run_id, sequence)",
+        "CREATE INDEX agent_tool_calls_run ON agent_tool_calls(run_id, sequence)",
+    )
+    for statement in statements:
+        connection.execute(statement)
+
+
+def _migration_6(connection: sqlite3.Connection) -> None:
+    statements = (
+        """
+        CREATE TABLE chat_sessions (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            summary TEXT NOT NULL DEFAULT '',
+            summarized_through_sequence INTEGER NOT NULL DEFAULT -1
+                CHECK(summarized_through_sequence >= -1),
+            summary_revision INTEGER NOT NULL DEFAULT 0 CHECK(summary_revision >= 0),
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """,
+        """
+        CREATE TABLE chat_messages (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL REFERENCES chat_sessions(id),
+            sequence INTEGER NOT NULL CHECK(sequence >= 0),
+            chapter_id TEXT REFERENCES chapters(id),
+            role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
+            content TEXT NOT NULL,
+            content_hash TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            UNIQUE(session_id, sequence)
+        )
+        """,
+        "CREATE INDEX chat_messages_session ON chat_messages(session_id, sequence)",
+    )
+    for statement in statements:
+        connection.execute(statement)
+
+
+MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
+    1: _migration_1,
+    2: _migration_2,
+    3: _migration_3,
+    4: _migration_4,
+    5: _migration_5,
+    6: _migration_6,
+}
+
+
+class MigrationManager:
+    def __init__(self, connection: sqlite3.Connection) -> None:
+        self._connection = connection
+
+    def migrate(self) -> None:
+        current = int(self._connection.execute("PRAGMA user_version").fetchone()[0])
+        if current > LATEST_SCHEMA_VERSION:
+            raise RuntimeError(
+                f"project uses newer schema {current}; supported version is {LATEST_SCHEMA_VERSION}"
+            )
+        with self._connection:
+            self._connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS schema_migrations (
+                    version INTEGER PRIMARY KEY,
+                    applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            for version in range(current + 1, LATEST_SCHEMA_VERSION + 1):
+                MIGRATIONS[version](self._connection)
+                self._connection.execute(
+                    "INSERT INTO schema_migrations(version) VALUES (?)", (version,)
+                )
+                self._connection.execute(f"PRAGMA user_version = {version}")

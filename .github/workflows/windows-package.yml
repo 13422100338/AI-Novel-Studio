@@ -1,0 +1,22 @@
+name: Windows package
+
+on:
+  workflow_dispatch:
+
+jobs:
+  package:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: python -m pip install -e ".[dev]"
+      - shell: pwsh
+        run: ./scripts/build_windows.ps1
+      - run: python -m scripts.privacy_scan --root dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AI-Novel-Studio-windows
+          path: dist/AI-Novel-Studio/

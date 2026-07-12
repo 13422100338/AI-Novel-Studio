@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ai-novel-studio"
+version = "0.7.0"
+description = "A local-first AI workspace for long-form novel writing."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "AI Novel Studio contributors" }]
+dependencies = ["PySide6>=6.8,<7"]
+
+[project.optional-dependencies]
+dev = [
+  "mypy>=1.15,<2",
+  "pyinstaller>=6.12,<7",
+  "pytest>=8,<10",
+  "pytest-qt>=4.4,<5",
+  "ruff>=0.11,<1",
+]
+
+[project.gui-scripts]
+ai-novel-studio = "ai_novel_studio.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+ai_novel_studio = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.11"
+packages = ["ai_novel_studio"]
+strict = true

@@ -1,0 +1,125 @@
+from pathlib import Path
+
+from ai_novel_studio.core.context.history_retriever import HistoryRetriever
+from ai_novel_studio.domain.memory import MemoryStatus, ReviewStatus
+from ai_novel_studio.infrastructure.storage.chapter_repository import ChapterRepository
+from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
+from ai_novel_studio.infrastructure.storage.search_repository import SearchRepository
+
+
+def _project_with_four_chapters(tmp_path: Path):  # type: ignore[no-untyped-def]
+    project = ProjectRepository.create(tmp_path / "project", "检索测试")
+    volume = project.list_volumes()[0]
+    chapters = ChapterRepository(project)
+    created = tuple(
+        chapters.create_chapter(volume.id, f"第 {index} 章", str(index), f"正文 {index}")
+        for index in range(1, 5)
+    )
+    return project, chapters, created
+
+
+def test_chinese_fts_query_excludes_current_and_future_chapters(tmp_path: Path) -> None:
+    project, _, chapters = _project_with_four_chapters(tmp_path)
+    search = SearchRepository(project)
+    search.index_chapter(
+        chapters[0].id,
+        "旧港来信",
+        "林岚发现旧港来信没有署名，信封已经受潮。",
+        participants=("character-lan",),
+    )
+    search.index_chapter(chapters[2].id, "当前章", "旧港来信在当前章再次出现。")
+    search.index_chapter(chapters[3].id, "未来章", "未来才会解释旧港来信。")
+
+    hits = HistoryRetriever(search).search("旧港来信", chapters[2].id)
+
+    assert [hit.chapter_id for hit in hits] == [chapters[0].id]
+    assert "旧港来信" in hits[0].excerpt
+    assert hits[0].source_revision == 0
+    assert hits[0].source_hash
+
+
+def test_participant_and_manual_pin_boost_relevant_history(tmp_path: Path) -> None:
+    project, _, chapters = _project_with_four_chapters(tmp_path)
+    search = SearchRepository(project)
+    ordinary = search.index_chapter(
+        chapters[0].id,
+        "密封来信",
+        "密封来信被留在门边。",
+        participants=("character-other",),
+    )
+    relevant = search.index_chapter(
+        chapters[1].id,
+        "密封来信",
+        "林岚收起密封来信。",
+        participants=("character-lan",),
+        pinned_weight=3,
+    )
+
+    hits = HistoryRetriever(search).search(
+        "密封来信",
+        chapters[2].id,
+        participants=("character-lan",),
+    )
+
+    assert [hit.document_id for hit in hits[:2]] == [relevant.id, ordinary.id]
+    assert hits[0].participant_boost > hits[1].participant_boost
+    assert hits[0].pinned_weight == 3
+
+
+def test_upsert_keeps_stable_document_id_and_stale_source_is_demoted(tmp_path: Path) -> None:
+    project, chapters_repository, chapters = _project_with_four_chapters(tmp_path)
+    search = SearchRepository(project)
+    first = search.index_chapter(chapters[0].id, "钟楼档案", "钟楼档案记载了火灾。")
+    updated = search.index_chapter(chapters[0].id, "钟楼档案", "钟楼档案记载了蓝色火焰。")
+    current = search.index_chapter(chapters[1].id, "钟楼档案", "钟楼档案仍然有效。")
+
+    assert first.id == updated.id
+    hits = HistoryRetriever(search).search("钟楼档案", chapters[2].id)
+    assert "蓝色火焰" in next(hit.excerpt for hit in hits if hit.document_id == first.id)
+
+    chapters_repository.save_content(
+        chapters[0].id,
+        "重写后的第一章",
+        source="manual",
+        reason="story rewrite",
+    )
+    stale_hits = HistoryRetriever(search).search("钟楼档案", chapters[2].id)
+
+    assert stale_hits[0].document_id == current.id
+    stale = next(hit for hit in stale_hits if hit.document_id == first.id)
+    assert stale.status == MemoryStatus.STALE
+    assert stale.stale_penalty < 0
+
+
+def test_ascii_query_and_deterministic_tie_breaking_need_no_vector_database(
+    tmp_path: Path,
+) -> None:
+    project, _, chapters = _project_with_four_chapters(tmp_path)
+    search = SearchRepository(project)
+    first = search.index_document(
+        document_type="CANON",
+        source_id="canon-a",
+        chapter_id=chapters[0].id,
+        title="sealed letter",
+        content="sealed letter evidence alpha",
+        participants=(),
+        pinned_weight=0,
+        review_status=ReviewStatus.APPROVED,
+        status=MemoryStatus.CURRENT,
+    )
+    second = search.index_document(
+        document_type="CANON",
+        source_id="canon-b",
+        chapter_id=chapters[0].id,
+        title="sealed letter",
+        content="sealed letter evidence gamma",
+        participants=(),
+        pinned_weight=0,
+        review_status=ReviewStatus.APPROVED,
+        status=MemoryStatus.CURRENT,
+    )
+
+    hits = HistoryRetriever(search).search("sealed letter", chapters[1].id)
+
+    assert {hit.document_id for hit in hits} == {first.id, second.id}
+    assert [hit.document_id for hit in hits] == sorted(hit.document_id for hit in hits)

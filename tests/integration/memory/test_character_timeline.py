@@ -1,0 +1,156 @@
+from pathlib import Path
+
+from ai_novel_studio.core.memory.character_timeline import CharacterTimeline
+from ai_novel_studio.domain.memory import (
+    Authority,
+    KnowledgeState,
+    KnowledgeSubject,
+    ReviewStatus,
+    SourceType,
+)
+from ai_novel_studio.infrastructure.storage.chapter_repository import ChapterRepository
+from ai_novel_studio.infrastructure.storage.character_memory_repository import (
+    CharacterMemoryRepository,
+)
+from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
+
+
+def _project_with_three_chapters(tmp_path: Path):  # type: ignore[no-untyped-def]
+    project = ProjectRepository.create(tmp_path / "project", "时间线测试")
+    volume = project.list_volumes()[0]
+    chapters = ChapterRepository(project)
+    return project, tuple(
+        chapters.create_chapter(volume.id, f"第 {index} 章", str(index))
+        for index in range(1, 4)
+    )
+
+
+def test_character_state_is_append_only_and_excludes_current_future_events(tmp_path: Path) -> None:
+    project, chapters = _project_with_three_chapters(tmp_path)
+    repository = CharacterMemoryRepository(project)
+    character = repository.create_character("林岚", ("阿岚",), "调查员")
+    repository.append_state(
+        character.id,
+        chapters[0].id,
+        motivation="寻找失踪者",
+        psychology="警惕",
+        current_goal="检查来信",
+        relationships="尚未信任同伴",
+        recent_activity="返回旧港",
+        confidence=1,
+        source_type=SourceType.HUMAN,
+        review_status=ReviewStatus.APPROVED,
+    )
+    repository.append_state(
+        character.id,
+        chapters[1].id,
+        motivation="追踪寄信人",
+        psychology="动摇",
+        current_goal="进入钟楼",
+        relationships="开始依赖同伴",
+        recent_activity="识别暗号",
+        confidence=0.8,
+        source_type=SourceType.MODEL,
+        review_status=ReviewStatus.REVIEW,
+    )
+    repository.append_state(
+        character.id,
+        chapters[2].id,
+        motivation="揭开骗局",
+        psychology="愤怒",
+        current_goal="质问寄信人",
+        relationships="与同伴决裂",
+        recent_activity="发现伪证",
+        confidence=1,
+        source_type=SourceType.HUMAN,
+        review_status=ReviewStatus.APPROVED,
+    )
+
+    before_second = repository.state_before(character.id, chapters[1].id)
+    before_third = repository.state_before(character.id, chapters[2].id)
+
+    assert before_second is not None
+    assert before_second.current_goal == "检查来信"
+    assert before_third is not None
+    assert before_third.current_goal == "检查来信"
+    assert len(repository.state_history(character.id)) == 3
+    assert repository.get_character(character.id).aliases == ("阿岚",)
+
+
+def test_character_and_reader_knowledge_are_separate_and_time_bounded(tmp_path: Path) -> None:
+    project, chapters = _project_with_three_chapters(tmp_path)
+    repository = CharacterMemoryRepository(project)
+    character = repository.create_character("林岚")
+    item = repository.create_knowledge_item(
+        "暗号属于兄长",
+        "林岚童年见过该暗号。",
+        Authority.USER_CONFIRMED,
+        ReviewStatus.LOCKED,
+    )
+    repository.append_knowledge_event(
+        item.id,
+        KnowledgeSubject.CHARACTER,
+        character.id,
+        chapters[0].id,
+        KnowledgeState.KNOWN,
+        "第一章识别暗号",
+        SourceType.HUMAN,
+        ReviewStatus.APPROVED,
+    )
+    repository.append_knowledge_event(
+        item.id,
+        KnowledgeSubject.READER,
+        project.project.id,
+        chapters[0].id,
+        KnowledgeState.SUSPECTED,
+        "读者看到投信背影",
+        SourceType.HUMAN,
+        ReviewStatus.APPROVED,
+    )
+    repository.append_knowledge_event(
+        item.id,
+        KnowledgeSubject.CHARACTER,
+        character.id,
+        chapters[2].id,
+        KnowledgeState.FORGOTTEN,
+        "第三章受伤后失忆",
+        SourceType.HUMAN,
+        ReviewStatus.APPROVED,
+    )
+
+    character_view = repository.knowledge_before(
+        KnowledgeSubject.CHARACTER, character.id, chapters[2].id
+    )
+    reader_view = repository.knowledge_before(
+        KnowledgeSubject.READER, project.project.id, chapters[2].id
+    )
+
+    assert [(entry.item.title, entry.event.state) for entry in character_view] == [
+        ("暗号属于兄长", KnowledgeState.KNOWN)
+    ]
+    assert reader_view[0].event.state == KnowledgeState.SUSPECTED
+
+
+def test_timeline_reports_same_boundary_conflicts_instead_of_guessing(tmp_path: Path) -> None:
+    project, chapters = _project_with_three_chapters(tmp_path)
+    repository = CharacterMemoryRepository(project)
+    character = repository.create_character("林岚")
+    for psychology in ("冷静", "恐慌"):
+        repository.append_state(
+            character.id,
+            chapters[0].id,
+            motivation="调查",
+            psychology=psychology,
+            current_goal="进入钟楼",
+            relationships="未知",
+            recent_activity="收到信",
+            confidence=1,
+            source_type=SourceType.HUMAN,
+            review_status=ReviewStatus.APPROVED,
+        )
+
+    snapshot = CharacterTimeline(repository).snapshot((character.id,), chapters[1].id)[0]
+
+    assert snapshot.state is None
+    assert {event.psychology for event in snapshot.conflicting_states} == {"冷静", "恐慌"}
+
