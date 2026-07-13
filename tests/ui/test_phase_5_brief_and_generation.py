@@ -4,6 +4,7 @@ from PySide6.QtCore import QObject, Signal
 from pytestqt.qtbot import QtBot
 
 from ai_novel_studio.domain.generation import CreationMode, GenerationStatus
+from ai_novel_studio.infrastructure.llm import LLMUsage
 from ai_novel_studio.ui.demo_data import WorkspaceDemoData
 from ai_novel_studio.ui.main_window import MainWindow
 from ai_novel_studio.ui.panels.manuscript_panel import ManuscriptPanel
@@ -11,6 +12,8 @@ from ai_novel_studio.ui.panels.manuscript_panel import ManuscriptPanel
 
 class FakeGenerationRuntime(QObject):
     draft_chunk = Signal(str)
+    reasoning_chunk = Signal(str)
+    generation_usage_changed = Signal(object)
     run_changed = Signal(object)
     failed = Signal(str)
     accepted = Signal(str)
@@ -130,8 +133,22 @@ def test_main_window_wires_phase5_runtime_without_direct_storage_access(
     window.manuscript_panel.generate_button.click()
 
     assert runtime.prepare_calls == [(CreationMode.BASIC, 64000, 3500)]
+    assert window.generation_process_dialog is not None
+    assert window.generation_process_dialog.isVisible()
+    runtime.reasoning_chunk.emit("先确认人物目标，再安排冲突。")
+    runtime.generation_usage_changed.emit(
+        LLMUsage(input_tokens=1200, output_tokens=300, reasoning_tokens=80)
+    )
     runtime.draft_chunk.emit("draft")
     runtime.run_changed.emit(GenerationStatus.COMPLETED)
+    assert "先确认人物目标" in (
+        window.generation_process_dialog.reasoning_output.toPlainText()
+    )
+    assert "1200" in window.generation_process_dialog.usage_label.text()
+    assert "完整草稿" in window.generation_process_dialog.activity_log.toPlainText()
+    assert "不是模型驱动的 Agent 工具循环" in (
+        window.generation_process_dialog.tool_output.toPlainText()
+    )
     assert window.manuscript_panel.generated_draft_editor.toPlainText() == "draft"
     assert window.manuscript_panel.editor.toPlainText() == "draft"
 

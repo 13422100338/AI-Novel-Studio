@@ -67,6 +67,8 @@ class PreparedMessageStore:
 
 class ProjectGenerationRuntime(QObject):
     draft_chunk = Signal(str)
+    reasoning_chunk = Signal(str)
+    generation_usage_changed = Signal(object)
     run_changed = Signal(object)
     failed = Signal(str)
     accepted = Signal(str)
@@ -125,8 +127,10 @@ class ProjectGenerationRuntime(QObject):
         self.accepted_chapter_revision: int | None = None
 
         self.coordinator.draft_chunk.connect(self.draft_chunk.emit)
+        self.coordinator.reasoning_chunk.connect(self.reasoning_chunk.emit)
         self.coordinator.run_changed.connect(self._handle_run_changed)
         self.coordinator.failed.connect(self.failed.emit)
+        self.coordinator.usage_changed.connect(self.generation_usage_changed.emit)
         self.coordinator.usage_changed.connect(self._emit_usage_snapshot)
 
     def latest_context_manifest(self, chapter_id: str) -> ContextManifest | None:

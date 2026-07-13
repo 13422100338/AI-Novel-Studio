@@ -71,6 +71,7 @@ from ai_novel_studio.ui.pages.agent_trace_window import AgentTraceWindow
 from ai_novel_studio.ui.pages.audit_window import AuditWindow
 from ai_novel_studio.ui.pages.brief_dialog import BriefDialog
 from ai_novel_studio.ui.pages.detached_chat_window import DetachedChatWindow
+from ai_novel_studio.ui.pages.generation_process_dialog import GenerationProcessDialog
 from ai_novel_studio.ui.pages.memory_window import MemoryWindow
 from ai_novel_studio.ui.pages.project_welcome import ProjectWelcome
 from ai_novel_studio.ui.pages.reference_window import ReferenceWindow
@@ -146,6 +147,7 @@ class MainWindow(QMainWindow):
         self.audit_window: AuditWindow | None = None
         self.agent_trace_window: AgentTraceWindow | None = None
         self.reference_window: ReferenceWindow | None = None
+        self.generation_process_dialog: GenerationProcessDialog | None = None
         self.last_agent_result: Any | None = None
         self._pending_model_audit: Any | None = None
         self.settings_dialog: SettingsDialog | None = None
@@ -691,8 +693,40 @@ class MainWindow(QMainWindow):
         if self.generation_runtime is None:
             self.manuscript_panel.show_generation_error("正文生成运行时尚未连接")
             return
+        self.open_generation_process_dialog()
         self.manuscript_panel.begin_generation_draft()
         self.generation_runtime.prepare_and_start(mode, output_token_limit, target_words)
+
+    def open_generation_process_dialog(self) -> None:
+        if self.generation_process_dialog is None:
+            self.generation_process_dialog = GenerationProcessDialog(self)
+        self.generation_process_dialog.begin()
+        self.generation_process_dialog.show()
+        self.generation_process_dialog.raise_()
+        self.generation_process_dialog.activateWindow()
+
+    def append_generation_reasoning(self, text: str) -> None:
+        if self.generation_process_dialog is not None:
+            self.generation_process_dialog.append_reasoning(text)
+
+    def append_generation_draft(self, text: str) -> None:
+        self.manuscript_panel.append_generation_draft(text)
+        if self.generation_process_dialog is not None:
+            self.generation_process_dialog.note_draft_chunk()
+
+    def apply_generation_status(self, status: Any) -> None:
+        self.manuscript_panel.apply_generation_status(status)
+        if self.generation_process_dialog is not None:
+            self.generation_process_dialog.apply_status(status)
+
+    def show_generation_error(self, message: str) -> None:
+        self.manuscript_panel.show_generation_error(message)
+        if self.generation_process_dialog is not None:
+            self.generation_process_dialog.show_error(message)
+
+    def update_generation_usage(self, usage: object) -> None:
+        if self.generation_process_dialog is not None:
+            self.generation_process_dialog.apply_usage(usage)
 
     def cancel_prose_generation(self) -> None:
         if self.generation_runtime is not None:
@@ -736,9 +770,9 @@ class MainWindow(QMainWindow):
             return
         self._bound_generation_runtime = self.generation_runtime
         self.manuscript_panel.set_phase5_generation_enabled(True, frozen_brief_available=False)
-        self.generation_runtime.draft_chunk.connect(self.manuscript_panel.append_generation_draft)
-        self.generation_runtime.run_changed.connect(self.manuscript_panel.apply_generation_status)
-        self.generation_runtime.failed.connect(self.manuscript_panel.show_generation_error)
+        self.generation_runtime.draft_chunk.connect(self.append_generation_draft)
+        self.generation_runtime.run_changed.connect(self.apply_generation_status)
+        self.generation_runtime.failed.connect(self.show_generation_error)
         self.generation_runtime.accepted.connect(self.apply_accepted_generation)
         self.generation_runtime.discarded.connect(self.manuscript_panel.discard_generation_draft)
         recovered = getattr(self.generation_runtime, "recovered", None)
@@ -747,6 +781,14 @@ class MainWindow(QMainWindow):
         usage_changed = getattr(self.generation_runtime, "usage_changed", None)
         if usage_changed is not None:
             usage_changed.connect(self.update_usage)
+        reasoning_chunk = getattr(self.generation_runtime, "reasoning_chunk", None)
+        if reasoning_chunk is not None:
+            reasoning_chunk.connect(self.append_generation_reasoning)
+        generation_usage = getattr(
+            self.generation_runtime, "generation_usage_changed", None
+        )
+        if generation_usage is not None:
+            generation_usage.connect(self.update_generation_usage)
         strict_audit_changed = getattr(self.generation_runtime, "strict_audit_changed", None)
         if strict_audit_changed is not None:
             strict_audit_changed.connect(self.manuscript_panel.set_strict_audit_result)

@@ -128,6 +128,65 @@ _EN: dict[str, str] = {
     "采用部分草稿": "Accept partial draft",
     "放弃草稿": "Discard draft",
     "生成后将在正文框内预览": "The generated draft will be previewed in the manuscript editor",
+    "正文生成过程": "Prose generation process",
+    "AI 正文生成过程": "AI prose generation process",
+    "展示程序实际执行阶段、模型 API 明确返回的推理内容和工具记录；不显示或伪造隐藏思维链。": (
+        "Shows actual application stages, reasoning explicitly returned by the model API, "
+        "and tool records. Hidden chain-of-thought is neither shown nor invented."
+    ),
+    "等待开始": "Waiting",
+    "准备中": "Preparing",
+    "生成中": "Generating",
+    "过程概览": "Overview",
+    "模型推理": "Model reasoning",
+    "生成阶段": "Generation stages",
+    "模型返回的推理内容": "Reasoning returned by the model",
+    "工具调用记录": "Tool call records",
+    "当前模型尚未返回可展示的推理内容。部分模型或中转站只返回最终正文。": (
+        "The model has not returned displayable reasoning. Some models or relay providers "
+        "return only final prose."
+    ),
+    "本次 Token：等待模型返回": "Current tokens: waiting for model usage",
+    "本次 Token": "Current tokens",
+    "输出": "Output",
+    "推理": "Reasoning",
+    "错误": "Error",
+    "1. 程序：准备当前章要求、冻结 Brief、记忆与相关上下文。": (
+        "1. App: preparing chapter requirements, frozen Brief, memory, and relevant context."
+    ),
+    "2. 程序：上下文准备完成后，将向正文模型发起流式请求。": (
+        "2. App: a streaming prose request will start after context preparation."
+    ),
+    "3. 模型：开始流式返回正文草稿。": (
+        "3. Model: started streaming the prose draft."
+    ),
+    "当前正文生成不是模型驱动的 Agent 工具循环。"
+    "记忆检索和上下文组装由程序在调用模型前完成，"
+    "可在“AI 参考内容”中审查实际采用的来源。": (
+        "Prose generation is not currently a model-driven Agent tool loop. The app retrieves "
+        "memory and assembles context before calling the model; inspect the sources under "
+        "AI Context."
+    ),
+    "正在建立生成任务。": "Creating the generation run.",
+    "上下文已冻结，等待模型请求开始。": "Context is frozen; waiting for the model request.",
+    "模型连接已建立，正在接收流式响应。": (
+        "The model connection is active and streaming the response."
+    ),
+    "生成中断，已保留收到的部分草稿。": (
+        "Generation stopped; the received partial draft was preserved."
+    ),
+    "完整草稿已生成，等待人工审查。": (
+        "The complete draft is ready for human review."
+    ),
+    "本次生成失败。": "This generation failed.",
+    "草稿已由用户采用。": "The draft was accepted by the user.",
+    "草稿已由用户放弃。": "The draft was discarded by the user.",
+    "等待模型": "Waiting for model",
+    "部分完成": "Partially completed",
+    "已完成": "Completed",
+    "失败": "Failed",
+    "已采用": "Accepted",
+    "已放弃": "Discarded",
     "未打开章节": "No chapter open",
     "打开或导入项目后显示当前章节": "Open or import a project to display a chapter",
     "剧情商讨": "Plot discussion",
