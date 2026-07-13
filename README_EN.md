@@ -24,6 +24,7 @@ and knowledge boundaries. Context is assembled dynamically for each task.
 - Manuscript text, summaries, character state, clues, and canon are stored separately.
 - Model-extracted memory enters review before it becomes trusted context.
 - Plot discussion and prose writing can use different models.
+- The interface can switch between Simplified Chinese and English and remembers the selection.
 - Important operations retain provenance, history, and recovery boundaries.
 
 ## Installation
@@ -71,7 +72,7 @@ For development tools:
 
 ## Main workspace
 
-![AI Novel Studio main workspace](docs/assets/product-overview/01-main-workspace.png)
+![AI Novel Studio main workspace](docs/assets/product-overview-en/01-main-workspace.png)
 
 The main window uses a three-column layout.
 
@@ -107,7 +108,7 @@ Generated prose remains a draft until the author explicitly accepts it.
 
 ## Detached plot chat
 
-![Detached plot discussion](docs/assets/product-overview/05-plot-chat.png)
+![Detached plot discussion](docs/assets/product-overview-en/05-plot-chat.png)
 
 The detached window shares the same project conversation as the embedded panel. In normal mode,
 the plot model receives stable system guidance, earlier novel summaries, compressed older chat,
@@ -128,7 +129,7 @@ which tool was requested, its parameters, returned sources, and any truncation.
 
 ## Long-form memory
 
-![Long-form memory library](docs/assets/product-overview/02-memory-library.png)
+![Long-form memory library](docs/assets/product-overview-en/02-memory-library.png)
 
 The memory library is not a single shortened version of the manuscript. It maintains multiple
 types of context with separate authority and review states:
@@ -154,7 +155,7 @@ instead of silently becoming canon.
 
 ## Style system
 
-![Layered style system](docs/assets/product-overview/03-style-system.png)
+![Layered style system](docs/assets/product-overview-en/03-style-system.png)
 
 Style guidance can be scoped to the whole book, a genre or scene, a character, or a chapter.
 The system supports editable rules, prohibited expressions, frequency limits, and human-written
@@ -205,7 +206,7 @@ text; the author decides whether to apply a repair.
 
 ## Model connections and routing
 
-![Model connections and task routing](docs/assets/product-overview/04-model-settings.png)
+![Model connections and task routing](docs/assets/product-overview-en/04-model-settings.png)
 
 AI Novel Studio supports OpenAI-compatible APIs and compatible third-party gateways. Plot
 discussion, prose generation, Brief preparation, retrieval, memory extraction, and style review

@@ -28,6 +28,7 @@ from ai_novel_studio.infrastructure.llm import (
     TaskPurpose,
     TaskRoutes,
 )
+from ai_novel_studio.ui.i18n import Language, language_manager
 
 
 class SettingsDialog(QDialog):
@@ -183,8 +184,15 @@ class SettingsDialog(QDialog):
         density = QComboBox(page)
         density.addItems(("适中", "紧凑", "宽松"))
         density.setAccessibleName("界面密度")
+        self.language_combo = QComboBox(page)
+        self.language_combo.addItem("简体中文", Language.CHINESE.value)
+        self.language_combo.addItem("English", Language.ENGLISH.value)
+        language_index = self.language_combo.findData(language_manager().language.value)
+        self.language_combo.setCurrentIndex(max(0, language_index))
+        self.language_combo.setAccessibleName("界面语言")
         form.addRow("主题", theme)
         form.addRow("信息密度", density)
+        form.addRow("语言", self.language_combo)
         return page
 
     def _creation_tab(self) -> QWidget:
@@ -218,9 +226,10 @@ class SettingsDialog(QDialog):
     def add_connection(self) -> None:
         self._store_current_profile(ignore_errors=True)
         provider_id = f"connection-{uuid4().hex}"
-        self.connection_combo.addItem("新连接", provider_id)
+        default_name = language_manager().translate("新连接")
+        self.connection_combo.addItem(default_name, provider_id)
         self.connection_combo.setCurrentIndex(self.connection_combo.count() - 1)
-        self.connection_name.setText("新连接")
+        self.connection_name.setText(default_name)
         self.base_url.setText("https://api.example.com/v1")
         self.models_url.clear()
         self.api_key.clear()
@@ -427,6 +436,9 @@ class SettingsDialog(QDialog):
         return None
 
     def save_model_settings(self) -> None:
+        language = self.language_combo.currentData()
+        if isinstance(language, str):
+            language_manager().set_language(language)
         if self.controller is None:
             self._show_error("当前窗口未连接模型配置服务")
             return
