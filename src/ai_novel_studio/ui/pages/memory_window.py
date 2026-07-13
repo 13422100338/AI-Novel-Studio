@@ -19,7 +19,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ai_novel_studio.application.memory_promotion_coordinator import (
+    MemoryPromotionCoordinator,
+)
 from ai_novel_studio.application.memory_workspace_service import (
+    MemoryBulkPromotionResult,
     MemoryWorkspaceRecord,
     MemoryWorkspaceService,
 )
@@ -40,6 +44,7 @@ class MemoryWindow(QMainWindow):
         self.editors: dict[str, QPlainTextEdit] = {}
         self.field_widgets: dict[str, dict[str, QWidget]] = {}
         self.setting_source_id: str | None = None
+        self._promotion_coordinator: MemoryPromotionCoordinator | None = None
 
         self.setWindowTitle("记忆库 · AI Novel Studio")
         self.setMinimumSize(820, 640)
@@ -101,6 +106,14 @@ class MemoryWindow(QMainWindow):
         self.setCentralWidget(surface)
 
     def bind(self, service: MemoryWorkspaceService, before_chapter_id: str) -> None:
+        if (
+            self._promotion_coordinator is not None
+            and self._promotion_coordinator.is_running
+        ):
+            self.metadata_label.setText(
+                self._tr("批量晋升仍在后台运行，请等待完成。")
+            )
+            return
         setting_draft = (
             self._setting_values()
             if hasattr(self, "setting_title_edit")
@@ -111,6 +124,12 @@ class MemoryWindow(QMainWindow):
         for record in snapshot.records:
             grouped[record.category].append(record)
         self._service = service
+        self._promotion_coordinator = MemoryPromotionCoordinator(service, self)
+        self._promotion_coordinator.progress_changed.connect(
+            self._bulk_promotion_progress
+        )
+        self._promotion_coordinator.completed.connect(self._bulk_promotion_completed)
+        self._promotion_coordinator.failed.connect(self._bulk_promotion_failed)
         self._records = {record.id: record for record in snapshot.records}
         self.tabs.clear()
         self.selectors.clear()
@@ -282,8 +301,9 @@ class MemoryWindow(QMainWindow):
                 "⚠ 当前内容只是模型提取失败后的原文定位预览，并非有效压缩摘要。"
                 "请返回主界面点击“整理记忆”重试。\n" + self.metadata_label.text()
             )
-        self.save_button.setEnabled(record.editable and not locked)
-        self.promote_button.setEnabled(record.promotable and not locked)
+        busy = self._bulk_promotion_running()
+        self.save_button.setEnabled(record.editable and not locked and not busy)
+        self.promote_button.setEnabled(record.promotable and not locked and not busy)
         self._refresh_bulk_promotion_button()
 
     def _save_current(self) -> None:
@@ -335,7 +355,7 @@ class MemoryWindow(QMainWindow):
             if self._service is not None
             else 0
         )
-        self.promote_all_button.setEnabled(count > 0)
+        self.promote_all_button.setEnabled(count > 0 and not self._bulk_promotion_running())
         self.promote_all_button.setToolTip(
             self._tr("当前共有 {count} 条可晋升候选").format(count=count)
         )
@@ -361,9 +381,39 @@ class MemoryWindow(QMainWindow):
         )
         if answer != QMessageBox.StandardButton.Yes:
             return
-        result = service.promote_all()
+        coordinator = self._promotion_coordinator
+        if coordinator is None:
+            self.metadata_label.setText(self._tr("批量晋升服务尚未连接。"))
+            return
+        self._set_bulk_promotion_busy(True)
+        self.metadata_label.setText(
+            self._tr("正在后台晋升 0 / {count} 条候选……").format(count=count)
+        )
+        try:
+            coordinator.start()
+        except RuntimeError as error:
+            self._set_bulk_promotion_busy(False)
+            self.metadata_label.setText(
+                self._tr("批量晋升失败：{message}").format(message=error)
+            )
+
+    def _bulk_promotion_progress(self, current: int, total: int, title: str) -> None:
+        self.metadata_label.setText(
+            self._tr("正在后台晋升 {current} / {total} 条候选……当前：{title}").format(
+                current=current,
+                total=total,
+                title=title,
+            )
+        )
+
+    def _bulk_promotion_completed(self, value: object) -> None:
+        if not isinstance(value, MemoryBulkPromotionResult):
+            self._bulk_promotion_failed(self._tr("批量晋升返回了无效结果"))
+            return
+        result = value
         for promoted in result.promoted:
             self._records[promoted.id] = promoted
+        self._set_bulk_promotion_busy(False)
         self._refresh_current_record()
         if result.failures:
             self.metadata_label.setText(
@@ -381,6 +431,26 @@ class MemoryWindow(QMainWindow):
                 )
             )
         self._refresh_bulk_promotion_button()
+
+    def _bulk_promotion_failed(self, message: str) -> None:
+        self._set_bulk_promotion_busy(False)
+        self.metadata_label.setText(
+            self._tr("批量晋升失败：{message}").format(message=message)
+        )
+        self._refresh_bulk_promotion_button()
+
+    def _set_bulk_promotion_busy(self, busy: bool) -> None:
+        self.tabs.setEnabled(not busy)
+        if busy:
+            self.save_button.setEnabled(False)
+            self.promote_button.setEnabled(False)
+            self.promote_all_button.setEnabled(False)
+
+    def _bulk_promotion_running(self) -> bool:
+        return bool(
+            self._promotion_coordinator is not None
+            and self._promotion_coordinator.is_running
+        )
 
     @staticmethod
     def _tr(text: str) -> str:

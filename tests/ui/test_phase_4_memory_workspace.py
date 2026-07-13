@@ -1,4 +1,6 @@
 from dataclasses import replace
+from threading import Event
+from time import perf_counter
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QMessageBox
@@ -112,6 +114,19 @@ class StructuredUiGateway(UiGateway):
         return self.record
 
 
+class BlockingUiGateway(UiGateway):
+    def __init__(self) -> None:
+        super().__init__()
+        self.started = Event()
+        self.release = Event()
+
+    def promote(self, record_id: str, expected_revision: int) -> MemoryWorkspaceRecord:
+        self.started.set()
+        if not self.release.wait(timeout=5):
+            raise RuntimeError("test release timeout")
+        return super().promote(record_id, expected_revision)
+
+
 def test_memory_window_binds_metadata_edit_and_explicit_promotion(qtbot: QtBot) -> None:
     gateway = UiGateway()
     window = MemoryWindow(WorkspaceDemoData.sample())
@@ -164,6 +179,34 @@ def test_memory_window_can_confirm_and_promote_all_candidates(
 
     qtbot.mouseClick(window.promote_all_button, Qt.MouseButton.LeftButton)
 
-    assert gateway.promote_count == 1
+    qtbot.waitUntil(lambda: gateway.promote_count == 1)
+    qtbot.waitUntil(lambda: not window._bulk_promotion_running())
     assert window.promote_all_button.isEnabled() is False
     assert "成功晋升 1 条" in window.metadata_label.text()
+
+
+def test_bulk_promotion_runs_off_the_ui_thread(
+    qtbot: QtBot, monkeypatch: MonkeyPatch
+) -> None:
+    gateway = BlockingUiGateway()
+    window = MemoryWindow(WorkspaceDemoData.sample())
+    qtbot.addWidget(window)
+    window.bind(MemoryWorkspaceService(gateway), "chapter-2")
+    window.editors["压缩前文"].setPlainText("人工修订摘要")
+    qtbot.mouseClick(window.save_button, Qt.MouseButton.LeftButton)
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
+    )
+
+    started_at = perf_counter()
+    qtbot.mouseClick(window.promote_all_button, Qt.MouseButton.LeftButton)
+    elapsed = perf_counter() - started_at
+
+    assert elapsed < 1
+    qtbot.waitUntil(gateway.started.is_set)
+    assert window.tabs.isEnabled() is False
+    gateway.release.set()
+    qtbot.waitUntil(lambda: gateway.promote_count == 1)
+    qtbot.waitUntil(lambda: window.tabs.isEnabled())

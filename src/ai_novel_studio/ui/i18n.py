@@ -312,6 +312,18 @@ _EN: dict[str, str] = {
     "批量晋升完成：已成功晋升 {count} 条候选。": (
         "Bulk approval completed: {count} candidates approved."
     ),
+    "批量晋升仍在后台运行，请等待完成。": (
+        "Bulk approval is still running in the background. Please wait."
+    ),
+    "批量晋升服务尚未连接。": "The bulk approval service is not connected.",
+    "正在后台晋升 0 / {count} 条候选……": (
+        "Approving 0 / {count} candidates in the background..."
+    ),
+    "正在后台晋升 {current} / {total} 条候选……当前：{title}": (
+        "Approving {current} / {total} candidates in the background... Current: {title}"
+    ),
+    "批量晋升失败：{message}": "Bulk approval failed: {message}",
+    "批量晋升返回了无效结果": "Bulk approval returned an invalid result",
     "资料标题": "Document title",
     "资料类型": "Document type",
     "混合设定": "Mixed settings",

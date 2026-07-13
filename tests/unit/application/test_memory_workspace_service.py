@@ -117,11 +117,13 @@ def test_promote_all_only_processes_review_candidates_and_continues_after_failur
     )
     service = MemoryWorkspaceService(gateway)
     service.load("chapter-2")
+    progress: list[tuple[int, int, str]] = []
 
     assert service.pending_promotion_count() == 2
-    result = service.promote_all()
+    result = service.promote_all(progress=lambda *value: progress.append(value))
 
     assert result.attempted_count == 2
     assert [record.id for record in result.promoted] == ["summary-ok"]
     assert [failure.record_id for failure in result.failures] == ["summary-fails"]
     assert service.pending_promotion_count() == 1
+    assert [item[:2] for item in progress] == [(1, 2), (2, 2)]

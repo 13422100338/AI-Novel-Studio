@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -144,10 +145,16 @@ class MemoryWorkspaceService:
     def pending_promotion_count(self) -> int:
         return len(self._promotion_candidates())
 
-    def promote_all(self) -> MemoryBulkPromotionResult:
+    def promote_all(
+        self,
+        *,
+        progress: Callable[[int, int, str], None] | None = None,
+    ) -> MemoryBulkPromotionResult:
         promoted: list[MemoryWorkspaceRecord] = []
         failures: list[MemoryPromotionFailure] = []
-        for record in self._promotion_candidates():
+        candidates = self._promotion_candidates()
+        total = len(candidates)
+        for index, record in enumerate(candidates, start=1):
             try:
                 promoted.append(
                     self.promote(record.id, expected_revision=record.revision)
@@ -156,6 +163,8 @@ class MemoryWorkspaceService:
                 failures.append(
                     MemoryPromotionFailure(record.id, record.title, str(error))
                 )
+            if progress is not None:
+                progress(index, total, record.title)
         return MemoryBulkPromotionResult(tuple(promoted), tuple(failures))
 
     def edit_fields(

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import sqlite3
+from dataclasses import replace
 from datetime import UTC, datetime
 
 from ai_novel_studio.application.memory_workspace_service import (
@@ -37,6 +38,7 @@ class ProjectMemoryWorkspaceGateway:
         self.summaries = SummaryRepository(project)
         self.characters = CharacterMemoryRepository(project)
         self.chapters = ChapterRepository(project)
+        self._loaded_records: dict[str, MemoryWorkspaceRecord] = {}
 
     def load_before(self, chapter_id: str) -> tuple[MemoryWorkspaceRecord, ...]:
         summaries = self.summaries.list_all()
@@ -48,7 +50,9 @@ class ProjectMemoryWorkspaceGateway:
         if chapter_id == "__all__":
             records.extend(self._character_state_records())
             records.extend(self._ledger_records())
-        return tuple(records)
+        result = tuple(records)
+        self._loaded_records = {record.id: record for record in result}
+        return result
 
     def update_content(
         self, record_id: str, content: str, expected_revision: int
@@ -64,11 +68,13 @@ class ProjectMemoryWorkspaceGateway:
 
     def promote(self, record_id: str, expected_revision: int) -> MemoryWorkspaceRecord:
         try:
-            return self._summary_record(
+            promoted = self._summary_record(
                 self.summaries.promote(record_id, expected_revision=expected_revision)
             )
         except KeyError:
-            return self._promote_structured_candidate(record_id, expected_revision)
+            promoted = self._promote_structured_candidate(record_id, expected_revision)
+        self._loaded_records[promoted.id] = promoted
+        return promoted
 
     def update_fields(
         self,
@@ -302,7 +308,15 @@ class ProjectMemoryWorkspaceGateway:
                             self._approve_review_row(
                                 connection, "style_rules", record_id, row["review_status"]
                             )
-        return self._reload_record(record_id)
+        cached = self._loaded_records.get(record_id)
+        if cached is None:
+            return self._reload_record(record_id)
+        return replace(
+            cached,
+            review_status=ReviewStatus.APPROVED,
+            status=MemoryStatus.CURRENT,
+            promotable=False,
+        )
 
     @staticmethod
     def _approve_review_row(

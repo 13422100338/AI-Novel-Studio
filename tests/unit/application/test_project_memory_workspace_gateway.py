@@ -1,5 +1,7 @@
 from pathlib import Path
 
+from pytest import MonkeyPatch
+
 from ai_novel_studio.application.project_memory_workspace_gateway import (
     ProjectMemoryWorkspaceGateway,
 )
@@ -54,6 +56,7 @@ def test_gateway_exposes_summary_candidates_for_memory_window(tmp_path: Path) ->
 
 def test_gateway_exposes_character_state_candidates_for_memory_window(
     tmp_path: Path,
+    monkeypatch: MonkeyPatch,
 ) -> None:
     project = ProjectRepository.create(tmp_path / "novel", "Novel")
     volume = project.list_volumes()[0]
@@ -86,7 +89,15 @@ def test_gateway_exposes_character_state_candidates_for_memory_window(
     assert character_records[0].editable is True
     assert character_records[0].promotable is True
 
-    promoted = gateway.promote(character_records[0].id, expected_revision=0)
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            gateway,
+            "load_before",
+            lambda _chapter_id: (_ for _ in ()).throw(
+                AssertionError("structured promotion must not reload the full workspace")
+            ),
+        )
+        promoted = gateway.promote(character_records[0].id, expected_revision=0)
 
     assert promoted.review_status == ReviewStatus.APPROVED
     assert promoted.promotable is False
