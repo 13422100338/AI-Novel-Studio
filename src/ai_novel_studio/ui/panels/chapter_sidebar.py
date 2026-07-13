@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QPushButton,
     QScrollArea,
+    QSplitter,
     QTextEdit,
     QTreeWidget,
     QTreeWidgetItem,
@@ -45,6 +46,40 @@ class ChapterSidebar(QFrame):
             character.id: self._character_record(character) for character in data.characters
         }
 
+        chapter_panel = QWidget(self)
+        chapter_panel.setObjectName("chapterManagementPane")
+        chapter_panel_layout = QVBoxLayout(chapter_panel)
+        chapter_panel_layout.setContentsMargins(8, 10, 8, 4)
+        chapter_panel_layout.setSpacing(8)
+        self.chapter_management_content = QWidget(chapter_panel)
+        chapter_content_layout = QVBoxLayout(self.chapter_management_content)
+        chapter_content_layout.setContentsMargins(0, 0, 0, 0)
+        chapter_content_layout.setSpacing(8)
+
+        self.chapter_tree = self._build_chapter_tree(data)
+        chapter_content_layout.addWidget(self.chapter_tree, 1)
+
+        chapter_actions = QGridLayout()
+        self.new_chapter_button = QPushButton("＋ 新章", self.chapter_management_content)
+        self.new_volume_button = QPushButton("＋ 新卷", self.chapter_management_content)
+        self.rename_button = QPushButton("重命名", self.chapter_management_content)
+        self.delete_button = QPushButton("删除", self.chapter_management_content)
+        for index, button in enumerate(
+            (
+                self.new_chapter_button,
+                self.new_volume_button,
+                self.rename_button,
+                self.delete_button,
+            )
+        ):
+            button.setAccessibleName(button.text().replace("＋ ", ""))
+            chapter_actions.addWidget(button, index // 2, index % 2)
+        chapter_content_layout.addLayout(chapter_actions)
+        self.chapter_section = CollapsibleSection(
+            "章节管理", self.chapter_management_content, chapter_panel
+        )
+        chapter_panel_layout.addWidget(self.chapter_section, 1)
+
         self.scroll_area = QScrollArea(self)
         self.scroll_area.setObjectName("chapterSidebarScroll")
         self.scroll_area.setWidgetResizable(True)
@@ -57,27 +92,6 @@ class ChapterSidebar(QFrame):
         content_layout = QVBoxLayout(content)
         content_layout.setContentsMargins(8, 10, 8, 12)
         content_layout.setSpacing(10)
-
-        self.chapter_tree = self._build_chapter_tree(data)
-        self.chapter_section = CollapsibleSection("章节管理", self.chapter_tree, content)
-        content_layout.addWidget(self.chapter_section)
-
-        chapter_actions = QGridLayout()
-        self.new_chapter_button = QPushButton("＋ 新章", content)
-        self.new_volume_button = QPushButton("＋ 新卷", content)
-        self.rename_button = QPushButton("重命名", content)
-        self.delete_button = QPushButton("删除", content)
-        for index, button in enumerate(
-            (
-                self.new_chapter_button,
-                self.new_volume_button,
-                self.rename_button,
-                self.delete_button,
-            )
-        ):
-            button.setAccessibleName(button.text().replace("＋ ", ""))
-            chapter_actions.addWidget(button, index // 2, index % 2)
-        content_layout.addLayout(chapter_actions)
 
         character_content = self._build_character_editor(content)
         self.character_section = CollapsibleSection("当前人物状态", character_content, content)
@@ -103,9 +117,18 @@ class ChapterSidebar(QFrame):
         content_layout.addStretch(1)
 
         self.scroll_area.setWidget(content)
+        self.section_splitter = QSplitter(Qt.Orientation.Vertical, self)
+        self.section_splitter.setObjectName("chapterSectionSplitter")
+        self.section_splitter.setChildrenCollapsible(False)
+        self.section_splitter.setHandleWidth(7)
+        self.section_splitter.addWidget(chapter_panel)
+        self.section_splitter.addWidget(self.scroll_area)
+        self.section_splitter.setStretchFactor(0, 1)
+        self.section_splitter.setStretchFactor(1, 1)
+        self.section_splitter.setSizes((390, 470))
         root_layout = QVBoxLayout(self)
         root_layout.setContentsMargins(0, 0, 0, 0)
-        root_layout.addWidget(self.scroll_area)
+        root_layout.addWidget(self.section_splitter)
 
         self.chapter_tree.currentItemChanged.connect(self._emit_chapter_selection)
         self.character_combo.currentIndexChanged.connect(self._load_selected_character)
@@ -140,8 +163,10 @@ class ChapterSidebar(QFrame):
         tree = QTreeWidget(self)
         tree.setObjectName("chapterTree")
         tree.setHeaderHidden(True)
-        tree.setMinimumHeight(210)
+        tree.setMinimumHeight(150)
         tree.setIndentation(14)
+        tree.setAnimated(True)
+        tree.setUniformRowHeights(False)
         self._populate_demo_tree(tree, data)
         return tree
 

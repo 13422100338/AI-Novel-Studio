@@ -95,6 +95,21 @@ _EN: dict[str, str] = {
     "情节点 / Brief": "Plot beats / Brief",
     "保存章节": "Save chapter",
     "AI 参考内容": "AI context",
+    "AI 参考内容 · AI Novel Studio": "AI Context · AI Novel Studio",
+    "本次正文生成的 AI 参考内容": "AI context used for this prose generation",
+    "这里显示 Context Manifest：正文模型实际采用、回退或因 Token 预算省略的上下文来源。"
+    "它用于审查模型写作依据，不会修改正文或记忆库。": (
+        "This Context Manifest shows the sources the prose model used, replaced with fallbacks, "
+        "or omitted because of the token budget. It is read-only and does not change prose "
+        "or memory."
+    ),
+    "当前章节尚无 AI 参考记录。完成一次正文生成后，这里会显示实际使用的上下文。": (
+        "This chapter has no AI context record yet. Complete one prose generation to see the "
+        "context that was actually used."
+    ),
+    "原始清单未被修改。请重新生成正文或检查项目文件完整性。": (
+        "The original manifest was not changed. Generate prose again or check project integrity."
+    ),
     "审校": "Review",
     "恢复草稿": "Recover draft",
     "取消": "Cancel",
@@ -257,6 +272,12 @@ _EN: dict[str, str] = {
     "问题": "Issue",
     "证据": "Evidence",
     "状态": "Status",
+    "类别": "Category",
+    "选择理由": "Selection reason",
+    "估算 Token": "Estimated tokens",
+    "采用": "Used",
+    "采用（摘要回退）": "Used (summary fallback)",
+    "省略": "Omitted",
     "生成局部修复建议": "Generate bounded repair",
     "确认采用": "Accept repair",
     "拒绝建议": "Reject proposal",
@@ -272,6 +293,37 @@ _EN: dict[str, str] = {
     "结果字符": "Result characters",
     "省略/风险": "Omissions / risk",
     "章节 Brief 审查": "Chapter Brief Review",
+    "戏剧功能说明": "Dramatic function help",
+    "必须事件说明": "Required events help",
+    "知识边界说明": "Knowledge boundary help",
+    "叙事线索说明": "Narrative clues help",
+    "文风说明": "Style help",
+    "自由空间说明": "Creative freedom help",
+    "说明本章在整体故事中承担的叙事作用，也就是“为什么需要这一章”。"
+    "例如：迫使主角从被动等待转为主动调查。": (
+        "Explains the chapter's narrative role in the overall story: why this chapter is needed. "
+        "For example, forcing the protagonist to move from waiting to active investigation."
+    ),
+    "本章必须实际发生的具体事件。正文模型不得省略，也不能擅自替换成其他事件。": (
+        "Concrete events that must occur in this chapter. The prose model may neither omit "
+        "nor replace them."
+    ),
+    "限定当前视角人物和读者此时已经知道、尚不知道的事实，防止角色全知或提前剧透。": (
+        "Defines what the point-of-view character and reader know or do not yet know, preventing "
+        "omniscient characters and premature reveals."
+    ),
+    "指定本章需要埋设、强化、回收或继续隐藏的伏笔与线索，并保留对应证据。": (
+        "Specifies clues and foreshadowing to plant, reinforce, resolve, or keep hidden, while "
+        "preserving supporting evidence."
+    ),
+    "限定本章适用的叙述视角、语言气质、节奏和禁用表达，不负责改变剧情事实。": (
+        "Defines the chapter's viewpoint, voice, pacing, and prohibited phrasing without changing "
+        "plot facts."
+    ),
+    "在不违反戏剧功能、必须事件和其他约束的前提下，允许正文模型自行设计的部分。": (
+        "Elements the prose model may design freely without violating the dramatic function, "
+        "required events, or other constraints."
+    ),
     "保存草稿": "Save draft",
     "冻结 Brief": "Freeze Brief",
     "解除冻结": "Unfreeze",

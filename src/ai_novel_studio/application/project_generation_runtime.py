@@ -24,7 +24,10 @@ from ai_novel_studio.application.prose_generation_coordinator import (
     ProseGenerationCoordinator,
 )
 from ai_novel_studio.application.prose_generation_service import ProseGenerationService
-from ai_novel_studio.core.context.context_manifest import ContextManifestRepository
+from ai_novel_studio.core.context.context_manifest import (
+    ContextManifest,
+    ContextManifestRepository,
+)
 from ai_novel_studio.domain.generation import (
     BriefStatus,
     CreationMode,
@@ -82,13 +85,14 @@ class ProjectGenerationRuntime(QObject):
         self.runs = GenerationRepository(project)
         self.checkpoints = CheckpointRepository(project, self.runs)
         self.messages = PreparedMessageStore()
+        self.manifests = ContextManifestRepository(project)
         self.context = GenerationContextService(
             project,
             self.chapters,
             self.requirements,
             self.briefs,
             self.runs,
-            ContextManifestRepository(project),
+            self.manifests,
         )
         self.prose = ProseGenerationService(
             gateway,
@@ -124,6 +128,9 @@ class ProjectGenerationRuntime(QObject):
         self.coordinator.run_changed.connect(self._handle_run_changed)
         self.coordinator.failed.connect(self.failed.emit)
         self.coordinator.usage_changed.connect(self._emit_usage_snapshot)
+
+    def latest_context_manifest(self, chapter_id: str) -> ContextManifest | None:
+        return self.manifests.latest_for_chapter(chapter_id)
 
     def select_chapter(self, chapter_id: str, revision: int) -> bool:
         self.current_chapter_id = chapter_id
