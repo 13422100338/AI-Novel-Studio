@@ -65,6 +65,7 @@ from ai_novel_studio.infrastructure.storage.chapter_brief_repository import (
 from ai_novel_studio.infrastructure.storage.character_memory_repository import (
     CharacterMemoryRepository,
 )
+from ai_novel_studio.ui.appearance import appearance_manager
 from ai_novel_studio.ui.demo_data import DemoMessage, WorkspaceDemoData
 from ai_novel_studio.ui.pages.agent_trace_window import AgentTraceWindow
 from ai_novel_studio.ui.pages.audit_window import AuditWindow
@@ -72,13 +73,13 @@ from ai_novel_studio.ui.pages.brief_dialog import BriefDialog
 from ai_novel_studio.ui.pages.detached_chat_window import DetachedChatWindow
 from ai_novel_studio.ui.pages.memory_window import MemoryWindow
 from ai_novel_studio.ui.pages.project_welcome import ProjectWelcome
+from ai_novel_studio.ui.pages.reference_window import ReferenceWindow
 from ai_novel_studio.ui.pages.settings_dialog import SettingsDialog
 from ai_novel_studio.ui.pages.style_rules_window import StyleRulesWindow
 from ai_novel_studio.ui.panels.chapter_sidebar import ChapterSidebar
 from ai_novel_studio.ui.panels.manuscript_panel import ManuscriptPanel
 from ai_novel_studio.ui.panels.plot_chat_panel import PlotChatPanel
 from ai_novel_studio.ui.panels.top_bar import TopBar
-from ai_novel_studio.ui.theme import application_stylesheet
 
 
 class MainWindow(QMainWindow):
@@ -93,7 +94,8 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("AI Novel Studio")
         self.setMinimumSize(1100, 680)
         self.resize(1440, 900)
-        self.setStyleSheet(application_stylesheet())
+        self.setStyleSheet(appearance_manager().stylesheet())
+        appearance_manager().appearance_changed.connect(self._apply_appearance)
         self.model_runtime = model_runtime or ModelRuntime.create_default()
         self.generation_runtime = generation_runtime
         self.agent_runtime = agent_runtime
@@ -143,6 +145,7 @@ class MainWindow(QMainWindow):
         self.style_rules_window: StyleRulesWindow | None = None
         self.audit_window: AuditWindow | None = None
         self.agent_trace_window: AgentTraceWindow | None = None
+        self.reference_window: ReferenceWindow | None = None
         self.last_agent_result: Any | None = None
         self._pending_model_audit: Any | None = None
         self.settings_dialog: SettingsDialog | None = None
@@ -177,6 +180,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.workspace_splitter, 1)
         self.setCentralWidget(surface)
         self.manuscript_panel.brief_requested.connect(self.open_brief_dialog)
+        self.manuscript_panel.references_requested.connect(self.open_reference_window)
         self.plot_chat_panel.message_sent.connect(
             lambda message: self.request_plot_reply(message, self.plot_chat_panel)
         )
@@ -490,14 +494,34 @@ class MainWindow(QMainWindow):
             self.brief_dialog.clone_requested.connect(self.clone_project_brief)
             self.brief_dialog.recompile_requested.connect(self.recompile_project_brief)
         if self.project_runtime is not None and self.current_chapter_id is not None:
-            brief = self.project_runtime.brief_service.load_or_compile(
-                self.current_chapter_id,
-                self.manuscript_panel.target_words.value(),
-            )
-            self.brief_dialog.bind_project_brief(brief)
+            try:
+                brief = self.project_runtime.brief_service.load_or_compile(
+                    self.current_chapter_id,
+                    self.manuscript_panel.target_words.value(),
+                )
+                self.brief_dialog.bind_project_brief(brief)
+            except (KeyError, OSError, RuntimeError, ValueError) as exc:
+                self.brief_dialog.show_load_error(str(exc))
         self.brief_dialog.show()
         self.brief_dialog.raise_()
         self.brief_dialog.activateWindow()
+
+    def open_reference_window(self) -> None:
+        if self.reference_window is None:
+            self.reference_window = ReferenceWindow(self)
+        manifest = None
+        if self.generation_runtime is not None and self.current_chapter_id is not None:
+            try:
+                manifest = self.generation_runtime.latest_context_manifest(
+                    self.current_chapter_id
+                )
+            except (KeyError, OSError, TypeError, ValueError) as exc:
+                self.reference_window.show_error(str(exc))
+            else:
+                self.reference_window.bind_manifest(manifest)
+        else:
+            self.reference_window.bind_manifest(manifest)
+        self._show_workspace_window(self.reference_window)
 
     def save_project_brief(self) -> bool:
         if self.project_runtime is None or self.brief_dialog is None:
@@ -1202,6 +1226,8 @@ class MainWindow(QMainWindow):
 
     def open_agent_trace_window(self) -> None:
         result = self.last_agent_result
+        if result is None and self.project_runtime is not None:
+            result = self.project_runtime.agent_repository.latest_run()
         if result is None:
             result = type(
                 "EmptyAgentTrace",
@@ -1216,19 +1242,27 @@ class MainWindow(QMainWindow):
             )()
         turns: tuple[LLMMessage, ...] = ()
         tool_calls: tuple[dict[str, object], ...] = ()
-        if self.project_runtime is not None and self.last_agent_result is not None:
+        run_id = str(getattr(result, "run_id", getattr(result, "id", "")))
+        if self.project_runtime is not None and run_id and run_id != "暂无":
             turns = tuple(
                 LLMMessage(turn.role, turn.content)
-                for turn in self.project_runtime.agent_repository.list_turns(result.run_id)
+                for turn in self.project_runtime.agent_repository.list_turns(run_id)
             )
             tool_calls = tuple(
                 {
                     "tool_name": getattr(call.tool_name, "value", str(call.tool_name)),
                     "status": getattr(call.status, "value", str(call.status)),
                     "result_chars": call.result_chars,
-                    "omitted": call.failure_message or "",
+                    "omitted": " · ".join(
+                        part
+                        for part in (
+                            f"来源 {call.source_refs_json}" if call.source_refs_json else "",
+                            call.failure_message or "",
+                        )
+                        if part
+                    ),
                 }
-                for call in self.project_runtime.agent_repository.list_tool_calls(result.run_id)
+                for call in self.project_runtime.agent_repository.list_tool_calls(run_id)
             )
         self.agent_trace_window = AgentTraceWindow(result, turns, tool_calls, self)
         self._show_workspace_window(self.agent_trace_window)
@@ -1241,6 +1275,9 @@ class MainWindow(QMainWindow):
         self.settings_dialog.show()
         self.settings_dialog.raise_()
         self.settings_dialog.activateWindow()
+
+    def _apply_appearance(self, _theme: str, _density: str) -> None:
+        self.setStyleSheet(appearance_manager().stylesheet())
 
     @staticmethod
     def _show_workspace_window(window: QMainWindow) -> None:

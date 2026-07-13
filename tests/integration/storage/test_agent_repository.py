@@ -58,3 +58,34 @@ def test_agent_repository_persists_runs_turns_and_tool_calls(tmp_path: Path) -> 
     assert agents.list_turns(run.id) == (user_turn, tool_turn)
     assert agents.list_tool_calls(run.id) == (completed_call,)
     assert user_turn.content_hash
+
+
+def test_agent_repository_returns_latest_persisted_run(tmp_path: Path) -> None:
+    chapter, agents = _workspace(tmp_path)
+    assert agents.latest_run() is None
+
+    first = agents.create_run(
+        chapter_id=chapter.id,
+        purpose=AgentPurpose.PLOT_DISCUSSION,
+        status=AgentRunStatus.PREPARING,
+        model_provider_id="provider",
+        model_id="model",
+        prompt_version="agent-v1",
+        max_iterations=3,
+        max_tool_calls=2,
+        max_tool_result_chars=100,
+    )
+    second = agents.create_run(
+        chapter_id=chapter.id,
+        purpose=AgentPurpose.PLOT_DISCUSSION,
+        status=AgentRunStatus.RUNNING,
+        model_provider_id="provider",
+        model_id="model",
+        prompt_version="agent-v1",
+        max_iterations=3,
+        max_tool_calls=2,
+        max_tool_result_chars=100,
+    )
+
+    assert first.id != second.id
+    assert agents.latest_run() == second

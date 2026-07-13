@@ -80,6 +80,14 @@ class AgentRepository:
             raise KeyError(f"unknown agent run: {run_id}")
         return self._run_from_row(row)
 
+    def latest_run(self) -> AgentRun | None:
+        """Return the most recently updated persisted Agent run, if any."""
+        with self.project.database.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM agent_runs ORDER BY updated_at DESC, started_at DESC LIMIT 1"
+            ).fetchone()
+        return self._run_from_row(row) if row is not None else None
+
     def update_run_status(
         self,
         run_id: str,

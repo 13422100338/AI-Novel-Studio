@@ -1,3 +1,4 @@
+from PySide6.QtCore import QPoint
 from PySide6.QtWidgets import QPushButton
 from pytestqt.qtbot import QtBot
 
@@ -55,3 +56,23 @@ def test_settings_button_opens_reusable_phase_aware_dialog(qtbot: QtBot) -> None
 
     window.top_bar.settings_button.click()
     assert window.settings_dialog is first
+
+
+def test_settings_actions_remain_visible_in_compact_window(qtbot: QtBot) -> None:
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.top_bar.settings_button.click()
+    dialog = window.settings_dialog
+    assert dialog is not None
+
+    dialog.resize(640, 480)
+    dialog.show()
+    qtbot.waitExposed(dialog)
+
+    save_bottom = dialog.save_button.mapTo(
+        dialog,
+        QPoint(0, dialog.save_button.height()),
+    ).y()
+    assert dialog.content_scroll.widget() is dialog.tabs
+    assert save_bottom <= dialog.contentsRect().bottom()
+    assert dialog.save_button.isVisible()

@@ -109,3 +109,23 @@ def test_trace_window_displays_turns_tool_calls_and_omissions(qtbot):  # type: i
     assert window.turn_table.rowCount() == 2
     assert window.tool_table.rowCount() == 1
     assert "COMPLETED" in window.status_label.text()
+    assert window.trace_splitter.count() == 2
+    assert window.tool_table.horizontalHeaderItem(3).text() == "证据来源 / 风险"
+    assert window.turn_empty_label.isHidden() is True
+    assert window.tool_empty_label.isHidden() is True
+
+
+def test_trace_window_explains_empty_agent_state(qtbot):  # type: ignore[no-untyped-def]
+    run = type(
+        "EmptyAgentTrace",
+        (),
+        {"run_id": "暂无", "status": type("Status", (), {"value": "NO_RUN"})()},
+    )()
+    window = AgentTraceWindow(run, (), ())
+    qtbot.addWidget(window)
+
+    assert "工具检索" in window.status_label.text()
+    assert window.turn_table.isHidden() is True
+    assert window.tool_table.isHidden() is True
+    assert window.turn_empty_label.isHidden() is False
+    assert window.tool_empty_label.isHidden() is False

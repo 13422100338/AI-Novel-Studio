@@ -148,6 +148,20 @@ class ContextManifestRepository:
             created_at=datetime.fromisoformat(payload["created_at"]),
         )
 
+    def latest_for_chapter(self, chapter_id: str) -> ContextManifest | None:
+        with self.project.database.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT id
+                FROM context_manifests
+                WHERE chapter_id = ? AND status = 'CURRENT'
+                ORDER BY created_at DESC, id DESC
+                LIMIT 1
+                """,
+                (chapter_id,),
+            ).fetchone()
+        return None if row is None else self.load(str(row["id"]))
+
 
 def utc_now() -> datetime:
     return datetime.now(UTC)

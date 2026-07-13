@@ -4,6 +4,14 @@ from pytestqt.qtbot import QtBot
 
 from ai_novel_studio.application.model_tasks import StyleAuditFinding, StyleAuditResult
 from ai_novel_studio.application.project_runtime import ProjectRuntime
+from ai_novel_studio.core.context.context_manifest import (
+    ContextManifest,
+    ContextManifestRepository,
+    OmittedManifestItem,
+    SelectedManifestItem,
+    create_manifest_id,
+    utc_now,
+)
 from ai_novel_studio.domain.audit import AuditFindingStatus, AuditTargetKind
 from ai_novel_studio.domain.generation import BriefStatus, CreationMode, GenerationStatus
 from ai_novel_studio.domain.memory import Authority, ReviewStatus, SummaryLevel
@@ -442,6 +450,101 @@ def test_real_project_brief_can_be_saved_and_frozen_from_dialog(
 
     window.manuscript_panel.set_creation_mode(CreationMode.STANDARD)
     assert window.manuscript_panel.generate_button.isEnabled()
+
+
+def test_empty_requirement_opens_brief_with_actionable_error(
+    qtbot: QtBot, tmp_path: Path
+) -> None:
+    runtime, chapter_id = _project_with_chapter(tmp_path / "novel", tmp_path)
+    requirements = ChapterRequirementRepository(runtime.project)
+    current = requirements.get(chapter_id)
+    requirements.update(
+        chapter_id,
+        "",
+        is_locked=False,
+        expected_revision=current.revision,
+    )
+    window = MainWindow(model_runtime=UiModelRuntime(tmp_path), project_runtime=runtime)
+    qtbot.addWidget(window)
+    window.load_project_chapter(chapter_id)
+
+    window.open_brief_dialog()
+
+    assert window.brief_dialog is not None
+    assert window.brief_dialog.brief_status() == "待补充要求"
+    assert "当前章要求不能为空" in window.brief_dialog.warning_label.text()
+    assert window.brief_dialog.recompile_button.isEnabled()
+    assert not window.brief_dialog.freeze_button.isEnabled()
+
+
+def test_ai_reference_window_explains_missing_manifest(
+    qtbot: QtBot, tmp_path: Path
+) -> None:
+    runtime, chapter_id = _project_with_chapter(tmp_path / "novel", tmp_path)
+    window = MainWindow(model_runtime=UiModelRuntime(tmp_path), project_runtime=runtime)
+    qtbot.addWidget(window)
+    window.load_project_chapter(chapter_id)
+
+    window.manuscript_panel.references_requested.emit()
+
+    assert window.reference_window is not None
+    assert "尚无 AI 参考记录" in window.reference_window.status_label.text()
+    assert window.reference_window.table.rowCount() == 0
+
+
+def test_ai_reference_window_shows_latest_context_manifest(
+    qtbot: QtBot, tmp_path: Path
+) -> None:
+    runtime, chapter_id = _project_with_chapter(tmp_path / "novel", tmp_path)
+    manifest = ContextManifest(
+        id=create_manifest_id(),
+        chapter_id=chapter_id,
+        run_id="run-reference-ui",
+        input_token_limit=12_000,
+        output_token_limit=4_000,
+        estimated_input_tokens=2_400,
+        selected=(
+            SelectedManifestItem(
+                "recent-chapter",
+                "recent_full_chapter",
+                "CHAPTER",
+                "chapter-source",
+                None,
+                None,
+                "hash-source",
+                "上一章全文",
+                1_800,
+                False,
+            ),
+        ),
+        omitted=(
+            OmittedManifestItem(
+                "older-summary",
+                "historical_summary",
+                "SUMMARY",
+                "summary-source",
+                None,
+                None,
+                "hash-summary",
+                "超出 Token 预算",
+            ),
+        ),
+        warnings=("一项历史摘要未进入上下文",),
+        created_at=utc_now(),
+    )
+    ContextManifestRepository(runtime.project).save(manifest)
+    window = MainWindow(model_runtime=UiModelRuntime(tmp_path), project_runtime=runtime)
+    qtbot.addWidget(window)
+    window.load_project_chapter(chapter_id)
+
+    window.open_reference_window()
+
+    assert window.reference_window is not None
+    assert "输入约 2400 Token" in window.reference_window.status_label.text()
+    assert window.reference_window.table.rowCount() == 2
+    assert window.reference_window.table.item(0, 0).text() == "采用"
+    assert window.reference_window.table.item(0, 3).text() == "上一章全文"
+    assert window.reference_window.table.item(1, 0).text() == "省略"
 
 
 def test_changed_requirement_reports_brief_error_and_can_recompile(
