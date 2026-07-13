@@ -42,9 +42,28 @@ def test_setting_analysis_uses_memory_route_and_validates_nested_fields() -> Non
     assert result.style == (("叙事视角", "限知第三人称。"),)
 
 
+def test_setting_analysis_accepts_alias_text_array() -> None:
+    payload = _payload()
+    payload["characters"] = [
+        {
+            "name": "林默",
+            "aliases": ["小林", " 阿默 ", "小林"],
+            "profile": "资料",
+        }
+    ]
+
+    result = SettingDocumentAnalysisService(_Runner(payload)).analyze(
+        "设定", "混合设定", "正文"
+    )
+
+    assert result.characters == (("林默", "小林、阿默", "资料"),)
+
+
 def test_setting_analysis_rejects_invalid_nested_model_output() -> None:
     payload = _payload()
-    payload["characters"] = [{"name": "林默", "aliases": [], "profile": "资料"}]
+    payload["characters"] = [
+        {"name": "林默", "aliases": ["小林", 7], "profile": "资料"}
+    ]
     with pytest.raises(ValueError, match="aliases"):
         SettingDocumentAnalysisService(_Runner(payload)).analyze("设定", "混合设定", "正文")
 

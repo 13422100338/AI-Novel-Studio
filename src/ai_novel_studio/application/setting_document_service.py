@@ -35,7 +35,7 @@ _SYSTEM_PROMPT = """你是小说设定资料整理器。输入不是小说正文
 只返回 JSON，不要返回 Markdown 代码围栏或解释。不得补写输入中不存在的事实。
 顶层字段固定为：
 - summary: 对资料用途和核心内容的简洁概览。
-- characters: 数组；每项包含 name、aliases、profile。
+- characters: 数组；每项包含 name、aliases、profile。aliases 必须是文本数组；没有别名时返回空数组。
 - canon: 数组；每项包含 title、detail。只放明确成立的世界规则或背景事实。
 - clues: 数组；每项包含 title、detail。放作者计划中的伏笔、承诺和未决线索。
 - style: 数组；每项包含 rule_type、rule_text。只放明确的写作或叙事风格要求。
@@ -86,7 +86,9 @@ class SettingDocumentAnalysisService:
             characters=tuple(
                 (
                     _required_text(item, "name", path=f"characters[{index}]"),
-                    _optional_text(item, "aliases", path=f"characters[{index}]"),
+                    _optional_text_or_text_array(
+                        item, "aliases", path=f"characters[{index}]"
+                    ),
                     _required_text(item, "profile", path=f"characters[{index}]"),
                 )
                 for index, item in enumerate(_objects(payload, "characters"))
@@ -251,11 +253,18 @@ def _required_text(payload: dict[str, object], field: str, *, path: str = "") ->
     return value.strip()
 
 
-def _optional_text(payload: dict[str, object], field: str, *, path: str) -> str:
+def _optional_text_or_text_array(
+    payload: dict[str, object], field: str, *, path: str
+) -> str:
     value = payload.get(field, "")
-    if not isinstance(value, str):
-        raise ValueError(f"字段 {path}.{field} 必须是文本")
-    return value.strip()
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, list) and all(isinstance(item, str) for item in value):
+        aliases = dict.fromkeys(
+            item.strip() for item in cast(list[str], value) if item.strip()
+        )
+        return "、".join(aliases)
+    raise ValueError(f"字段 {path}.{field} 必须是文本或文本数组")
 
 
 def _pair(payload: dict[str, object], index: int, field: str) -> tuple[str, str]:
