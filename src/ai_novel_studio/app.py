@@ -8,6 +8,7 @@ from PySide6.QtCore import QStandardPaths
 from PySide6.QtWidgets import QApplication
 
 from ai_novel_studio.infrastructure.logging_config import configure_logging
+from ai_novel_studio.ui.i18n import language_manager
 from ai_novel_studio.ui.main_window import MainWindow
 
 
@@ -30,6 +31,7 @@ def configure_application_logging() -> None:
 
 def main(argv: Sequence[str] | None = None) -> int:
     app = create_application(argv)
+    language_manager().install(app)
     configure_application_logging()
     window = MainWindow()
     window.show()
