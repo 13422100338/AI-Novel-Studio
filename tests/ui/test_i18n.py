@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QSettings
+from PySide6.QtCore import QSettings, Qt
 from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QTabWidget, QVBoxLayout, QWidget
 from pytestqt.qtbot import QtBot
 
 from ai_novel_studio.ui.i18n import Language, LocalizationManager
+from ai_novel_studio.ui.pages.language_dialog import LanguageSelectionDialog
 
 
 def _isolated_settings(tmp_path: Path) -> None:
@@ -59,11 +60,26 @@ def test_language_switch_translates_open_widgets_and_restores_chinese(
 def test_language_choice_is_persisted(tmp_path: Path) -> None:
     _isolated_settings(tmp_path)
     manager = LocalizationManager()
+    assert manager.has_saved_language is False
     manager.set_language(Language.ENGLISH)
 
     restored = LocalizationManager()
 
     assert restored.language == Language.ENGLISH
+    assert restored.has_saved_language is True
+
+
+def test_first_run_dialog_saves_selected_language(qtbot: QtBot, tmp_path: Path) -> None:
+    _isolated_settings(tmp_path)
+    manager = LocalizationManager()
+    dialog = LanguageSelectionDialog(manager)
+    qtbot.addWidget(dialog)
+
+    qtbot.mouseClick(dialog.english_button, Qt.MouseButton.LeftButton)
+
+    assert dialog.result() == LanguageSelectionDialog.DialogCode.Accepted
+    assert manager.language == Language.ENGLISH
+    assert manager.has_saved_language is True
 
 
 def test_dynamic_status_text_is_translated_after_layout_update(

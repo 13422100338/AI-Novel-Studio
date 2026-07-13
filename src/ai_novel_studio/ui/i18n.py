@@ -326,7 +326,9 @@ class LocalizationManager(QObject):
 
     def __init__(self) -> None:
         super().__init__()
-        value = _settings().value("ui/language", Language.CHINESE.value)
+        settings = _settings()
+        self._has_saved_language = settings.contains("ui/language")
+        value = settings.value("ui/language", Language.CHINESE.value)
         try:
             self._language = Language(str(value))
         except ValueError:
@@ -337,6 +339,10 @@ class LocalizationManager(QObject):
     @property
     def language(self) -> Language:
         return self._language
+
+    @property
+    def has_saved_language(self) -> bool:
+        return self._has_saved_language
 
     def install(self, app: QApplication) -> None:
         if not self._installed:
@@ -350,6 +356,7 @@ class LocalizationManager(QObject):
         settings = _settings()
         settings.setValue("ui/language", selected.value)
         settings.sync()
+        self._has_saved_language = True
         self.apply_all()
         self.language_changed.emit(selected.value)
 
