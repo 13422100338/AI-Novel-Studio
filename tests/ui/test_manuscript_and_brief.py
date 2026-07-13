@@ -81,6 +81,26 @@ def test_brief_dialog_freezes_and_clones_stale_revision(qtbot: QtBot) -> None:
     assert all(not editor.isReadOnly() for editor in dialog.section_editors.values())
 
 
+def test_brief_sections_expose_hover_explanations(qtbot: QtBot) -> None:
+    dialog = BriefDialog(WorkspaceDemoData.sample().brief)
+    qtbot.addWidget(dialog)
+
+    assert set(dialog.section_help_buttons) == {
+        "戏剧功能",
+        "必须事件",
+        "知识边界",
+        "叙事线索",
+        "文风",
+        "自由空间",
+    }
+    for title, button in dialog.section_help_buttons.items():
+        assert button.text() == "!"
+        assert button.toolTip()
+        assert button.accessibleName() == f"{title}说明"
+    assert "为什么需要这一章" in dialog.section_help_buttons["戏剧功能"].toolTip()
+    assert "不得省略" in dialog.section_help_buttons["必须事件"].toolTip()
+
+
 def test_main_window_opens_reusable_brief_dialog(qtbot: QtBot) -> None:
     window = MainWindow()
     qtbot.addWidget(window)

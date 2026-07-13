@@ -5,6 +5,7 @@ from ai_novel_studio.ui.demo_data import WorkspaceDemoData
 from ai_novel_studio.ui.main_window import MainWindow
 from ai_novel_studio.ui.panels.chapter_sidebar import ChapterSidebar
 from ai_novel_studio.ui.panels.top_bar import TopBar
+from ai_novel_studio.ui.theme import application_stylesheet
 
 
 def test_main_window_composes_top_bar_and_three_resizable_panes(qtbot: QtBot) -> None:
@@ -41,9 +42,13 @@ def test_chapter_sidebar_is_scrollable_and_sections_collapse(qtbot: QtBot) -> No
     assert sidebar.scroll_area.verticalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAsNeeded
     assert sidebar.chapter_tree.topLevelItemCount() == 1
     assert sidebar.chapter_tree.topLevelItem(0).isExpanded() is True
+    assert sidebar.section_splitter.orientation() == Qt.Orientation.Vertical
+    assert sidebar.section_splitter.childrenCollapsible() is False
+    assert sidebar.section_splitter.handleWidth() >= 7
+    assert "QTreeWidget#chapterTree::item:!has-children" in application_stylesheet()
     assert sidebar.chapter_section.is_expanded() is True
     sidebar.chapter_section.set_expanded(False)
-    assert sidebar.chapter_tree.isHidden() is True
+    assert sidebar.chapter_management_content.isHidden() is True
 
 
 def test_character_menu_selects_edits_and_deletes_local_mock(qtbot: QtBot) -> None:

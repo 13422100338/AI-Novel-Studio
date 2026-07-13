@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
+    QScrollArea,
     QSpinBox,
     QTabWidget,
     QVBoxLayout,
@@ -27,6 +28,11 @@ from ai_novel_studio.infrastructure.llm import (
     ProviderProfile,
     TaskPurpose,
     TaskRoutes,
+)
+from ai_novel_studio.ui.appearance import (
+    InformationDensity,
+    ThemePreference,
+    appearance_manager,
 )
 from ai_novel_studio.ui.i18n import Language, language_manager
 
@@ -49,13 +55,17 @@ class SettingsDialog(QDialog):
         }
         self._current_provider_id = ""
         self.setWindowTitle("设置 · AI Novel Studio")
-        self.setMinimumSize(720, 620)
+        self.setMinimumSize(640, 480)
         self.resize(820, 680)
 
         self.tabs = QTabWidget(self)
         self.tabs.addTab(self._model_tab(), "模型连接")
         self.tabs.addTab(self._appearance_tab(), "外观")
         self.tabs.addTab(self._creation_tab(), "创作默认值")
+        self.content_scroll = QScrollArea(self)
+        self.content_scroll.setObjectName("settingsContentScroll")
+        self.content_scroll.setWidgetResizable(True)
+        self.content_scroll.setWidget(self.tabs)
 
         self.save_button = QPushButton("保存设置", self)
         self.save_button.setAccessibleName("保存模型和应用设置")
@@ -71,7 +81,7 @@ class SettingsDialog(QDialog):
         actions.addWidget(self.save_button)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 14, 14, 14)
-        layout.addWidget(self.tabs, 1)
+        layout.addWidget(self.content_scroll, 1)
         layout.addLayout(actions)
 
         if self.controller is not None:
@@ -178,20 +188,27 @@ class SettingsDialog(QDialog):
     def _appearance_tab(self) -> QWidget:
         page = QWidget(self.tabs)
         form = QFormLayout(page)
-        theme = QComboBox(page)
-        theme.addItems(("浅色（当前）", "跟随系统"))
-        theme.setAccessibleName("界面主题")
-        density = QComboBox(page)
-        density.addItems(("适中", "紧凑", "宽松"))
-        density.setAccessibleName("界面密度")
+        self.theme_combo = QComboBox(page)
+        self.theme_combo.addItem("浅色（当前）", ThemePreference.LIGHT.value)
+        self.theme_combo.addItem("跟随系统", ThemePreference.SYSTEM.value)
+        theme_index = self.theme_combo.findData(appearance_manager().theme.value)
+        self.theme_combo.setCurrentIndex(max(0, theme_index))
+        self.theme_combo.setAccessibleName("界面主题")
+        self.density_combo = QComboBox(page)
+        self.density_combo.addItem("适中", InformationDensity.NORMAL.value)
+        self.density_combo.addItem("紧凑", InformationDensity.COMPACT.value)
+        self.density_combo.addItem("宽松", InformationDensity.COMFORTABLE.value)
+        density_index = self.density_combo.findData(appearance_manager().density.value)
+        self.density_combo.setCurrentIndex(max(0, density_index))
+        self.density_combo.setAccessibleName("界面密度")
         self.language_combo = QComboBox(page)
         self.language_combo.addItem("简体中文", Language.CHINESE.value)
         self.language_combo.addItem("English", Language.ENGLISH.value)
         language_index = self.language_combo.findData(language_manager().language.value)
         self.language_combo.setCurrentIndex(max(0, language_index))
         self.language_combo.setAccessibleName("界面语言")
-        form.addRow("主题", theme)
-        form.addRow("信息密度", density)
+        form.addRow("主题", self.theme_combo)
+        form.addRow("信息密度", self.density_combo)
         form.addRow("语言", self.language_combo)
         return page
 
@@ -436,6 +453,10 @@ class SettingsDialog(QDialog):
         return None
 
     def save_model_settings(self) -> None:
+        theme = self.theme_combo.currentData()
+        density = self.density_combo.currentData()
+        if isinstance(theme, str) and isinstance(density, str):
+            appearance_manager().set_preferences(theme, density)
         language = self.language_combo.currentData()
         if isinstance(language, str):
             language_manager().set_language(language)

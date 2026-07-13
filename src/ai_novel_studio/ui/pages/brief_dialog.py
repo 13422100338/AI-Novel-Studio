@@ -1,4 +1,4 @@
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QDialog,
     QFrame,
@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QTextEdit,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -15,6 +16,28 @@ from ai_novel_studio.application.model_tasks import NormalizedBrief
 from ai_novel_studio.domain.generation import BriefStatus, ChapterBrief
 from ai_novel_studio.infrastructure.storage.chapter_brief_repository import BriefDraftData
 from ai_novel_studio.ui.demo_data import DemoBrief
+
+_SECTION_HELP = {
+    "戏剧功能": (
+        "说明本章在整体故事中承担的叙事作用，也就是“为什么需要这一章”。"
+        "例如：迫使主角从被动等待转为主动调查。"
+    ),
+    "必须事件": (
+        "本章必须实际发生的具体事件。正文模型不得省略，也不能擅自替换成其他事件。"
+    ),
+    "知识边界": (
+        "限定当前视角人物和读者此时已经知道、尚不知道的事实，防止角色全知或提前剧透。"
+    ),
+    "叙事线索": (
+        "指定本章需要埋设、强化、回收或继续隐藏的伏笔与线索，并保留对应证据。"
+    ),
+    "文风": (
+        "限定本章适用的叙述视角、语言气质、节奏和禁用表达，不负责改变剧情事实。"
+    ),
+    "自由空间": (
+        "在不违反戏剧功能、必须事件和其他约束的前提下，允许正文模型自行设计的部分。"
+    ),
+}
 
 
 class BriefDialog(QDialog):
@@ -69,16 +92,33 @@ class BriefDialog(QDialog):
         form = QWidget(scroll)
         form_layout = QVBoxLayout(form)
         self.section_editors: dict[str, QTextEdit] = {}
+        self.section_help_buttons: dict[str, QToolButton] = {}
         for title, text in brief.sections:
             label = QLabel(title, form)
             label.setObjectName("sectionEyebrow")
+            title_row = QHBoxLayout()
+            title_row.setContentsMargins(0, 0, 0, 0)
+            title_row.setSpacing(5)
+            title_row.addWidget(label)
+            help_text = _SECTION_HELP.get(title)
+            if help_text is not None:
+                help_button = QToolButton(form)
+                help_button.setObjectName("briefHelpButton")
+                help_button.setText("!")
+                help_button.setToolTip(help_text)
+                help_button.setAccessibleName(f"{title}说明")
+                help_button.setCursor(Qt.CursorShape.WhatsThisCursor)
+                help_button.setFixedSize(18, 18)
+                self.section_help_buttons[title] = help_button
+                title_row.addWidget(help_button)
+            title_row.addStretch(1)
             editor = QTextEdit(form)
             editor.setAcceptRichText(False)
             editor.setPlainText(text)
             editor.setMinimumHeight(76)
             editor.setAccessibleName(f"Brief {title}")
             self.section_editors[title] = editor
-            form_layout.addWidget(label)
+            form_layout.addLayout(title_row)
             form_layout.addWidget(editor)
         form_layout.addStretch(1)
         scroll.setWidget(form)
@@ -197,6 +237,18 @@ class BriefDialog(QDialog):
 
     def show_error(self, message: str) -> None:
         self.warning_label.setText(f"操作未完成：{message}")
+
+    def show_load_error(self, message: str) -> None:
+        self._project_brief = None
+        self._set_status("待补充要求")
+        self.warning_label.setText(
+            f"Brief 暂时无法编译：{message}\n"
+            "请在正文页填写当前章要求并保存章节，然后点击“重新编译”。"
+        )
+        self.save_button.setEnabled(False)
+        self.freeze_button.setEnabled(False)
+        self.clone_button.setEnabled(False)
+        self.recompile_button.setEnabled(True)
 
     def project_draft_data(self) -> BriefDraftData:
         current = self._require_project_brief()

@@ -8,6 +8,7 @@ from PySide6.QtCore import QStandardPaths
 from PySide6.QtWidgets import QApplication
 
 from ai_novel_studio.infrastructure.logging_config import configure_logging
+from ai_novel_studio.ui.appearance import appearance_manager
 from ai_novel_studio.ui.i18n import language_manager
 from ai_novel_studio.ui.main_window import MainWindow
 from ai_novel_studio.ui.pages.language_dialog import LanguageSelectionDialog
@@ -38,6 +39,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if dialog.exec() != LanguageSelectionDialog.DialogCode.Accepted:
             return 0
     manager.install(app)
+    appearance_manager().install(app)
     configure_application_logging()
     window = MainWindow()
     window.show()
