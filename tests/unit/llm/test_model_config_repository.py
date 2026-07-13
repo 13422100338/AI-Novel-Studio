@@ -7,6 +7,7 @@ from ai_novel_studio.infrastructure.llm import (
     ModelConfiguration,
     ModelProfile,
     ModelRoute,
+    ModelSamplingParameters,
     ProviderProfile,
     TaskPurpose,
     TaskRoutes,
@@ -33,6 +34,12 @@ def _configuration() -> ModelConfiguration:
             strict_json=True,
             input_price_per_million=2.5,
             output_price_per_million=10.0,
+        ),
+        sampling=ModelSamplingParameters(
+            temperature=0.85,
+            top_p=0.92,
+            frequency_penalty=0.1,
+            presence_penalty=-0.2,
         ),
     )
     route = ModelRoute("relay", "novel-pro")
@@ -89,4 +96,3 @@ def test_missing_file_loads_empty_valid_configuration(tmp_path) -> None:  # type
     )
 
     assert repository.load() == ModelConfiguration.empty()
-

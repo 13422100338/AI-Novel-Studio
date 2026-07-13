@@ -186,6 +186,18 @@ _EN: dict[str, str] = {
     "文风审校（可覆盖）": "Style review (override)",
     "模型设置尚未保存": "Model settings have not been saved",
     "模型设置已保存": "Settings saved",
+    "高级生成参数 ▾": "Advanced generation parameters ▾",
+    "高级生成参数 ▴": "Advanced generation parameters ▴",
+    "展开高级生成参数": "Expand advanced generation parameters",
+    "收起高级生成参数": "Collapse advanced generation parameters",
+    "为当前模型覆盖默认采样参数": "Override default sampling for this model",
+    "温度": "Temperature",
+    "频率惩罚": "Frequency penalty",
+    "存在惩罚": "Presence penalty",
+    "仅覆盖当前选中模型。关闭后继续使用各创作任务的安全默认值；部分中转站可能不支持全部参数。": (
+        "Applies only to the selected model. When disabled, each writing task keeps its safe "
+        "default; some relay providers may not support every parameter."
+    ),
     "主题": "Theme",
     "信息密度": "Information density",
     "语言": "Language",

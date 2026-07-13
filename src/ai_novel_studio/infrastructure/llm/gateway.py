@@ -62,7 +62,14 @@ class LLMGateway:
             model_id=route.model_id,
             messages=messages,
             output_token_limit=output_token_limit,
-            temperature=temperature,
+            temperature=(
+                model.sampling.temperature
+                if model.sampling.temperature is not None
+                else temperature
+            ),
+            top_p=model.sampling.top_p,
+            frequency_penalty=model.sampling.frequency_penalty,
+            presence_penalty=model.sampling.presence_penalty,
             json_mode=json_mode,
         )
         started = time.perf_counter()
@@ -106,7 +113,14 @@ class LLMGateway:
             model_id=route.model_id,
             messages=messages,
             output_token_limit=output_token_limit,
-            temperature=temperature,
+            temperature=(
+                model.sampling.temperature
+                if model.sampling.temperature is not None
+                else temperature
+            ),
+            top_p=model.sampling.top_p,
+            frequency_penalty=model.sampling.frequency_penalty,
+            presence_penalty=model.sampling.presence_penalty,
             stream=True,
         )
         started = time.perf_counter()

@@ -118,6 +118,28 @@ def test_complete_parses_text_reasoning_and_detailed_usage() -> None:
     assert b'"response_format": {"type": "json_object"}' in request_body
 
 
+def test_complete_sends_optional_sampling_parameters_when_configured() -> None:
+    transport = FakeTransport(
+        [TransportResponse(200, b'{"choices":[{"message":{"content":"ok"}}]}')]
+    )
+    request = LLMRequest(
+        model_id="novel-pro",
+        messages=(LLMMessage("user", "请求"),),
+        output_token_limit=100,
+        top_p=0.9,
+        frequency_penalty=0.2,
+        presence_penalty=-0.1,
+    )
+
+    OpenAICompatibleAdapter(transport).complete(request, _profile(), "secret")
+
+    request_body = transport.calls[0][3]
+    assert request_body is not None
+    assert b'"top_p": 0.9' in request_body
+    assert b'"frequency_penalty": 0.2' in request_body
+    assert b'"presence_penalty": -0.1' in request_body
+
+
 def test_deepseek_json_request_disables_thinking_to_preserve_final_content() -> None:
     body = b'''{
       "model":"deepseek-v4-pro",

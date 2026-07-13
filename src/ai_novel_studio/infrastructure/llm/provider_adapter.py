@@ -262,6 +262,13 @@ class OpenAICompatibleAdapter:
         }
         if stream:
             payload["stream_options"] = {"include_usage": True}
+        for key, value in (
+            ("top_p", request.top_p),
+            ("frequency_penalty", request.frequency_penalty),
+            ("presence_penalty", request.presence_penalty),
+        ):
+            if value is not None:
+                payload[key] = value
         if request.json_mode:
             payload["response_format"] = {"type": "json_object"}
             if request.model_id.casefold().startswith("deepseek-"):

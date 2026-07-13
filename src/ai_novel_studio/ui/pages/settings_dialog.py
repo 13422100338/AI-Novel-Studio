@@ -4,8 +4,10 @@ from dataclasses import replace
 from uuid import uuid4
 
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDialog,
+    QDoubleSpinBox,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -25,6 +27,7 @@ from ai_novel_studio.infrastructure.llm import (
     ModelConfiguration,
     ModelProfile,
     ModelRoute,
+    ModelSamplingParameters,
     ProviderProfile,
     TaskPurpose,
     TaskRoutes,
@@ -54,6 +57,7 @@ class SettingsDialog(QDialog):
             (model.provider_id, model.model_id): model for model in self.configuration.models
         }
         self._current_provider_id = ""
+        self._current_model_key: tuple[str, str] | None = None
         self.setWindowTitle("设置 · AI Novel Studio")
         self.setMinimumSize(640, 480)
         self.resize(820, 680)
@@ -135,11 +139,47 @@ class SettingsDialog(QDialog):
         self.refresh_models_button.clicked.connect(self.refresh_models)
         self.available_model_combo = QComboBox(connection_box)
         self.available_model_combo.setAccessibleName("待探测能力的模型")
+        self.available_model_combo.currentIndexChanged.connect(
+            self._model_selection_changed
+        )
         self.probe_capabilities_button = QPushButton("探测所选模型能力", connection_box)
         self.probe_capabilities_button.setAccessibleName("探测所选模型的实际 API 能力")
         self.probe_capabilities_button.clicked.connect(self.probe_capabilities)
         self.capability_status = QLabel("能力：尚未探测", connection_box)
         self.capability_status.setObjectName("mutedLabel")
+        self.advanced_parameters_button = QPushButton(
+            "高级生成参数 ▾", connection_box
+        )
+        self.advanced_parameters_button.setCheckable(True)
+        self.advanced_parameters_button.setAccessibleName("展开高级生成参数")
+        self.advanced_parameters_button.toggled.connect(
+            self._toggle_advanced_parameters
+        )
+        self.advanced_parameters_panel = QWidget(connection_box)
+        advanced_form = QFormLayout(self.advanced_parameters_panel)
+        advanced_form.setContentsMargins(0, 4, 0, 0)
+        self.custom_sampling = QCheckBox(
+            "为当前模型覆盖默认采样参数", self.advanced_parameters_panel
+        )
+        self.custom_sampling.toggled.connect(self._sampling_enabled_changed)
+        self.temperature = self._sampling_spinbox(0, 2, 0.7, 0.1)
+        self.top_p = self._sampling_spinbox(0, 1, 1.0, 0.05)
+        self.frequency_penalty = self._sampling_spinbox(-2, 2, 0.0, 0.1)
+        self.presence_penalty = self._sampling_spinbox(-2, 2, 0.0, 0.1)
+        advanced_form.addRow(self.custom_sampling)
+        advanced_form.addRow("温度", self.temperature)
+        advanced_form.addRow("Top P", self.top_p)
+        advanced_form.addRow("频率惩罚", self.frequency_penalty)
+        advanced_form.addRow("存在惩罚", self.presence_penalty)
+        advanced_hint = QLabel(
+            "仅覆盖当前选中模型。关闭后继续使用各创作任务的安全默认值；部分中转站可能不支持全部参数。",
+            self.advanced_parameters_panel,
+        )
+        advanced_hint.setWordWrap(True)
+        advanced_hint.setObjectName("mutedLabel")
+        advanced_form.addRow(advanced_hint)
+        self.advanced_parameters_panel.setVisible(False)
+        self._sampling_enabled_changed(False)
         connection_form.addRow("连接", selector_row)
         connection_form.addRow("名称", self.connection_name)
         connection_form.addRow("Base URL", self.base_url)
@@ -151,6 +191,8 @@ class SettingsDialog(QDialog):
         connection_form.addRow("已发现模型", self.available_model_combo)
         connection_form.addRow("", self.probe_capabilities_button)
         connection_form.addRow("", self.capability_status)
+        connection_form.addRow("", self.advanced_parameters_button)
+        connection_form.addRow("", self.advanced_parameters_panel)
 
         route_box = QGroupBox("默认模型与任务覆盖", page)
         route_form = QFormLayout(route_box)
@@ -184,6 +226,38 @@ class SettingsDialog(QDialog):
         combo = QComboBox(parent)
         combo.setAccessibleName(accessible_name)
         return combo
+
+    def _sampling_spinbox(
+        self,
+        minimum: float,
+        maximum: float,
+        value: float,
+        step: float,
+    ) -> QDoubleSpinBox:
+        spinbox = QDoubleSpinBox(self.advanced_parameters_panel)
+        spinbox.setRange(minimum, maximum)
+        spinbox.setDecimals(2)
+        spinbox.setSingleStep(step)
+        spinbox.setValue(value)
+        return spinbox
+
+    def _toggle_advanced_parameters(self, expanded: bool) -> None:
+        self.advanced_parameters_panel.setVisible(expanded)
+        self.advanced_parameters_button.setText(
+            "高级生成参数 ▴" if expanded else "高级生成参数 ▾"
+        )
+        self.advanced_parameters_button.setAccessibleName(
+            "收起高级生成参数" if expanded else "展开高级生成参数"
+        )
+
+    def _sampling_enabled_changed(self, enabled: bool) -> None:
+        for editor in (
+            self.temperature,
+            self.top_p,
+            self.frequency_penalty,
+            self.presence_penalty,
+        ):
+            editor.setEnabled(enabled)
 
     def _appearance_tab(self) -> QWidget:
         page = QWidget(self.tabs)
@@ -241,6 +315,7 @@ class SettingsDialog(QDialog):
         self._refresh_route_choices()
 
     def add_connection(self) -> None:
+        self._store_current_sampling()
         self._store_current_profile(ignore_errors=True)
         provider_id = f"connection-{uuid4().hex}"
         default_name = language_manager().translate("新连接")
@@ -253,6 +328,7 @@ class SettingsDialog(QDialog):
         self.timeout_seconds.setValue(90)
 
     def delete_current_connection(self) -> None:
+        self._store_current_sampling()
         provider_id = self.connection_combo.currentData()
         if not isinstance(provider_id, str):
             return
@@ -269,6 +345,7 @@ class SettingsDialog(QDialog):
         if index < 0:
             return
         if self._current_provider_id:
+            self._store_current_sampling()
             self._store_current_profile(ignore_errors=True)
         provider_id = self.connection_combo.itemData(index)
         if not isinstance(provider_id, str):
@@ -341,15 +418,24 @@ class SettingsDialog(QDialog):
         ):
             self._show_error("模型列表格式无效")
             return
+        previous = dict(self._models)
         self._models = {key: value for key, value in self._models.items() if key[0] != provider_id}
         for model in models:
-            self._models[(model.provider_id, model.model_id)] = model
+            key = (model.provider_id, model.model_id)
+            existing = previous.get(key)
+            self._models[key] = (
+                replace(model, sampling=existing.sampling)
+                if existing is not None
+                else model
+            )
         self._refresh_available_models()
         self._refresh_route_choices()
         self.status_label.setText(f"已获取 {len(models)} 个模型；保存后生效")
 
     def _refresh_available_models(self) -> None:
+        self._store_current_sampling()
         selected = self.available_model_combo.currentData()
+        self.available_model_combo.blockSignals(True)
         self.available_model_combo.clear()
         for model in sorted(
             (
@@ -363,6 +449,59 @@ class SettingsDialog(QDialog):
         index = self.available_model_combo.findData(selected)
         if index >= 0:
             self.available_model_combo.setCurrentIndex(index)
+        self.available_model_combo.blockSignals(False)
+        self._model_selection_changed(self.available_model_combo.currentIndex())
+
+    def _model_selection_changed(self, index: int) -> None:
+        self._store_current_sampling()
+        model_id = self.available_model_combo.itemData(index) if index >= 0 else None
+        if not isinstance(model_id, str):
+            self._current_model_key = None
+            self.custom_sampling.setChecked(False)
+            self.advanced_parameters_button.setEnabled(False)
+            return
+        key = (self._current_provider_id, model_id)
+        self._current_model_key = key
+        model = self._models.get(key)
+        sampling = model.sampling if model is not None else ModelSamplingParameters()
+        enabled = any(
+            value is not None
+            for value in (
+                sampling.temperature,
+                sampling.top_p,
+                sampling.frequency_penalty,
+                sampling.presence_penalty,
+            )
+        )
+        self.custom_sampling.blockSignals(True)
+        self.custom_sampling.setChecked(enabled)
+        self.custom_sampling.blockSignals(False)
+        self.temperature.setValue(
+            sampling.temperature if sampling.temperature is not None else 0.7
+        )
+        self.top_p.setValue(sampling.top_p if sampling.top_p is not None else 1.0)
+        self.frequency_penalty.setValue(sampling.frequency_penalty or 0.0)
+        self.presence_penalty.setValue(sampling.presence_penalty or 0.0)
+        self.advanced_parameters_button.setEnabled(model is not None)
+        self._sampling_enabled_changed(enabled)
+
+    def _store_current_sampling(self) -> None:
+        if self._current_model_key is None:
+            return
+        model = self._models.get(self._current_model_key)
+        if model is None:
+            return
+        sampling = (
+            ModelSamplingParameters(
+                temperature=self.temperature.value(),
+                top_p=self.top_p.value(),
+                frequency_penalty=self.frequency_penalty.value(),
+                presence_penalty=self.presence_penalty.value(),
+            )
+            if self.custom_sampling.isChecked()
+            else ModelSamplingParameters()
+        )
+        self._models[self._current_model_key] = replace(model, sampling=sampling)
 
     def probe_capabilities(self) -> None:
         if self.controller is None:
@@ -464,6 +603,7 @@ class SettingsDialog(QDialog):
             self._show_error("当前窗口未连接模型配置服务")
             return
         try:
+            self._store_current_sampling()
             self._store_current_profile()
             overrides: list[tuple[TaskPurpose, ModelRoute]] = []
             brief = self.brief_model_combo.currentData()

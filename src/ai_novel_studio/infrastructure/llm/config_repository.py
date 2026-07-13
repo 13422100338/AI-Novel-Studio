@@ -12,6 +12,7 @@ from ai_novel_studio.infrastructure.llm.schemas import (
     ModelCapabilities,
     ModelProfile,
     ModelRoute,
+    ModelSamplingParameters,
     TaskPurpose,
 )
 from ai_novel_studio.infrastructure.storage.atomic_file import atomic_write_text
@@ -140,6 +141,7 @@ class ModelConfigRepository:
     def _model(cls, value: object) -> ModelProfile:
         data = cls._mapping(value)
         capability_data = cls._mapping(data.get("capabilities"))
+        sampling_data = cls._mapping(data.get("sampling", {}))
         capabilities = ModelCapabilities(
             context_window=cls._optional_integer(capability_data.get("context_window")),
             max_output_tokens=cls._optional_integer(
@@ -162,6 +164,16 @@ class ModelConfigRepository:
             model_id=cls._string(data, "model_id"),
             display_name=cls._string(data, "display_name"),
             capabilities=capabilities,
+            sampling=ModelSamplingParameters(
+                temperature=cls._optional_number(sampling_data.get("temperature")),
+                top_p=cls._optional_number(sampling_data.get("top_p")),
+                frequency_penalty=cls._optional_number(
+                    sampling_data.get("frequency_penalty")
+                ),
+                presence_penalty=cls._optional_number(
+                    sampling_data.get("presence_penalty")
+                ),
+            ),
         )
 
     @classmethod
@@ -252,4 +264,3 @@ class ModelConfigRepository:
         if isinstance(value, (int, float)) and not isinstance(value, bool):
             return float(value)
         raise ModelConfigError("模型配置可选价格字段格式无效")
-

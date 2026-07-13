@@ -50,6 +50,7 @@ from ai_novel_studio.infrastructure.llm.schemas import (
     ModelCapabilities,
     ModelProfile,
     ModelRoute,
+    ModelSamplingParameters,
     StreamEventKind,
     TaskPurpose,
 )
@@ -86,6 +87,7 @@ __all__ = [
     "ModelConfiguration",
     "ModelProfile",
     "ModelRoute",
+    "ModelSamplingParameters",
     "OpenAICompatibleAdapter",
     "ProviderAdapter",
     "ProviderError",

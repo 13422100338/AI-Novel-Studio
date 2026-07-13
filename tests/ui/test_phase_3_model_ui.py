@@ -160,6 +160,32 @@ def test_settings_can_probe_selected_model_capabilities(qtbot: QtBot) -> None:
     assert "工具：未知" in dialog.capability_status.text()
 
 
+def test_advanced_sampling_menu_is_collapsed_and_saves_current_model(qtbot: QtBot) -> None:
+    controller = FakeSettingsController()
+    dialog = SettingsDialog(controller=controller)
+    qtbot.addWidget(dialog)
+    dialog.connection_name.setText("第三方中转")
+    dialog.base_url.setText("https://relay.example/v1")
+    dialog.refresh_models_button.click()
+    profile = controller.refresh_calls[-1][0]
+    controller.models_loaded.emit(
+        profile.id, (ModelProfile(profile.id, "novel-model", "Novel"),)
+    )
+
+    assert dialog.advanced_parameters_panel.isHidden()
+    dialog.advanced_parameters_button.click()
+    dialog.custom_sampling.setChecked(True)
+    dialog.temperature.setValue(1.05)
+    dialog.top_p.setValue(0.88)
+    dialog.plot_model_combo.setCurrentIndex(1)
+    dialog.prose_model_combo.setCurrentIndex(1)
+    dialog.save_button.click()
+
+    saved_model = controller.save_calls[0][0].models[0]
+    assert saved_model.sampling.temperature == 1.05
+    assert saved_model.sampling.top_p == 0.88
+
+
 def test_editing_existing_connection_preserves_credential_reference(qtbot: QtBot) -> None:
     controller = FakeSettingsController()
     profile = _provider()

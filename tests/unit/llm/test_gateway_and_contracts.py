@@ -17,6 +17,7 @@ from ai_novel_studio.infrastructure.llm import (
     ModelConfiguration,
     ModelProfile,
     ModelRoute,
+    ModelSamplingParameters,
     ProviderProfile,
     ProviderRequestError,
     RetryPolicy,
@@ -95,6 +96,47 @@ def test_gateway_resolves_exact_route_and_passes_secret_only_to_adapter() -> Non
     assert request.output_token_limit == 12_345
     assert profile.id == "relay"
     assert api_key == "secret"
+
+
+def test_gateway_applies_per_model_sampling_overrides() -> None:
+    adapter = FakeAdapter()
+    adapter.complete_results = [LLMResponse("ok", "novel-pro")]
+    configuration = _configuration()
+    configured_model = ModelProfile(
+        provider_id="relay",
+        model_id="novel-pro",
+        sampling=ModelSamplingParameters(
+            temperature=1.1,
+            top_p=0.9,
+            frequency_penalty=0.2,
+            presence_penalty=-0.1,
+        ),
+    )
+    credentials = MemoryCredentialStore()
+    credentials.set("credential-relay", "secret")
+    gateway = LLMGateway(
+        ModelConfiguration(
+            providers=configuration.providers,
+            models=(configured_model,),
+            routes=configuration.routes,
+        ),
+        credentials,
+        {"openai_compatible": adapter},
+        UsageTracker(),
+    )
+
+    gateway.complete(
+        TaskPurpose.PLOT_DISCUSSION,
+        (LLMMessage("user", "请求"),),
+        100,
+        temperature=0.3,
+    )
+
+    request = adapter.complete_calls[0][0]
+    assert request.temperature == 1.1
+    assert request.top_p == 0.9
+    assert request.frequency_penalty == 0.2
+    assert request.presence_penalty == -0.1
 
 
 def test_gateway_retries_once_only_before_any_content() -> None:

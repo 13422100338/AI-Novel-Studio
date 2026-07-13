@@ -55,11 +55,32 @@ class ModelCapabilities:
 
 
 @dataclass(frozen=True, slots=True)
+class ModelSamplingParameters:
+    temperature: float | None = None
+    top_p: float | None = None
+    frequency_penalty: float | None = None
+    presence_penalty: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.temperature is not None and not 0 <= self.temperature <= 2:
+            raise ValueError("temperature 必须在 0 到 2 之间")
+        if self.top_p is not None and not 0 <= self.top_p <= 1:
+            raise ValueError("top_p 必须在 0 到 1 之间")
+        for name, value in (
+            ("frequency_penalty", self.frequency_penalty),
+            ("presence_penalty", self.presence_penalty),
+        ):
+            if value is not None and not -2 <= value <= 2:
+                raise ValueError(f"{name} 必须在 -2 到 2 之间")
+
+
+@dataclass(frozen=True, slots=True)
 class ModelProfile:
     provider_id: str
     model_id: str
     display_name: str = ""
     capabilities: ModelCapabilities = field(default_factory=ModelCapabilities)
+    sampling: ModelSamplingParameters = field(default_factory=ModelSamplingParameters)
 
     def __post_init__(self) -> None:
         if not self.provider_id.strip() or not self.model_id.strip():
@@ -88,6 +109,9 @@ class LLMRequest:
     messages: tuple[LLMMessage, ...]
     output_token_limit: int
     temperature: float = 0.7
+    top_p: float | None = None
+    frequency_penalty: float | None = None
+    presence_penalty: float | None = None
     stream: bool = False
     json_mode: bool = False
 
@@ -100,6 +124,11 @@ class LLMRequest:
             raise ValueError("输出 Token 上限必须在 1 到 200000 之间")
         if not 0 <= self.temperature <= 2:
             raise ValueError("temperature 必须在 0 到 2 之间")
+        ModelSamplingParameters(
+            top_p=self.top_p,
+            frequency_penalty=self.frequency_penalty,
+            presence_penalty=self.presence_penalty,
+        )
 
 
 @dataclass(frozen=True, slots=True)
