@@ -352,7 +352,7 @@ class ProjectMemoryWorkspaceGateway:
             status=summary.status,
             revision=summary.revision,
             editable=True,
-            promotable=summary.review_status == ReviewStatus.REVIEW,
+            promotable=summary.review_status == ReviewStatus.REVIEW and not fallback,
         )
 
     def _summary_title(self, summary: SummaryNode) -> str:

@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMainWindow,
+    QMessageBox,
     QPlainTextEdit,
     QPushButton,
     QTabWidget,
@@ -24,6 +25,7 @@ from ai_novel_studio.application.memory_workspace_service import (
 )
 from ai_novel_studio.domain.memory import ReviewStatus
 from ai_novel_studio.ui.demo_data import WorkspaceDemoData
+from ai_novel_studio.ui.i18n import language_manager
 
 
 class MemoryWindow(QMainWindow):
@@ -82,8 +84,13 @@ class MemoryWindow(QMainWindow):
         self.promote_button.setAccessibleName("晋升当前候选记忆")
         self.promote_button.setEnabled(False)
         self.promote_button.clicked.connect(self._promote_current)
+        self.promote_all_button = QPushButton("一键晋升全部候选", note)
+        self.promote_all_button.setAccessibleName("晋升记忆库中的全部待审查候选")
+        self.promote_all_button.setEnabled(False)
+        self.promote_all_button.clicked.connect(self._promote_all)
         actions.addWidget(self.save_button)
         actions.addWidget(self.promote_button)
+        actions.addWidget(self.promote_all_button)
         actions.addStretch(1)
         note_layout.addLayout(actions)
 
@@ -119,6 +126,7 @@ class MemoryWindow(QMainWindow):
             self.metadata_label.setText("该章节边界之前没有可显示的记忆记录。")
             self.save_button.setEnabled(False)
             self.promote_button.setEnabled(False)
+            self.promote_all_button.setEnabled(False)
             return
         self.tabs.setCurrentIndex(0)
         self._refresh_current_record()
@@ -241,6 +249,7 @@ class MemoryWindow(QMainWindow):
             if self._service is not None:
                 self.save_button.setEnabled(False)
                 self.promote_button.setEnabled(False)
+                self._refresh_bulk_promotion_button()
             return
         category = self.tabs.tabText(self.tabs.currentIndex())
         editor = self.editors[category]
@@ -275,6 +284,7 @@ class MemoryWindow(QMainWindow):
             )
         self.save_button.setEnabled(record.editable and not locked)
         self.promote_button.setEnabled(record.promotable and not locked)
+        self._refresh_bulk_promotion_button()
 
     def _save_current(self) -> None:
         record = self._current_record()
@@ -318,3 +328,60 @@ class MemoryWindow(QMainWindow):
             return
         self._records[promoted.id] = promoted
         self._refresh_current_record()
+
+    def _refresh_bulk_promotion_button(self) -> None:
+        count = (
+            self._service.pending_promotion_count()
+            if self._service is not None
+            else 0
+        )
+        self.promote_all_button.setEnabled(count > 0)
+        self.promote_all_button.setToolTip(
+            self._tr("当前共有 {count} 条可晋升候选").format(count=count)
+        )
+
+    def _promote_all(self) -> None:
+        service = self._service
+        if service is None:
+            return
+        count = service.pending_promotion_count()
+        if count <= 0:
+            self.metadata_label.setText(self._tr("当前没有可晋升的待审查候选。"))
+            self._refresh_bulk_promotion_button()
+            return
+        answer = QMessageBox.question(
+            self,
+            self._tr("确认批量晋升"),
+            self._tr(
+                "将把当前项目中的 {count} 条待审查候选晋升为已审查记忆。\n"
+                "编辑框中尚未保存的修改不会自动保存。是否继续？"
+            ).format(count=count),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        result = service.promote_all()
+        for promoted in result.promoted:
+            self._records[promoted.id] = promoted
+        self._refresh_current_record()
+        if result.failures:
+            self.metadata_label.setText(
+                self._tr(
+                    "批量晋升完成：成功 {promoted} 条，失败 {failed} 条。"
+                    "失败记录仍保留为待审查候选，可逐条处理。"
+                ).format(
+                    promoted=len(result.promoted), failed=len(result.failures)
+                )
+            )
+        else:
+            self.metadata_label.setText(
+                self._tr("批量晋升完成：已成功晋升 {count} 条候选。").format(
+                    count=len(result.promoted)
+                )
+            )
+        self._refresh_bulk_promotion_button()
+
+    @staticmethod
+    def _tr(text: str) -> str:
+        return language_manager().translate(text)

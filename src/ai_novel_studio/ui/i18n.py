@@ -290,6 +290,28 @@ _EN: dict[str, str] = {
     "设定资料整理": "Setting documents",
     "保存人工修改": "Save manual edits",
     "晋升为已审查": "Approve candidate",
+    "一键晋升全部候选": "Approve all candidates",
+    "晋升记忆库中的全部待审查候选": (
+        "Approve all review candidates in the memory library"
+    ),
+    "当前共有 {count} 条可晋升候选": (
+        "{count} candidates are currently eligible for approval"
+    ),
+    "当前没有可晋升的待审查候选。": "There are no review candidates to approve.",
+    "确认批量晋升": "Confirm bulk approval",
+    "将把当前项目中的 {count} 条待审查候选晋升为已审查记忆。\n"
+    "编辑框中尚未保存的修改不会自动保存。是否继续？": (
+        "This will approve {count} review candidates in the current project.\n"
+        "Unsaved changes in editors will not be saved automatically. Continue?"
+    ),
+    "批量晋升完成：成功 {promoted} 条，失败 {failed} 条。"
+    "失败记录仍保留为待审查候选，可逐条处理。": (
+        "Bulk approval completed: {promoted} succeeded and {failed} failed. Failed records "
+        "remain review candidates for individual handling."
+    ),
+    "批量晋升完成：已成功晋升 {count} 条候选。": (
+        "Bulk approval completed: {count} candidates approved."
+    ),
     "资料标题": "Document title",
     "资料类型": "Document type",
     "混合设定": "Mixed settings",

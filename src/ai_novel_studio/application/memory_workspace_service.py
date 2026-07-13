@@ -62,6 +62,23 @@ class MemoryWorkspaceSnapshot:
     records: tuple[MemoryWorkspaceRecord, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class MemoryPromotionFailure:
+    record_id: str
+    title: str
+    message: str
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryBulkPromotionResult:
+    promoted: tuple[MemoryWorkspaceRecord, ...]
+    failures: tuple[MemoryPromotionFailure, ...]
+
+    @property
+    def attempted_count(self) -> int:
+        return len(self.promoted) + len(self.failures)
+
+
 class MemoryWorkspaceGateway(Protocol):
     def load_before(self, chapter_id: str) -> tuple[MemoryWorkspaceRecord, ...]: ...
 
@@ -124,6 +141,23 @@ class MemoryWorkspaceService:
         self._records[promoted.id] = promoted
         return promoted
 
+    def pending_promotion_count(self) -> int:
+        return len(self._promotion_candidates())
+
+    def promote_all(self) -> MemoryBulkPromotionResult:
+        promoted: list[MemoryWorkspaceRecord] = []
+        failures: list[MemoryPromotionFailure] = []
+        for record in self._promotion_candidates():
+            try:
+                promoted.append(
+                    self.promote(record.id, expected_revision=record.revision)
+                )
+            except (KeyError, PermissionError, RuntimeError, ValueError) as error:
+                failures.append(
+                    MemoryPromotionFailure(record.id, record.title, str(error))
+                )
+        return MemoryBulkPromotionResult(tuple(promoted), tuple(failures))
+
     def edit_fields(
         self,
         record_id: str,
@@ -148,6 +182,13 @@ class MemoryWorkspaceService:
             return self._records[record_id]
         except KeyError as error:
             raise KeyError(f"工作区中不存在记忆记录：{record_id}") from error
+
+    def _promotion_candidates(self) -> tuple[MemoryWorkspaceRecord, ...]:
+        return tuple(
+            record
+            for record in self._records.values()
+            if record.promotable and record.review_status == ReviewStatus.REVIEW
+        )
 
     @staticmethod
     def _assert_revision(record: MemoryWorkspaceRecord, expected_revision: int) -> None:

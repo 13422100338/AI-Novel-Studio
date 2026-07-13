@@ -40,6 +40,13 @@ class FakeWorkspaceGateway:
         )
 
 
+class PartiallyFailingGateway(FakeWorkspaceGateway):
+    def promote(self, record_id: str, expected_revision: int) -> MemoryWorkspaceRecord:
+        if record_id == "summary-fails":
+            raise RuntimeError("记录已变化")
+        return super().promote(record_id, expected_revision)
+
+
 def _record(
     record_id: str,
     *,
@@ -97,3 +104,24 @@ def test_locked_human_record_is_blocked_before_the_gateway_is_called() -> None:
 
     assert gateway.updated == []
     assert gateway.promoted == []
+
+
+def test_promote_all_only_processes_review_candidates_and_continues_after_failure() -> None:
+    approved = replace(
+        _record("summary-approved"),
+        review_status=ReviewStatus.APPROVED,
+        promotable=False,
+    )
+    gateway = PartiallyFailingGateway(
+        (_record("summary-fails"), _record("summary-ok"), approved)
+    )
+    service = MemoryWorkspaceService(gateway)
+    service.load("chapter-2")
+
+    assert service.pending_promotion_count() == 2
+    result = service.promote_all()
+
+    assert result.attempted_count == 2
+    assert [record.id for record in result.promoted] == ["summary-ok"]
+    assert [failure.record_id for failure in result.failures] == ["summary-fails"]
+    assert service.pending_promotion_count() == 1

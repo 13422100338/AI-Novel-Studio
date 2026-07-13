@@ -1,6 +1,8 @@
 from dataclasses import replace
 
 from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QMessageBox
+from pytest import MonkeyPatch
 from pytestqt.qtbot import QtBot
 
 from ai_novel_studio.application.memory_workspace_service import (
@@ -143,3 +145,25 @@ def test_memory_window_saves_structured_character_fields(qtbot: QtBot) -> None:
 
     assert gateway.saved_fields == {"psychology": "警惕但坚定"}
     assert "APPROVED" in window.metadata_label.text()
+
+
+def test_memory_window_can_confirm_and_promote_all_candidates(
+    qtbot: QtBot, monkeypatch: MonkeyPatch
+) -> None:
+    gateway = UiGateway()
+    window = MemoryWindow(WorkspaceDemoData.sample())
+    qtbot.addWidget(window)
+    window.bind(MemoryWorkspaceService(gateway), "chapter-2")
+    window.editors["压缩前文"].setPlainText("人工修订摘要")
+    qtbot.mouseClick(window.save_button, Qt.MouseButton.LeftButton)
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
+    )
+
+    qtbot.mouseClick(window.promote_all_button, Qt.MouseButton.LeftButton)
+
+    assert gateway.promote_count == 1
+    assert window.promote_all_button.isEnabled() is False
+    assert "成功晋升 1 条" in window.metadata_label.text()

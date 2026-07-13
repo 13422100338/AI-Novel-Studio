@@ -47,6 +47,7 @@ def test_gateway_exposes_summary_candidates_for_memory_window(tmp_path: Path) ->
     assert records[0].title == "章节摘要（待模型升级）：Opening"
     assert records[0].source_type == "SUMMARY_FALLBACK"
     assert records[0].content == "候选摘要"
+    assert records[0].promotable is False
     assert updated.content == "人工修订摘要"
     assert promoted.review_status == ReviewStatus.APPROVED
 
