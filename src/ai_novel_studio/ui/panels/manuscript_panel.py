@@ -247,6 +247,12 @@ class ManuscriptPanel(QFrame):
             f"已保存 · 正文修订 {revision} · 要求修订 {requirement_revision}"
         )
 
+    def mark_requirement_saved(self, requirement_revision: int) -> None:
+        self.current_requirement_revision = requirement_revision
+        self.save_status_label.setText(
+            f"当前章要求已同步 · 要求修订 {requirement_revision}"
+        )
+
     def _set_requirement_locked(self, locked: bool) -> None:
         self._requirement_locked = locked
         self.chapter_requirement.setReadOnly(locked)

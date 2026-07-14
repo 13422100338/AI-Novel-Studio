@@ -124,9 +124,15 @@ class AgentTaskService:
     @staticmethod
     def _tool_catalog() -> str:
         return (
-            "允许的只读工具：READ_CHAPTER_EXCERPT、SEARCH_MEMORY、"
-            "GET_CHARACTER_STATE、GET_CHARACTER_KNOWLEDGE、GET_ACTIVE_CLUES、"
-            "GET_CANON_FACTS、GET_STYLE_GUIDE、GET_AUDIT_FINDINGS。"
+            "允许的只读工具及参数："
+            "READ_CHAPTER_EXCERPT(chapter_id, max_chars?)；"
+            "SEARCH_MEMORY(query, before_chapter_id?, limit?)；"
+            "GET_CHARACTER_STATE(character_name 或 character_id, before_chapter_id?)；"
+            "GET_CHARACTER_KNOWLEDGE(character_name 或 character_id, before_chapter_id?)；"
+            "GET_ACTIVE_CLUES(before_chapter_id?, limit?)；"
+            "GET_CANON_FACTS(query?, limit?)；GET_STYLE_GUIDE(scope_id?)；"
+            "GET_AUDIT_FINDINGS(severity?, limit?)。"
+            "优先使用正文中出现的人物名作为 character_name；不要臆造 character_id。"
         )
 
     @staticmethod

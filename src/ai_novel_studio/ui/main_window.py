@@ -695,7 +695,16 @@ class MainWindow(QMainWindow):
             return
         self.open_generation_process_dialog()
         self.manuscript_panel.begin_generation_draft()
-        self.generation_runtime.prepare_and_start(mode, output_token_limit, target_words)
+        self.generation_runtime.prepare_and_start(
+            mode,
+            output_token_limit,
+            target_words,
+            requirement_content=self.manuscript_panel.chapter_requirement.toPlainText(),
+            expected_requirement_revision=(
+                self.manuscript_panel.current_requirement_revision
+            ),
+            requirement_locked=self.manuscript_panel.requirement_locked(),
+        )
 
     def open_generation_process_dialog(self) -> None:
         if self.generation_process_dialog is None:
@@ -784,6 +793,9 @@ class MainWindow(QMainWindow):
         reasoning_chunk = getattr(self.generation_runtime, "reasoning_chunk", None)
         if reasoning_chunk is not None:
             reasoning_chunk.connect(self.append_generation_reasoning)
+        requirement_saved = getattr(self.generation_runtime, "requirement_saved", None)
+        if requirement_saved is not None:
+            requirement_saved.connect(self.manuscript_panel.mark_requirement_saved)
         generation_usage = getattr(
             self.generation_runtime, "generation_usage_changed", None
         )

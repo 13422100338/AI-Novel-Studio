@@ -19,10 +19,11 @@ class FakeGenerationRuntime(QObject):
     accepted = Signal(str)
     discarded = Signal()
     recovered = Signal(object)
+    requirement_saved = Signal(int)
 
     def __init__(self) -> None:
         super().__init__()
-        self.prepare_calls: list[tuple[CreationMode, int, int]] = []
+        self.prepare_calls: list[tuple[CreationMode, int, int, str, int, bool]] = []
         self.cancel_calls = 0
         self.accept_calls = 0
         self.discard_calls = 0
@@ -33,8 +34,22 @@ class FakeGenerationRuntime(QObject):
         mode: CreationMode,
         output_token_limit: int,
         target_words: int,
+        *,
+        requirement_content: str,
+        expected_requirement_revision: int,
+        requirement_locked: bool,
     ) -> None:
-        self.prepare_calls.append((mode, output_token_limit, target_words))
+        self.prepare_calls.append(
+            (
+                mode,
+                output_token_limit,
+                target_words,
+                requirement_content,
+                expected_requirement_revision,
+                requirement_locked,
+            )
+        )
+        self.requirement_saved.emit(expected_requirement_revision + 1)
 
     def cancel_current(self) -> None:
         self.cancel_calls += 1
@@ -129,10 +144,16 @@ def test_main_window_wires_phase5_runtime_without_direct_storage_access(
     qtbot.addWidget(window)
     window.manuscript_panel.set_creation_mode(CreationMode.BASIC)
     window.manuscript_panel.output_token_limit.setValue(64000)
+    window.manuscript_panel.chapter_requirement.setPlainText("本章必须完成来访事件")
+    window.manuscript_panel.current_requirement_revision = 3
+    window.manuscript_panel.toggle_requirement_lock()
 
     window.manuscript_panel.generate_button.click()
 
-    assert runtime.prepare_calls == [(CreationMode.BASIC, 64000, 3500)]
+    assert runtime.prepare_calls == [
+        (CreationMode.BASIC, 64000, 3500, "本章必须完成来访事件", 3, True)
+    ]
+    assert window.manuscript_panel.current_requirement_revision == 4
     assert window.generation_process_dialog is not None
     assert window.generation_process_dialog.isVisible()
     runtime.reasoning_chunk.emit("先确认人物目标，再安排冲突。")

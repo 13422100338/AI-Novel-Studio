@@ -68,6 +68,7 @@ class PreparedMessageStore:
 class ProjectGenerationRuntime(QObject):
     draft_chunk = Signal(str)
     reasoning_chunk = Signal(str)
+    requirement_saved = Signal(int)
     generation_usage_changed = Signal(object)
     run_changed = Signal(object)
     failed = Signal(str)
@@ -148,11 +149,27 @@ class ProjectGenerationRuntime(QObject):
         mode: CreationMode,
         output_token_limit: int,
         target_words: int,
+        *,
+        requirement_content: str,
+        expected_requirement_revision: int,
+        requirement_locked: bool,
     ) -> None:
         if self.current_chapter_id is None or self.current_chapter_revision is None:
             self.failed.emit("请先选择要生成的章节")
             return
         try:
+            requirement = self.requirements.get_or_create(self.current_chapter_id)
+            if (
+                requirement.content != requirement_content
+                or requirement.is_locked != requirement_locked
+            ):
+                requirement = self.requirements.update(
+                    self.current_chapter_id,
+                    requirement_content,
+                    is_locked=requirement_locked,
+                    expected_revision=expected_requirement_revision,
+                )
+            self.requirement_saved.emit(requirement.revision)
             route = self.gateway.configuration.routes.resolve(TaskPurpose.PROSE_GENERATION)
             model = self.gateway.configuration.model(route)
             frozen = self.briefs.list_for_chapter(

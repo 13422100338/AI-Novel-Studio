@@ -40,6 +40,8 @@ def test_plot_agent_prompt_order_and_boundaries() -> None:
     assert "旧信被发现" in messages[2].content
     assert "本章要求" in messages[3].content
     assert "READ_CHAPTER_EXCERPT" in messages[4].content
+    assert "character_name" in messages[4].content
+    assert "不要臆造 character_id" in messages[4].content
     assert "JSON" in messages[5].content
     assert loop.request.output_token_limit == 900
 

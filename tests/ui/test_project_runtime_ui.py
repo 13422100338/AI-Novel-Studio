@@ -236,6 +236,27 @@ def test_main_window_saves_current_real_chapter(qtbot: QtBot, tmp_path: Path) ->
     assert reloaded.requirement_content == "人工修改要求"
 
 
+def test_generation_synchronizes_visible_requirement_before_preparing(
+    qtbot: QtBot, tmp_path: Path
+) -> None:
+    runtime, chapter_id = _project_with_chapter(tmp_path / "novel", tmp_path)
+    window = MainWindow(model_runtime=UiModelRuntime(tmp_path), project_runtime=runtime)
+    qtbot.addWidget(window)
+    window.load_project_chapter(chapter_id)
+    window.manuscript_panel.chapter_requirement.setPlainText("生成前的新要求")
+    window.manuscript_panel.toggle_requirement_lock()
+    started: list[str] = []
+    runtime.generation_runtime.coordinator.start = started.append  # type: ignore[method-assign]
+
+    window.request_prose_generation(CreationMode.BASIC, 8000, 3500)
+
+    requirement = ChapterRequirementRepository(runtime.project).get(chapter_id)
+    assert requirement.content == "生成前的新要求"
+    assert requirement.is_locked is True
+    assert window.manuscript_panel.current_requirement_revision == requirement.revision
+    assert started
+
+
 def test_agent_mode_uses_current_project_chapter_id(qtbot: QtBot, tmp_path: Path) -> None:
     runtime, chapter_id = _project_with_chapter(tmp_path / "novel", tmp_path)
     window = MainWindow(model_runtime=UiModelRuntime(tmp_path), project_runtime=runtime)

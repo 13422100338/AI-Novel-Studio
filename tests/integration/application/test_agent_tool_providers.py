@@ -46,7 +46,7 @@ def test_project_agent_tools_return_bounded_source_referenced_content(tmp_path: 
     project, chapter_1, chapter_2 = _workspace(tmp_path)
     SearchRepository(project).index_chapter(chapter_1.id, "Opening", "旧信 井底 秘密")
     characters = CharacterMemoryRepository(project)
-    character = characters.create_character("林澈")
+    character = characters.create_character("林澈", aliases=("阿澈",))
     characters.append_state(
         character.id,
         chapter_1.id,
@@ -126,7 +126,14 @@ def test_project_agent_tools_return_bounded_source_referenced_content(tmp_path: 
     )
     state = registry.execute(
         AgentToolName.GET_CHARACTER_STATE,
-        {"character_id": character.id, "before_chapter_id": chapter_2.id},
+        {"character_name": "阿澈", "before_chapter_id": chapter_2.id},
+        run_id="run",
+        chapter_id=chapter_2.id,
+        max_result_chars=120,
+    )
+    missing_character = registry.execute(
+        AgentToolName.GET_CHARACTER_STATE,
+        {},
         run_id="run",
         chapter_id=chapter_2.id,
         max_result_chars=120,
@@ -166,6 +173,7 @@ def test_project_agent_tools_return_bounded_source_referenced_content(tmp_path: 
     assert excerpt.source_refs[0].source_id == chapter_1.id
     assert "旧信" in memory.content
     assert "寻找旧信" in state.content
+    assert "character_name" in missing_character.content
     assert "KNOWN" in knowledge_result.content
     assert "井底旧信" in clues.content
     assert "旧信真实存在" in canon.content

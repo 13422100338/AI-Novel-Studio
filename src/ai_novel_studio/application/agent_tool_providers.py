@@ -141,7 +141,7 @@ class SearchMemoryTool:
 
 class GetCharacterStateTool:
     name = AgentToolName.GET_CHARACTER_STATE
-    required_arguments = ("character_id",)
+    required_arguments = ()
 
     def __init__(self, characters: CharacterMemoryRepository) -> None:
         self._characters = characters
@@ -150,8 +150,13 @@ class GetCharacterStateTool:
         before = str(request.arguments.get("before_chapter_id") or request.chapter_id or "")
         if not before:
             return _result(self.name, "未提供章节边界，无法判断当前人物状态。")
+        character_id, error = _resolve_character_reference(
+            self._characters, request.arguments
+        )
+        if error:
+            return _result(self.name, error)
         event = self._characters.state_before(
-            str(request.arguments["character_id"]),
+            character_id,
             before,
             inclusive=False,
         )
@@ -171,7 +176,7 @@ class GetCharacterStateTool:
 
 class GetCharacterKnowledgeTool:
     name = AgentToolName.GET_CHARACTER_KNOWLEDGE
-    required_arguments = ("character_id",)
+    required_arguments = ()
 
     def __init__(self, characters: CharacterMemoryRepository) -> None:
         self._characters = characters
@@ -180,9 +185,14 @@ class GetCharacterKnowledgeTool:
         before = str(request.arguments.get("before_chapter_id") or request.chapter_id or "")
         if not before:
             return _result(self.name, "未提供章节边界，无法判断人物知识。")
+        character_id, error = _resolve_character_reference(
+            self._characters, request.arguments
+        )
+        if error:
+            return _result(self.name, error)
         rows = self._characters.knowledge_before(
             KnowledgeSubject.CHARACTER,
-            str(request.arguments["character_id"]),
+            character_id,
             before,
             inclusive=False,
         )
@@ -195,6 +205,36 @@ class GetCharacterKnowledgeTool:
             for entry in rows
         )
         return _result(self.name, "\n".join(lines), refs)
+
+
+def _resolve_character_reference(
+    repository: CharacterMemoryRepository,
+    arguments: dict[str, object],
+) -> tuple[str, str]:
+    character_id = str(arguments.get("character_id") or "").strip()
+    if character_id:
+        try:
+            return repository.get_character(character_id).id, ""
+        except KeyError:
+            return "", f"未找到人物 ID：{character_id}。请改用 character_name 查询。"
+
+    character_name = str(arguments.get("character_name") or "").strip()
+    if not character_name:
+        return "", "请提供 character_name（人物正式名或别名）。"
+    matches = tuple(
+        character
+        for character in repository.list_characters()
+        if character_name in {character.canonical_name, *character.aliases}
+    )
+    if not matches:
+        return "", f"未找到人物：{character_name}。"
+    if len(matches) > 1:
+        candidates = "；".join(
+            f"{character.canonical_name}（character_id={character.id}）"
+            for character in matches
+        )
+        return "", f"人物名称存在歧义，请使用 character_id 指定：{candidates}"
+    return matches[0].id, ""
 
 
 class GetActiveCluesTool:
