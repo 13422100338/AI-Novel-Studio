@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import QTimer, Signal
 from PySide6.QtGui import QTextCursor
 from PySide6.QtWidgets import (
     QComboBox,
@@ -140,6 +140,11 @@ class ManuscriptPanel(QFrame):
         self.editor.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
         self.editor.setTabChangesFocus(False)
         self._set_editor_font_size(self.font_size.value())
+        self._pending_draft_chunks: list[str] = []
+        self._draft_flush_timer = QTimer(self)
+        self._draft_flush_timer.setSingleShot(True)
+        self._draft_flush_timer.setInterval(40)
+        self._draft_flush_timer.timeout.connect(self._flush_draft_chunks)
 
         draft_header = QHBoxLayout()
         draft_title = QLabel("AI 草稿预览", self)
@@ -159,15 +164,6 @@ class ManuscriptPanel(QFrame):
         draft_header.addStretch(1)
         draft_header.addWidget(self.discard_draft_button)
         draft_header.addWidget(self.adopt_draft_button)
-
-        self.generated_draft_editor = QPlainTextEdit(self)
-        self.generated_draft_editor.setObjectName("generatedDraftEditor")
-        self.generated_draft_editor.setAccessibleName("AI 生成草稿预览")
-        self.generated_draft_editor.setReadOnly(True)
-        self.generated_draft_editor.setMinimumHeight(70)
-        self.generated_draft_editor.setMaximumHeight(120)
-        self.generated_draft_editor.setPlaceholderText("")
-        self.generated_draft_editor.hide()
 
         self.word_count_label = QLabel(self)
         self.word_count_label.setObjectName("mutedLabel")
@@ -195,8 +191,11 @@ class ManuscriptPanel(QFrame):
 
         self.font_size.valueChanged.connect(self._set_editor_font_size)
         self.mode_combo.currentIndexChanged.connect(self._refresh_generation_controls)
-        self.editor.textChanged.connect(self._update_word_count)
-        self.editor.textChanged.connect(self._sync_visible_draft)
+        self._word_count_timer = QTimer(self)
+        self._word_count_timer.setSingleShot(True)
+        self._word_count_timer.setInterval(250)
+        self._word_count_timer.timeout.connect(self._update_word_count)
+        self.editor.textChanged.connect(self._word_count_timer.start)
         self._update_word_count()
         self._refresh_generation_controls()
 
@@ -228,7 +227,7 @@ class ManuscriptPanel(QFrame):
 
     def apply_chapter_workspace(self, workspace: object) -> None:
         self._draft_preview_active = False
-        self.generated_draft_editor.clear()
+        self._discard_pending_draft_chunks()
         self.editor.setReadOnly(False)
         declared_number = str(getattr(workspace, "declared_number", ""))
         title = str(getattr(workspace, "title", ""))
@@ -316,7 +315,7 @@ class ManuscriptPanel(QFrame):
         self._draft_preview_active = True
         self._strict_adoption_allowed = False
         self._strict_audit_message = ""
-        self.generated_draft_editor.clear()
+        self._discard_pending_draft_chunks()
         self.editor.clear()
         self.editor.setReadOnly(True)
         self.save_button.setEnabled(False)
@@ -331,14 +330,27 @@ class ManuscriptPanel(QFrame):
     def append_generation_draft(self, text: str) -> None:
         if not text:
             return
-        self.generated_draft_editor.moveCursor(QTextCursor.MoveOperation.End)
-        self.generated_draft_editor.insertPlainText(text)
+        self._pending_draft_chunks.append(text)
+        self.discard_draft_button.setEnabled(True)
+        if not self._draft_flush_timer.isActive():
+            self._draft_flush_timer.start()
+
+    def _flush_draft_chunks(self) -> None:
+        if not self._pending_draft_chunks:
+            return
+        text = "".join(self._pending_draft_chunks)
+        self._pending_draft_chunks.clear()
         self.editor.moveCursor(QTextCursor.MoveOperation.End)
         self.editor.insertPlainText(text)
         self.draft_status_label.setText("当前为草稿预览；可编辑、换稿、采用或放弃")
         self.discard_draft_button.setEnabled(True)
 
+    def _discard_pending_draft_chunks(self) -> None:
+        self._draft_flush_timer.stop()
+        self._pending_draft_chunks.clear()
+
     def apply_generation_status(self, status: GenerationStatus) -> None:
+        self._flush_draft_chunks()
         if status == GenerationStatus.STREAMING:
             self.pipeline_status_label.setText("正文生成：流式接收中")
         elif status == GenerationStatus.COMPLETED:
@@ -366,6 +378,7 @@ class ManuscriptPanel(QFrame):
         self._refresh_generation_controls()
 
     def apply_accepted_generation(self, text: str) -> None:
+        self._discard_pending_draft_chunks()
         self._draft_preview_active = False
         self._formal_text_before_draft = text
         self.editor.setPlainText(text)
@@ -373,6 +386,7 @@ class ManuscriptPanel(QFrame):
         self.pipeline_status_label.setText("正文生成：已采用")
 
     def discard_generation_draft(self) -> None:
+        self._discard_pending_draft_chunks()
         restore = self._draft_preview_active
         self._draft_preview_active = False
         if restore:
@@ -380,7 +394,6 @@ class ManuscriptPanel(QFrame):
         self._clear_draft_controls()
 
     def _clear_draft_controls(self) -> None:
-        self.generated_draft_editor.clear()
         self.draft_status_label.setText("生成后将在正文框内预览")
         self.adopt_draft_button.setText("采用草稿")
         self.adopt_draft_button.setEnabled(False)
@@ -392,14 +405,8 @@ class ManuscriptPanel(QFrame):
         self.pipeline_status_label.setText("")
         self._refresh_generation_controls()
 
-    def _sync_visible_draft(self) -> None:
-        if not self._draft_preview_active:
-            return
-        visible = self.editor.toPlainText()
-        if self.generated_draft_editor.toPlainText() != visible:
-            self.generated_draft_editor.setPlainText(visible)
-
     def show_generation_error(self, message: str) -> None:
+        self._flush_draft_chunks()
         self.pipeline_status_label.setText(f"正文生成失败：{message}")
         self.cancel_generation_button.setEnabled(False)
         self._refresh_generation_controls()
@@ -413,7 +420,8 @@ class ManuscriptPanel(QFrame):
         )
 
     def _enable_draft_decision_buttons(self) -> None:
-        has_draft = bool(self.generated_draft_editor.toPlainText())
+        self._flush_draft_chunks()
+        has_draft = bool(self.editor.toPlainText())
         strict_blocked = self.current_creation_mode() == CreationMode.STRICT and not getattr(
             self, "_strict_adoption_allowed", False
         )

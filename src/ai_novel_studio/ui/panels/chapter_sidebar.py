@@ -165,8 +165,8 @@ class ChapterSidebar(QFrame):
         tree.setHeaderHidden(True)
         tree.setMinimumHeight(150)
         tree.setIndentation(14)
-        tree.setAnimated(True)
-        tree.setUniformRowHeights(False)
+        tree.setAnimated(False)
+        tree.setUniformRowHeights(True)
         self._populate_demo_tree(tree, data)
         return tree
 
@@ -190,23 +190,44 @@ class ChapterSidebar(QFrame):
             volume_item.setExpanded(True)
 
     def apply_volume_tree(self, volumes: Iterable[Any]) -> None:
-        self.chapter_tree.clear()
-        for volume in volumes:
-            volume_item = QTreeWidgetItem([str(volume.title)])
-            volume_item.setData(0, self._ITEM_ID_ROLE, str(volume.id))
-            volume_item.setData(0, self._ITEM_KIND_ROLE, "volume")
-            self.chapter_tree.addTopLevelItem(volume_item)
-            for chapter in volume.chapters:
-                item = QTreeWidgetItem(
-                    [
-                        f"{chapter.declared_number}  {chapter.title}\n"
-                        f"{chapter.word_count:,} 字 · 修订 {chapter.revision}"
-                    ]
-                )
-                item.setData(0, self._ITEM_ID_ROLE, chapter.id)
-                item.setData(0, self._ITEM_KIND_ROLE, "chapter")
-                volume_item.addChild(item)
-            volume_item.setExpanded(True)
+        self.chapter_tree.setUpdatesEnabled(False)
+        try:
+            self.chapter_tree.clear()
+            for volume in volumes:
+                volume_item = QTreeWidgetItem([str(volume.title)])
+                volume_item.setData(0, self._ITEM_ID_ROLE, str(volume.id))
+                volume_item.setData(0, self._ITEM_KIND_ROLE, "volume")
+                self.chapter_tree.addTopLevelItem(volume_item)
+                for chapter in volume.chapters:
+                    item = QTreeWidgetItem(
+                        [
+                            f"{chapter.declared_number}  {chapter.title}\n"
+                            f"{chapter.word_count:,} 字 · 修订 {chapter.revision}"
+                        ]
+                    )
+                    item.setData(0, self._ITEM_ID_ROLE, chapter.id)
+                    item.setData(0, self._ITEM_KIND_ROLE, "chapter")
+                    volume_item.addChild(item)
+                volume_item.setExpanded(True)
+        finally:
+            self.chapter_tree.setUpdatesEnabled(True)
+            self.chapter_tree.viewport().update()
+
+    def update_chapter_status(
+        self, chapter_id: str, *, word_count: int, revision: int
+    ) -> bool:
+        iterator = QTreeWidgetItemIterator(self.chapter_tree)
+        while iterator.value() is not None:
+            item = iterator.value()
+            if (
+                item.data(0, self._ITEM_KIND_ROLE) == "chapter"
+                and str(item.data(0, self._ITEM_ID_ROLE)) == chapter_id
+            ):
+                heading = item.text(0).splitlines()[0]
+                item.setText(0, f"{heading}\n{word_count:,} 字 · 修订 {revision}")
+                return True
+            iterator += 1
+        return False
 
     def _build_character_editor(self, parent: QWidget) -> QWidget:
         container = QWidget(parent)

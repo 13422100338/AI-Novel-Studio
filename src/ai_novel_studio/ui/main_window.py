@@ -485,7 +485,7 @@ class MainWindow(QMainWindow):
                 self.current_chapter_id, result.revision
             )
             self.manuscript_panel.set_frozen_brief_available(frozen_brief)
-        self.refresh_project_tree()
+        self._update_current_chapter_tree(result.revision)
 
     def open_brief_dialog(self) -> None:
         if self.brief_dialog is None:
@@ -813,7 +813,21 @@ class MainWindow(QMainWindow):
                 revision,
                 self.manuscript_panel.current_requirement_revision,
             )
-            self.refresh_project_tree()
+            self._update_current_chapter_tree(revision)
+
+    def _update_current_chapter_tree(self, revision: int) -> None:
+        if self.current_chapter_id is None:
+            return
+        word_count = sum(
+            1
+            for character in self.manuscript_panel.editor.toPlainText()
+            if not character.isspace()
+        )
+        self.chapter_sidebar.update_chapter_status(
+            self.current_chapter_id,
+            word_count=word_count,
+            revision=revision,
+        )
 
     def apply_recovered_generation(self, value: object) -> None:
         recovered = recovered_draft_text(value)

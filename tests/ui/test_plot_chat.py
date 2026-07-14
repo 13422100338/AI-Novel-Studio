@@ -76,6 +76,20 @@ def test_generate_requirement_action_emits_explicit_signal(qtbot: QtBot) -> None
         panel.requirement_button.click()
 
 
+def test_assistant_stream_chunks_are_batched_until_finish(qtbot: QtBot) -> None:
+    panel = PlotChatPanel(())
+    qtbot.addWidget(panel)
+    panel.begin_assistant_response()
+
+    panel.append_assistant_chunk("第一段")
+    panel.append_assistant_chunk("第二段")
+
+    assert panel.message_bubbles[-1].text() == ""
+    assert panel._assistant_flush_timer.isActive()
+    panel.finish_assistant_response()
+    assert panel.message_bubbles[-1].text() == "第一段第二段"
+
+
 def test_detached_chat_copies_current_conversation(qtbot: QtBot) -> None:
     messages = WorkspaceDemoData.sample().messages
     window = DetachedChatWindow(messages)

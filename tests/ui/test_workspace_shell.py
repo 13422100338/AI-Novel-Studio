@@ -78,6 +78,17 @@ def test_chapter_selection_emits_stable_demo_id(qtbot: QtBot) -> None:
     assert blocker.args == ["chapter-2"]
 
 
+def test_chapter_status_updates_one_tree_item_without_rebuild(qtbot: QtBot) -> None:
+    sidebar = ChapterSidebar(WorkspaceDemoData.sample())
+    qtbot.addWidget(sidebar)
+    original_volume = sidebar.chapter_tree.topLevelItem(0)
+
+    assert sidebar.update_chapter_status("chapter-2", word_count=4321, revision=7)
+
+    assert sidebar.chapter_tree.topLevelItem(0) is original_volume
+    assert "4,321 字 · 修订 7" in original_volume.child(1).text(0)
+
+
 def test_chapter_management_buttons_emit_selected_project_targets(qtbot: QtBot) -> None:
     sidebar = ChapterSidebar(WorkspaceDemoData.sample())
     qtbot.addWidget(sidebar)

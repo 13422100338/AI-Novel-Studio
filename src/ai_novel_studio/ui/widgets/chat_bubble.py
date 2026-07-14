@@ -10,8 +10,9 @@ class ChatBubble(QFrame):
         self.setProperty("chatRole", role)
         self.setObjectName("chatBubble")
         self.setMaximumWidth(440)
+        self._text = text
 
-        self._label = QLabel(text, self)
+        self._label = QLabel(self._text, self)
         self._label.setWordWrap(True)
         self._label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self._label.setAccessibleName("AI 消息" if role == "assistant" else "用户消息")
@@ -21,10 +22,12 @@ class ChatBubble(QFrame):
         layout.addWidget(self._label)
 
     def text(self) -> str:
-        return self._label.text()
+        return self._text
 
     def set_text(self, text: str) -> None:
-        self._label.setText(text)
+        self._text = text
+        self._label.setText(self._text)
 
     def append_text(self, text: str) -> None:
-        self._label.setText(self._label.text() + text)
+        self._text += text
+        self._label.setText(self._text)

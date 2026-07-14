@@ -338,7 +338,7 @@ def test_open_project_generates_and_accepts_prose_for_selected_chapter(
     assert window.manuscript_panel.generate_button.isEnabled()
     window.manuscript_panel.generate_button.click()
     qtbot.waitUntil(
-        lambda: window.manuscript_panel.generated_draft_editor.toPlainText() == "模型生成正文",
+        lambda: window.manuscript_panel.editor.toPlainText() == "模型生成正文",
         timeout=3000,
     )
     qtbot.waitUntil(
@@ -381,7 +381,7 @@ def test_strict_generation_runs_draft_audit_before_adoption(qtbot: QtBot, tmp_pa
     window.manuscript_panel.generate_button.click()
 
     qtbot.waitUntil(
-        lambda: window.manuscript_panel.generated_draft_editor.toPlainText() == "模型生成正文",
+        lambda: window.manuscript_panel.editor.toPlainText() == "模型生成正文",
         timeout=3000,
     )
     qtbot.waitUntil(

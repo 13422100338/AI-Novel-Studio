@@ -60,7 +60,8 @@ def test_editor_updates_visible_character_count(qtbot: QtBot) -> None:
 
     panel.editor.setPlainText("你好 世界\n")
 
-    assert panel.word_count_label.text() == "4 字"
+    assert panel._word_count_timer.isActive()
+    qtbot.waitUntil(lambda: panel.word_count_label.text() == "4 字", timeout=1000)
 
 
 def test_brief_dialog_freezes_and_clones_stale_revision(qtbot: QtBot) -> None:

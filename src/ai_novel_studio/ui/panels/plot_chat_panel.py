@@ -1,6 +1,6 @@
 from collections.abc import Iterable
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QFrame,
@@ -37,6 +37,11 @@ class PlotChatPanel(QFrame):
         self.setMinimumWidth(300)
         self._messages = list(messages)
         self._streaming_bubble: ChatBubble | None = None
+        self._pending_assistant_chunks: list[str] = []
+        self._assistant_flush_timer = QTimer(self)
+        self._assistant_flush_timer.setSingleShot(True)
+        self._assistant_flush_timer.setInterval(40)
+        self._assistant_flush_timer.timeout.connect(self._flush_assistant_chunks)
         self.message_bubbles: list[ChatBubble] = []
         self.bubble_rows: list[QHBoxLayout] = []
 
@@ -151,6 +156,8 @@ class PlotChatPanel(QFrame):
         return tuple(self._messages)
 
     def replace_messages(self, messages: Iterable[DemoMessage]) -> None:
+        self._assistant_flush_timer.stop()
+        self._pending_assistant_chunks.clear()
         self._messages = list(messages)
         self._streaming_bubble = None
         for bubble in self.message_bubbles:
@@ -181,16 +188,28 @@ class PlotChatPanel(QFrame):
             return
         self.send_button.setEnabled(False)
         self.model_label.setText("剧情模型 · 正在回复…")
+        self._pending_assistant_chunks.clear()
         self._streaming_bubble = self._append_bubble("assistant", "")
 
     def append_assistant_chunk(self, text: str) -> None:
         if self._streaming_bubble is None:
             self.begin_assistant_response()
-        if self._streaming_bubble is not None:
-            self._streaming_bubble.append_text(text)
+        if text:
+            self._pending_assistant_chunks.append(text)
+            if not self._assistant_flush_timer.isActive():
+                self._assistant_flush_timer.start()
+
+    def _flush_assistant_chunks(self) -> None:
+        if self._streaming_bubble is None or not self._pending_assistant_chunks:
+            return
+        text = "".join(self._pending_assistant_chunks)
+        self._pending_assistant_chunks.clear()
+        self._streaming_bubble.append_text(text)
         self._scroll_to_bottom()
 
     def finish_assistant_response(self) -> None:
+        self._assistant_flush_timer.stop()
+        self._flush_assistant_chunks()
         if self._streaming_bubble is not None:
             text = self._streaming_bubble.text().strip()
             if text:
@@ -201,6 +220,8 @@ class PlotChatPanel(QFrame):
         self._scroll_to_bottom()
 
     def show_model_error(self, message: str) -> None:
+        self._assistant_flush_timer.stop()
+        self._flush_assistant_chunks()
         if self._streaming_bubble is not None and not self._streaming_bubble.text():
             self._streaming_bubble.set_text(f"未能获得回复：{message}")
         self._streaming_bubble = None
