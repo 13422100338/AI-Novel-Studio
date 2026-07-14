@@ -156,6 +156,7 @@ class MainWindow(QMainWindow):
         self.generation_process_dialog: GenerationProcessDialog | None = None
         self.last_agent_result: Any | None = None
         self._pending_model_audit: Any | None = None
+        self._brief_normalization_pending = False
         self.settings_dialog: SettingsDialog | None = None
         self._bound_generation_runtime: Any | None = None
         surface = QWidget(self)
@@ -627,13 +628,15 @@ class MainWindow(QMainWindow):
 
     def request_brief_normalization(self, source: str) -> None:
         if self.brief_dialog is not None:
-            self.brief_dialog.normalize_button.setEnabled(False)
+            self.brief_dialog.set_normalization_busy(True)
+        self._brief_normalization_pending = True
         self.model_runtime.coordinator.start_brief(
             source,
             self.manuscript_panel.output_token_limit.value(),
         )
 
     def apply_normalized_brief(self, value: object) -> None:
+        self._brief_normalization_pending = False
         if self.brief_dialog is not None and isinstance(value, NormalizedBrief):
             self.brief_dialog.apply_normalized_brief(value)
 
@@ -1009,7 +1012,10 @@ class MainWindow(QMainWindow):
             panel.set_requirement_busy(False)
         self.manuscript_panel.pipeline_status_label.setText(f"模型调用失败：{message}")
         if self.brief_dialog is not None:
-            self.brief_dialog.normalize_button.setEnabled(True)
+            self.brief_dialog.set_normalization_busy(False)
+            if self._brief_normalization_pending:
+                self.brief_dialog.show_error(message)
+        self._brief_normalization_pending = False
         if self.audit_window is not None:
             self.audit_window.run_model_audit_button.setEnabled(True)
             self.audit_window.run_model_audit_button.setText("运行模型审校")

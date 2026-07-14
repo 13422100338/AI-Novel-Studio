@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 from uuid import uuid4
 
+from PySide6.QtGui import QIntValidator
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -171,8 +172,26 @@ class SettingsDialog(QDialog):
         advanced_form.addRow("Top P", self.top_p)
         advanced_form.addRow("频率惩罚", self.frequency_penalty)
         advanced_form.addRow("存在惩罚", self.presence_penalty)
+        self.custom_token_capabilities = QCheckBox(
+            "人工设置模型 Token 能力", self.advanced_parameters_panel
+        )
+        self.custom_token_capabilities.toggled.connect(
+            self._token_capabilities_enabled_changed
+        )
+        self.context_window = QLineEdit(self.advanced_parameters_panel)
+        self.context_window.setValidator(QIntValidator(1, 10_000_000, self))
+        self.context_window.setPlaceholderText("未知")
+        self.context_window.setAccessibleName("模型上下文窗口 Token")
+        self.max_output_tokens = QLineEdit(self.advanced_parameters_panel)
+        self.max_output_tokens.setValidator(QIntValidator(1, 2_000_000, self))
+        self.max_output_tokens.setPlaceholderText("未知")
+        self.max_output_tokens.setAccessibleName("模型最大输出 Token")
+        advanced_form.addRow(self.custom_token_capabilities)
+        advanced_form.addRow("上下文窗口", self.context_window)
+        advanced_form.addRow("模型最大输出", self.max_output_tokens)
         advanced_hint = QLabel(
-            "仅覆盖当前选中模型。关闭后继续使用各创作任务的安全默认值；部分中转站可能不支持全部参数。",
+            "仅覆盖当前选中模型。中转站未报告 Token 能力时可人工填写；"
+            "请以服务商文档为准，设置过大会导致 API 拒绝请求。",
             self.advanced_parameters_panel,
         )
         advanced_hint.setWordWrap(True)
@@ -180,6 +199,7 @@ class SettingsDialog(QDialog):
         advanced_form.addRow(advanced_hint)
         self.advanced_parameters_panel.setVisible(False)
         self._sampling_enabled_changed(False)
+        self._token_capabilities_enabled_changed(False)
         connection_form.addRow("连接", selector_row)
         connection_form.addRow("名称", self.connection_name)
         connection_form.addRow("Base URL", self.base_url)
@@ -259,6 +279,10 @@ class SettingsDialog(QDialog):
         ):
             editor.setEnabled(enabled)
 
+    def _token_capabilities_enabled_changed(self, enabled: bool) -> None:
+        self.context_window.setEnabled(enabled)
+        self.max_output_tokens.setEnabled(enabled)
+
     def _appearance_tab(self) -> QWidget:
         page = QWidget(self.tabs)
         form = QFormLayout(page)
@@ -315,7 +339,7 @@ class SettingsDialog(QDialog):
         self._refresh_route_choices()
 
     def add_connection(self) -> None:
-        self._store_current_sampling()
+        self._store_current_model_options()
         self._store_current_profile(ignore_errors=True)
         provider_id = f"connection-{uuid4().hex}"
         default_name = language_manager().translate("新连接")
@@ -328,7 +352,7 @@ class SettingsDialog(QDialog):
         self.timeout_seconds.setValue(90)
 
     def delete_current_connection(self) -> None:
-        self._store_current_sampling()
+        self._store_current_model_options()
         provider_id = self.connection_combo.currentData()
         if not isinstance(provider_id, str):
             return
@@ -345,7 +369,7 @@ class SettingsDialog(QDialog):
         if index < 0:
             return
         if self._current_provider_id:
-            self._store_current_sampling()
+            self._store_current_model_options()
             self._store_current_profile(ignore_errors=True)
         provider_id = self.connection_combo.itemData(index)
         if not isinstance(provider_id, str):
@@ -424,7 +448,11 @@ class SettingsDialog(QDialog):
             key = (model.provider_id, model.model_id)
             existing = previous.get(key)
             self._models[key] = (
-                replace(model, sampling=existing.sampling)
+                replace(
+                    model,
+                    sampling=existing.sampling,
+                    capabilities=existing.capabilities,
+                )
                 if existing is not None
                 else model
             )
@@ -433,7 +461,7 @@ class SettingsDialog(QDialog):
         self.status_label.setText(f"已获取 {len(models)} 个模型；保存后生效")
 
     def _refresh_available_models(self) -> None:
-        self._store_current_sampling()
+        self._store_current_model_options()
         selected = self.available_model_combo.currentData()
         self.available_model_combo.blockSignals(True)
         self.available_model_combo.clear()
@@ -453,11 +481,12 @@ class SettingsDialog(QDialog):
         self._model_selection_changed(self.available_model_combo.currentIndex())
 
     def _model_selection_changed(self, index: int) -> None:
-        self._store_current_sampling()
+        self._store_current_model_options()
         model_id = self.available_model_combo.itemData(index) if index >= 0 else None
         if not isinstance(model_id, str):
             self._current_model_key = None
             self.custom_sampling.setChecked(False)
+            self.custom_token_capabilities.setChecked(False)
             self.advanced_parameters_button.setEnabled(False)
             return
         key = (self._current_provider_id, model_id)
@@ -482,10 +511,32 @@ class SettingsDialog(QDialog):
         self.top_p.setValue(sampling.top_p if sampling.top_p is not None else 1.0)
         self.frequency_penalty.setValue(sampling.frequency_penalty or 0.0)
         self.presence_penalty.setValue(sampling.presence_penalty or 0.0)
+        capabilities = model.capabilities if model is not None else None
+        token_capabilities_enabled = bool(
+            capabilities is not None
+            and (
+                capabilities.context_window is not None
+                or capabilities.max_output_tokens is not None
+            )
+        )
+        self.custom_token_capabilities.blockSignals(True)
+        self.custom_token_capabilities.setChecked(token_capabilities_enabled)
+        self.custom_token_capabilities.blockSignals(False)
+        self.context_window.setText(
+            str(capabilities.context_window)
+            if capabilities is not None and capabilities.context_window is not None
+            else ""
+        )
+        self.max_output_tokens.setText(
+            str(capabilities.max_output_tokens)
+            if capabilities is not None and capabilities.max_output_tokens is not None
+            else ""
+        )
         self.advanced_parameters_button.setEnabled(model is not None)
         self._sampling_enabled_changed(enabled)
+        self._token_capabilities_enabled_changed(token_capabilities_enabled)
 
-    def _store_current_sampling(self) -> None:
+    def _store_current_model_options(self, *, validate: bool = False) -> None:
         if self._current_model_key is None:
             return
         model = self._models.get(self._current_model_key)
@@ -501,7 +552,50 @@ class SettingsDialog(QDialog):
             if self.custom_sampling.isChecked()
             else ModelSamplingParameters()
         )
-        self._models[self._current_model_key] = replace(model, sampling=sampling)
+        context_window = self._optional_positive_integer(
+            self.context_window.text(), "上下文窗口"
+        )
+        max_output_tokens = self._optional_positive_integer(
+            self.max_output_tokens.text(), "模型最大输出"
+        )
+        if (
+            self.custom_token_capabilities.isChecked()
+            and context_window is not None
+            and max_output_tokens is not None
+            and max_output_tokens > context_window
+        ):
+            if validate:
+                raise ValueError("模型最大输出不能大于上下文窗口")
+            return
+        capabilities = replace(
+            model.capabilities,
+            context_window=(
+                context_window if self.custom_token_capabilities.isChecked() else None
+            ),
+            max_output_tokens=(
+                max_output_tokens
+                if self.custom_token_capabilities.isChecked()
+                else None
+            ),
+        )
+        self._models[self._current_model_key] = replace(
+            model,
+            sampling=sampling,
+            capabilities=capabilities,
+        )
+
+    @staticmethod
+    def _optional_positive_integer(text: str, label: str) -> int | None:
+        value = text.strip()
+        if not value:
+            return None
+        try:
+            number = int(value)
+        except ValueError as error:
+            raise ValueError(f"{label}必须是正整数") from error
+        if number <= 0:
+            raise ValueError(f"{label}必须大于零")
+        return number
 
     def probe_capabilities(self) -> None:
         if self.controller is None:
@@ -580,9 +674,23 @@ class SettingsDialog(QDialog):
                     f"{provider_name} · {display}",
                     ModelRoute(model.provider_id, model.model_id),
                 )
-            index = combo.findData(selected)
+            index = self._find_route_index(combo, selected)
             combo.setCurrentIndex(index if index >= 0 else 0)
             combo.blockSignals(False)
+
+    @staticmethod
+    def _find_route_index(combo: QComboBox, selected: ModelRoute | None) -> int:
+        if selected is None:
+            return 0
+        for index in range(combo.count()):
+            candidate = combo.itemData(index)
+            if (
+                isinstance(candidate, ModelRoute)
+                and candidate.provider_id == selected.provider_id
+                and candidate.model_id == selected.model_id
+            ):
+                return index
+        return -1
 
     @staticmethod
     def _override(routes: TaskRoutes, purpose: TaskPurpose) -> ModelRoute | None:
@@ -603,7 +711,7 @@ class SettingsDialog(QDialog):
             self._show_error("当前窗口未连接模型配置服务")
             return
         try:
-            self._store_current_sampling()
+            self._store_current_model_options(validate=True)
             self._store_current_profile()
             overrides: list[tuple[TaskPurpose, ModelRoute]] = []
             brief = self.brief_model_combo.currentData()

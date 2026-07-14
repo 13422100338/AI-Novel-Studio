@@ -144,18 +144,20 @@ class ModelTaskService:
     def normalize_brief(self, source: str, output_token_limit: int) -> NormalizedBrief:
         contract = JsonObjectContract(
             (
-                JsonField("dramatic_function", str),
-                JsonField("hard_events", list),
-                JsonField("soft_goals", list),
-                JsonField("forbidden_changes", list),
-                JsonField("creative_freedom", list),
+                JsonField("dramatic_function", (str, list)),
+                JsonField("hard_events", (list, str)),
+                JsonField("soft_goals", (list, str)),
+                JsonField("forbidden_changes", (list, str)),
+                JsonField("creative_freedom", (list, str)),
             )
         )
         messages = (
             LLMMessage(
                 "system",
                 "你只负责把作者提供的章节 Brief 整理为 JSON。不得增加来源中没有的事实，"
-                "不得修改正文或长期记忆。",
+                "不得修改正文或长期记忆。dramatic_function 必须是文本；"
+                "hard_events、soft_goals、forbidden_changes、creative_freedom "
+                "必须是文本数组，不得返回嵌套对象。",
             ),
             LLMMessage(
                 "user",
@@ -169,11 +171,11 @@ class ModelTaskService:
             contract,
         )
         return NormalizedBrief(
-            dramatic_function=self._text(data, "dramatic_function"),
-            hard_events=self._text_tuple(data, "hard_events"),
-            soft_goals=self._text_tuple(data, "soft_goals"),
-            forbidden_changes=self._text_tuple(data, "forbidden_changes"),
-            creative_freedom=self._text_tuple(data, "creative_freedom"),
+            dramatic_function=self._brief_text(data, "dramatic_function"),
+            hard_events=self._brief_text_tuple(data, "hard_events"),
+            soft_goals=self._brief_text_tuple(data, "soft_goals"),
+            forbidden_changes=self._brief_text_tuple(data, "forbidden_changes"),
+            creative_freedom=self._brief_text_tuple(data, "creative_freedom"),
         )
 
     def audit_style(
@@ -241,3 +243,25 @@ class ModelTaskService:
         ):
             raise ContractValidationError(f"字段 {key} 必须是文本数组")
         return tuple(cast(str, item).strip() for item in value)
+
+    @staticmethod
+    def _brief_text(data: dict[str, object], key: str) -> str:
+        value = data.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        if isinstance(value, list) and value and all(
+            isinstance(item, str) and item.strip() for item in value
+        ):
+            return "；".join(cast(str, item).strip() for item in value)
+        raise ContractValidationError(f"字段 {key} 必须是非空文本或文本数组")
+
+    @staticmethod
+    def _brief_text_tuple(data: dict[str, object], key: str) -> tuple[str, ...]:
+        value = data.get(key)
+        if isinstance(value, str) and value.strip():
+            return (value.strip(),)
+        if isinstance(value, list) and all(
+            isinstance(item, str) and item.strip() for item in value
+        ):
+            return tuple(cast(str, item).strip() for item in value)
+        raise ContractValidationError(f"字段 {key} 必须是文本或文本数组")

@@ -32,7 +32,7 @@ class ReferenceWindow(QMainWindow):
         title.setObjectName("panelTitle")
         explanation = QLabel(
             "这里显示 Context Manifest：正文模型实际采用、回退或因 Token 预算省略的上下文来源。"
-            "它用于审查模型写作依据，不会修改正文或记忆库。",
+            "它是生成当时的历史快照；修改模型设置后需重新生成正文才会建立新清单。",
             surface,
         )
         explanation.setWordWrap(True)
@@ -82,7 +82,9 @@ class ReferenceWindow(QMainWindow):
 
         self.status_label.setText(
             f"清单 {manifest.id[:12]} · 输入约 {manifest.estimated_input_tokens} Token · "
-            f"输出上限 {manifest.output_token_limit} Token"
+            f"当时输入上限 {manifest.input_token_limit} Token · "
+            f"输出上限 {manifest.output_token_limit} Token · "
+            f"创建于 {manifest.created_at.astimezone().strftime('%Y-%m-%d %H:%M:%S')}"
         )
         rows: list[tuple[str, str, str, str, str]] = []
         rows.extend(

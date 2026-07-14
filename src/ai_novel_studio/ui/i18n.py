@@ -258,6 +258,17 @@ _EN: dict[str, str] = {
     "温度": "Temperature",
     "频率惩罚": "Frequency penalty",
     "存在惩罚": "Presence penalty",
+    "人工设置模型 Token 能力": "Set model token capabilities manually",
+    "上下文窗口": "Context window",
+    "模型最大输出": "Model maximum output",
+    "模型上下文窗口 Token": "Model context window tokens",
+    "模型最大输出 Token": "Model maximum output tokens",
+    "仅覆盖当前选中模型。中转站未报告 Token 能力时可人工填写；"
+    "请以服务商文档为准，设置过大会导致 API 拒绝请求。": (
+        "Applies only to the selected model. Enter token capabilities manually when a relay "
+        "does not report them. Follow the provider documentation; excessive values can cause "
+        "the API to reject requests."
+    ),
     "仅覆盖当前选中模型。关闭后继续使用各创作任务的安全默认值；部分中转站可能不支持全部参数。": (
         "Applies only to the selected model. When disabled, each writing task keeps its safe "
         "default; some relay providers may not support every parameter."

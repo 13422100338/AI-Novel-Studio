@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtWidgets import QLineEdit
 from pytestqt.qtbot import QtBot
 
@@ -8,11 +8,13 @@ from ai_novel_studio.application.model_runtime import ModelRuntime
 from ai_novel_studio.infrastructure.llm import (
     CapabilityProbeResult,
     MemoryCredentialStore,
+    ModelCapabilities,
     ModelConfigRepository,
     ModelConfiguration,
     ModelProfile,
     ModelRoute,
     ProviderProfile,
+    TaskPurpose,
     TaskRoutes,
     UsageSnapshot,
 )
@@ -129,8 +131,6 @@ def test_settings_can_override_agent_assistant_route(qtbot: QtBot) -> None:
     dialog.agent_model_combo.setCurrentIndex(agent_index)
     dialog.save_button.click()
 
-    from ai_novel_studio.infrastructure.llm import TaskPurpose
-
     overrides = dict(controller.save_calls[0][0].routes.overrides)
     assert overrides[TaskPurpose.AGENT_ASSISTANT] == ModelRoute(profile.id, "agent-model")
 
@@ -184,6 +184,113 @@ def test_advanced_sampling_menu_is_collapsed_and_saves_current_model(qtbot: QtBo
     saved_model = controller.save_calls[0][0].models[0]
     assert saved_model.sampling.temperature == 1.05
     assert saved_model.sampling.top_p == 0.88
+
+
+def test_advanced_model_options_save_manual_token_capabilities(qtbot: QtBot) -> None:
+    controller = FakeSettingsController()
+    dialog = SettingsDialog(controller=controller)
+    qtbot.addWidget(dialog)
+    dialog.connection_name.setText("第三方中转")
+    dialog.base_url.setText("https://relay.example/v1")
+    dialog.refresh_models_button.click()
+    profile = controller.refresh_calls[-1][0]
+    controller.models_loaded.emit(
+        profile.id, (ModelProfile(profile.id, "deepseek-v4-pro"),)
+    )
+
+    dialog.custom_token_capabilities.setChecked(True)
+    dialog.context_window.setText("1000000")
+    dialog.max_output_tokens.setText("64000")
+    dialog.plot_model_combo.setCurrentIndex(1)
+    dialog.prose_model_combo.setCurrentIndex(1)
+    dialog.save_button.click()
+
+    saved_model = controller.save_calls[0][0].models[0]
+    assert saved_model.capabilities.context_window == 1_000_000
+    assert saved_model.capabilities.max_output_tokens == 64_000
+
+
+def test_token_capability_fields_accept_keyboard_editing(qtbot: QtBot) -> None:
+    controller = FakeSettingsController()
+    dialog = SettingsDialog(controller=controller)
+    qtbot.addWidget(dialog)
+    dialog.connection_name.setText("第三方中转")
+    dialog.base_url.setText("https://relay.example/v1")
+    dialog.refresh_models_button.click()
+    profile = controller.refresh_calls[-1][0]
+    controller.models_loaded.emit(
+        profile.id, (ModelProfile(profile.id, "deepseek-v4-pro"),)
+    )
+
+    dialog.custom_token_capabilities.setChecked(True)
+    dialog.context_window.setFocus()
+    qtbot.keyClicks(dialog.context_window, "1000000")
+    assert dialog.context_window.text() == "1000000"
+    dialog.context_window.selectAll()
+    qtbot.keyClick(dialog.context_window, Qt.Key.Key_Backspace)
+    assert dialog.context_window.text() == ""
+
+
+def test_refreshing_models_preserves_saved_token_capabilities(qtbot: QtBot) -> None:
+    controller = FakeSettingsController()
+    profile = _provider()
+    model = ModelProfile(
+        "relay",
+        "deepseek-v4-pro",
+        capabilities=ModelCapabilities(
+            context_window=1_000_000,
+            max_output_tokens=64_000,
+        ),
+    )
+    route = ModelRoute("relay", "deepseek-v4-pro")
+    controller.configuration = ModelConfiguration(
+        providers=(profile,),
+        models=(model,),
+        routes=TaskRoutes(plot=route, prose=route),
+    )
+    dialog = SettingsDialog(controller=controller)
+    qtbot.addWidget(dialog)
+
+    controller.models_loaded.emit(
+        profile.id, (ModelProfile(profile.id, "deepseek-v4-pro"),)
+    )
+    dialog.save_button.click()
+
+    saved_model = controller.save_calls[0][0].models[0]
+    assert saved_model.capabilities.context_window == 1_000_000
+    assert saved_model.capabilities.max_output_tokens == 64_000
+
+
+def test_settings_restores_all_saved_task_routes(qtbot: QtBot) -> None:
+    controller = FakeSettingsController()
+    profile = _provider()
+    model = ModelProfile("relay", "deepseek-v4-pro")
+    route = ModelRoute("relay", "deepseek-v4-pro")
+    controller.configuration = ModelConfiguration(
+        providers=(profile,),
+        models=(model,),
+        routes=TaskRoutes(
+            plot=route,
+            prose=route,
+            overrides=(
+                (TaskPurpose.BRIEF_NORMALIZATION, route),
+                (TaskPurpose.AGENT_ASSISTANT, route),
+                (TaskPurpose.STYLE_AUDIT, route),
+            ),
+        ),
+    )
+
+    dialog = SettingsDialog(controller=controller)
+    qtbot.addWidget(dialog)
+
+    for combo in (
+        dialog.plot_model_combo,
+        dialog.prose_model_combo,
+        dialog.brief_model_combo,
+        dialog.agent_model_combo,
+        dialog.audit_model_combo,
+    ):
+        assert combo.currentData() == route
 
 
 def test_editing_existing_connection_preserves_credential_reference(qtbot: QtBot) -> None:

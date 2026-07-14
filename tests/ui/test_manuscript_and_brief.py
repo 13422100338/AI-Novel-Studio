@@ -1,5 +1,9 @@
+from types import SimpleNamespace
+from typing import cast
+
 from pytestqt.qtbot import QtBot
 
+from ai_novel_studio.domain.generation import BriefStatus, ChapterBrief
 from ai_novel_studio.ui.demo_data import WorkspaceDemoData
 from ai_novel_studio.ui.main_window import MainWindow
 from ai_novel_studio.ui.pages.brief_dialog import BriefDialog
@@ -82,6 +86,18 @@ def test_brief_dialog_freezes_and_clones_stale_revision(qtbot: QtBot) -> None:
     assert all(not editor.isReadOnly() for editor in dialog.section_editors.values())
 
 
+def test_frozen_project_brief_requires_clone_before_ai_normalization(qtbot: QtBot) -> None:
+    dialog = BriefDialog(WorkspaceDemoData.sample().brief)
+    qtbot.addWidget(dialog)
+    dialog._project_brief = cast(
+        ChapterBrief,
+        SimpleNamespace(status=BriefStatus.FROZEN),
+    )
+    dialog.set_normalization_busy(False)
+
+    assert dialog.normalize_button.isEnabled() is False
+
+
 def test_brief_sections_expose_hover_explanations(qtbot: QtBot) -> None:
     dialog = BriefDialog(WorkspaceDemoData.sample().brief)
     qtbot.addWidget(dialog)
@@ -102,6 +118,14 @@ def test_brief_sections_expose_hover_explanations(qtbot: QtBot) -> None:
     assert "不得省略" in dialog.section_help_buttons["必须事件"].toolTip()
 
 
+def test_brief_section_editors_have_readable_default_height(qtbot: QtBot) -> None:
+    dialog = BriefDialog(WorkspaceDemoData.sample().brief)
+    qtbot.addWidget(dialog)
+
+    assert dialog.minimumWidth() >= 820
+    assert all(editor.minimumHeight() >= 130 for editor in dialog.section_editors.values())
+
+
 def test_main_window_opens_reusable_brief_dialog(qtbot: QtBot) -> None:
     window = MainWindow()
     qtbot.addWidget(window)
@@ -113,6 +137,19 @@ def test_main_window_opens_reusable_brief_dialog(qtbot: QtBot) -> None:
 
     window.manuscript_panel.brief_button.click()
     assert window.brief_dialog is first
+
+
+def test_brief_normalization_failure_is_shown_inside_brief_dialog(qtbot: QtBot) -> None:
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.manuscript_panel.brief_button.click()
+    assert window.brief_dialog is not None
+    window._brief_normalization_pending = True
+
+    window.show_model_error("字段 dramatic_function 必须是文本")
+
+    assert "dramatic_function" in window.brief_dialog.warning_label.text()
+    assert window.brief_dialog.normalize_button.isEnabled()
 
 
 def test_plot_chat_action_never_uses_old_demo_draft_when_requirement_is_locked(

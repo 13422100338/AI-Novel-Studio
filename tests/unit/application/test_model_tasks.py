@@ -111,6 +111,24 @@ def test_brief_normalization_uses_json_contract_and_typed_result() -> None:
     assert gateway.calls[0][3]["json_mode"] is True
 
 
+def test_brief_normalization_accepts_safe_scalar_list_shape_variants() -> None:
+    gateway = FakeGateway(
+        [
+            """{"dramatic_function":["制造怀疑","推动调查"],
+            "hard_events":"发现封口","soft_goals":["保持克制"],
+            "forbidden_changes":"不能确认凶手","creative_freedom":"环境细节"}"""
+        ]
+    )
+    service = ModelTaskService(gateway)  # type: ignore[arg-type]
+
+    result = service.normalize_brief("未经整理的 Brief", 4000)
+
+    assert result.dramatic_function == "制造怀疑；推动调查"
+    assert result.hard_events == ("发现封口",)
+    assert result.forbidden_changes == ("不能确认凶手",)
+    assert result.creative_freedom == ("环境细节",)
+
+
 def test_style_audit_returns_findings_without_modifying_manuscript() -> None:
     gateway = FakeGateway(
         [

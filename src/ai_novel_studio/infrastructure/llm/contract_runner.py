@@ -31,7 +31,7 @@ class ContractValidationError(ValueError):
 @dataclass(frozen=True, slots=True)
 class JsonField:
     name: str
-    expected_type: type[object]
+    expected_type: type[object] | tuple[type[object], ...]
     required: bool = True
 
 
@@ -51,11 +51,19 @@ class JsonObjectContract:
                 continue
             field_value = data[field.name]
             valid = isinstance(field_value, field.expected_type)
-            if field.expected_type is int and isinstance(field_value, bool):
+            expected_types = (
+                field.expected_type
+                if isinstance(field.expected_type, tuple)
+                else (field.expected_type,)
+            )
+            if int in expected_types and isinstance(field_value, bool):
                 valid = False
             if not valid:
+                expected_name = " 或 ".join(
+                    expected_type.__name__ for expected_type in expected_types
+                )
                 errors.append(
-                    f"字段 {field.name} 必须是 {field.expected_type.__name__}"
+                    f"字段 {field.name} 必须是 {expected_name}"
                 )
         if errors:
             raise ContractValidationError("；".join(errors))

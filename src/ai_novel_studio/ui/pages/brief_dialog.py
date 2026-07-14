@@ -51,8 +51,8 @@ class BriefDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("章节 Brief 审查")
         self.setObjectName("briefDialog")
-        self.setMinimumSize(720, 620)
-        self.resize(820, 720)
+        self.setMinimumSize(820, 680)
+        self.resize(980, 820)
         self._status = brief.status
         self._project_brief: ChapterBrief | None = None
 
@@ -115,7 +115,7 @@ class BriefDialog(QDialog):
             editor = QTextEdit(form)
             editor.setAcceptRichText(False)
             editor.setPlainText(text)
-            editor.setMinimumHeight(76)
+            editor.setMinimumHeight(130)
             editor.setAccessibleName(f"Brief {title}")
             self.section_editors[title] = editor
             form_layout.addLayout(title_row)
@@ -202,7 +202,7 @@ class BriefDialog(QDialog):
             if editor is not None:
                 editor.setPlainText(text)
         self._set_status("草稿 · AI 已整理 · 待人工审查")
-        self.normalize_button.setEnabled(True)
+        self.set_normalization_busy(False)
 
     def bind_project_brief(self, brief: ChapterBrief) -> None:
         self._project_brief = brief
@@ -232,11 +232,19 @@ class BriefDialog(QDialog):
             editor.setReadOnly(not editable)
         self.save_button.setEnabled(editable)
         self.freeze_button.setEnabled(editable)
+        self.set_normalization_busy(False)
         self.clone_button.setEnabled(brief.status in {BriefStatus.FROZEN, BriefStatus.STALE})
         self.recompile_button.setEnabled(True)
 
     def show_error(self, message: str) -> None:
         self.warning_label.setText(f"操作未完成：{message}")
+
+    def set_normalization_busy(self, busy: bool) -> None:
+        editable = (
+            self._project_brief is None
+            or self._project_brief.status == BriefStatus.DRAFT
+        )
+        self.normalize_button.setEnabled(editable and not busy)
 
     def show_load_error(self, message: str) -> None:
         self._project_brief = None
