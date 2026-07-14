@@ -154,6 +154,29 @@ class CharacterMemoryRepository:
             ).fetchall()
         return tuple(self._state(row) for row in rows)
 
+    def state_histories(
+        self, character_ids: tuple[str, ...]
+    ) -> dict[str, tuple[CharacterStateEvent, ...]]:
+        unique_ids = tuple(dict.fromkeys(value for value in character_ids if value))
+        if not unique_ids:
+            return {}
+        placeholders = ", ".join("?" for _ in unique_ids)
+        with self.project.database.connect() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT e.* FROM character_state_events e
+                JOIN chapters c ON c.id = e.chapter_id
+                JOIN volumes v ON v.id = c.volume_id
+                WHERE e.character_id IN ({placeholders})
+                ORDER BY e.character_id, v.sort_index, c.sort_index, e.created_at, e.id
+                """,
+                unique_ids,
+            ).fetchall()
+        grouped: dict[str, list[CharacterStateEvent]] = {}
+        for row in rows:
+            grouped.setdefault(str(row["character_id"]), []).append(self._state(row))
+        return {character_id: tuple(events) for character_id, events in grouped.items()}
+
     def state_candidates_before(
         self,
         character_id: str,

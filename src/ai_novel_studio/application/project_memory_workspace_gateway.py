@@ -22,7 +22,6 @@ from ai_novel_studio.domain.memory import (
     SummaryLevel,
     SummaryNode,
 )
-from ai_novel_studio.infrastructure.storage.chapter_repository import ChapterRepository
 from ai_novel_studio.infrastructure.storage.character_memory_repository import (
     CharacterMemoryRepository,
 )
@@ -37,10 +36,11 @@ class ProjectMemoryWorkspaceGateway:
         self.project = project
         self.summaries = SummaryRepository(project)
         self.characters = CharacterMemoryRepository(project)
-        self.chapters = ChapterRepository(project)
         self._loaded_records: dict[str, MemoryWorkspaceRecord] = {}
+        self._chapter_metadata: dict[str, tuple[str, int]] = {}
 
     def load_before(self, chapter_id: str) -> tuple[MemoryWorkspaceRecord, ...]:
+        self._chapter_metadata = self._load_chapter_metadata()
         summaries = self.summaries.list_all()
         if chapter_id != "__all__":
             summaries = tuple(
@@ -378,30 +378,32 @@ class ProjectMemoryWorkspaceGateway:
             SummaryLevel.RAW: "原文片段",
         }[summary.level]
         if summary.level == SummaryLevel.CHAPTER:
-            try:
-                chapter = self.chapters.get_chapter(summary.scope_id)
-            except KeyError:
+            chapter = self._chapter_metadata.get(summary.scope_id)
+            if chapter is None:
                 return f"{label}：{summary.scope_id}"
-            return f"{label}：{chapter.title}"
+            return f"{label}：{chapter[0]}"
         return f"{label}：{summary.scope_id}"
 
     def _character_state_records(self) -> tuple[MemoryWorkspaceRecord, ...]:
         records: list[MemoryWorkspaceRecord] = []
-        for character in self.characters.list_characters():
-            for event in self.characters.state_history(character.id):
+        characters = self.characters.list_characters()
+        histories = self.characters.state_histories(
+            tuple(character.id for character in characters)
+        )
+        for character in characters:
+            for event in histories.get(character.id, ()):
                 records.append(self._character_state_record(character.canonical_name, event))
         return tuple(records)
 
     def _character_state_record(
         self, character_name: str, event: CharacterStateEvent
     ) -> MemoryWorkspaceRecord:
-        try:
-            chapter = self.chapters.get_chapter(event.chapter_id)
-            chapter_title = chapter.title
-            source_revision = chapter.revision
-        except KeyError:
+        chapter = self._chapter_metadata.get(event.chapter_id)
+        if chapter is None:
             chapter_title = event.chapter_id
             source_revision = None
+        else:
+            chapter_title, source_revision = chapter
         content = (
             f"人物：{character_name}\n"
             f"动机：{event.motivation}\n"
@@ -626,10 +628,8 @@ class ProjectMemoryWorkspaceGateway:
     ) -> MemoryWorkspaceRecord:
         source_revision: int | None = None
         if chapter_id:
-            try:
-                source_revision = self.chapters.get_chapter(chapter_id).revision
-            except KeyError:
-                source_revision = None
+            chapter = self._chapter_metadata.get(chapter_id)
+            source_revision = chapter[1] if chapter is not None else None
         return MemoryWorkspaceRecord(
             id=record_id,
             category=category,
@@ -647,3 +647,13 @@ class ProjectMemoryWorkspaceGateway:
             promotable=review_status == ReviewStatus.REVIEW,
             fields=fields,
         )
+
+    def _load_chapter_metadata(self) -> dict[str, tuple[str, int]]:
+        with self.project.database.connect() as connection:
+            rows = connection.execute(
+                "SELECT id, title, revision FROM chapters WHERE is_deleted = 0"
+            ).fetchall()
+        return {
+            str(row["id"]): (str(row["title"]), int(row["revision"]))
+            for row in rows
+        }

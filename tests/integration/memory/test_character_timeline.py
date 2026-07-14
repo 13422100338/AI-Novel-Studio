@@ -102,6 +102,9 @@ def test_character_states_can_be_loaded_in_one_batch(tmp_path: Path) -> None:
 
     assert states[first.id][0].current_goal == "检查来信"
     assert states[second.id][0].current_goal == "守住码头"
+    histories = repository.state_histories((first.id, second.id))
+    assert histories[first.id][0].current_goal == "检查来信"
+    assert histories[second.id][0].current_goal == "守住码头"
 
 
 def test_character_and_reader_knowledge_are_separate_and_time_bounded(tmp_path: Path) -> None:
