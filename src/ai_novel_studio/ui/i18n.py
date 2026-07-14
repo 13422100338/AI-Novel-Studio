@@ -90,8 +90,13 @@ _EN: dict[str, str] = {
     "字号": "Font size",
     "档位": "Mode",
     "标准": "Standard",
+    "普通": "Normal",
     "快速": "Quick",
     "严格": "Strict",
+    "采用前强制审校": "Require review before adoption",
+    "开启后，草稿必须通过确定性检查和模型语义审校才能采用。": (
+        "When enabled, a draft must pass deterministic and model review before adoption."
+    ),
     "情节点 / Brief": "Plot beats / Brief",
     "保存章节": "Save chapter",
     "AI 参考内容": "AI context",
@@ -291,6 +296,10 @@ _EN: dict[str, str] = {
     "保存人工修改": "Save manual edits",
     "晋升为已审查": "Approve candidate",
     "一键晋升全部候选": "Approve all candidates",
+    "＋ 加入当前章": "+ Add to current chapter",
+    "✓ 已加入（点击移除）": "✓ Added (click to remove)",
+    "一键加入压缩前文": "Add all compressed history",
+    "当前章人工参考": "Manual context for current chapter",
     "晋升记忆库中的全部待审查候选": (
         "Approve all review candidates in the memory library"
     ),

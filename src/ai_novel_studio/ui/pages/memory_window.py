@@ -19,6 +19,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ai_novel_studio.application.chapter_context_pin_service import (
+    ChapterContextPinService,
+)
 from ai_novel_studio.application.memory_promotion_coordinator import (
     MemoryPromotionCoordinator,
 )
@@ -27,7 +30,7 @@ from ai_novel_studio.application.memory_workspace_service import (
     MemoryWorkspaceRecord,
     MemoryWorkspaceService,
 )
-from ai_novel_studio.domain.memory import ReviewStatus
+from ai_novel_studio.domain.memory import MemoryStatus, ReviewStatus
 from ai_novel_studio.ui.demo_data import WorkspaceDemoData
 from ai_novel_studio.ui.i18n import language_manager
 
@@ -45,6 +48,8 @@ class MemoryWindow(QMainWindow):
         self.field_widgets: dict[str, dict[str, QWidget]] = {}
         self.setting_source_id: str | None = None
         self._promotion_coordinator: MemoryPromotionCoordinator | None = None
+        self._pin_service: ChapterContextPinService | None = None
+        self._pin_chapter_id: str | None = None
 
         self.setWindowTitle("记忆库 · AI Novel Studio")
         self.setMinimumSize(820, 640)
@@ -93,11 +98,27 @@ class MemoryWindow(QMainWindow):
         self.promote_all_button.setAccessibleName("晋升记忆库中的全部待审查候选")
         self.promote_all_button.setEnabled(False)
         self.promote_all_button.clicked.connect(self._promote_all)
+        self.pin_button = QPushButton("＋ 加入当前章", note)
+        self.pin_button.setAccessibleName("将当前记忆加入当前章 AI 参考")
+        self.pin_button.setEnabled(False)
+        self.pin_button.clicked.connect(self._toggle_current_pin)
+        self.pin_summaries_button = QPushButton("一键加入压缩前文", note)
+        self.pin_summaries_button.setAccessibleName("将可用压缩前文加入当前章 AI 参考")
+        self.pin_summaries_button.setEnabled(False)
+        self.pin_summaries_button.clicked.connect(self._pin_compressed_history)
         actions.addWidget(self.save_button)
         actions.addWidget(self.promote_button)
         actions.addWidget(self.promote_all_button)
         actions.addStretch(1)
         note_layout.addLayout(actions)
+        pin_actions = QHBoxLayout()
+        pin_label = QLabel("当前章人工参考", note)
+        pin_label.setObjectName("sectionEyebrow")
+        pin_actions.addWidget(pin_label)
+        pin_actions.addWidget(self.pin_button)
+        pin_actions.addWidget(self.pin_summaries_button)
+        pin_actions.addStretch(1)
+        note_layout.addLayout(pin_actions)
 
         layout.addWidget(title)
         layout.addWidget(self.explanation_label)
@@ -105,7 +126,14 @@ class MemoryWindow(QMainWindow):
         layout.addWidget(note)
         self.setCentralWidget(surface)
 
-    def bind(self, service: MemoryWorkspaceService, before_chapter_id: str) -> None:
+    def bind(
+        self,
+        service: MemoryWorkspaceService,
+        before_chapter_id: str,
+        *,
+        pin_service: ChapterContextPinService | None = None,
+        target_chapter_id: str | None = None,
+    ) -> None:
         if (
             self._promotion_coordinator is not None
             and self._promotion_coordinator.is_running
@@ -124,6 +152,8 @@ class MemoryWindow(QMainWindow):
         for record in snapshot.records:
             grouped[record.category].append(record)
         self._service = service
+        self._pin_service = pin_service
+        self._pin_chapter_id = target_chapter_id
         self._promotion_coordinator = MemoryPromotionCoordinator(service, self)
         self._promotion_coordinator.progress_changed.connect(
             self._bulk_promotion_progress
@@ -146,6 +176,8 @@ class MemoryWindow(QMainWindow):
             self.save_button.setEnabled(False)
             self.promote_button.setEnabled(False)
             self.promote_all_button.setEnabled(False)
+            self.pin_button.setEnabled(False)
+            self.pin_summaries_button.setEnabled(False)
             return
         self.tabs.setCurrentIndex(0)
         self._refresh_current_record()
@@ -269,6 +301,7 @@ class MemoryWindow(QMainWindow):
                 self.save_button.setEnabled(False)
                 self.promote_button.setEnabled(False)
                 self._refresh_bulk_promotion_button()
+                self._refresh_pin_buttons()
             return
         category = self.tabs.tabText(self.tabs.currentIndex())
         editor = self.editors[category]
@@ -305,6 +338,68 @@ class MemoryWindow(QMainWindow):
         self.save_button.setEnabled(record.editable and not locked and not busy)
         self.promote_button.setEnabled(record.promotable and not locked and not busy)
         self._refresh_bulk_promotion_button()
+        self._refresh_pin_buttons()
+
+    def _refresh_pin_buttons(self) -> None:
+        record = self._current_record()
+        service = self._pin_service
+        chapter_id = self._pin_chapter_id
+        if record is None or service is None or not chapter_id:
+            self.pin_button.setEnabled(False)
+            self.pin_summaries_button.setEnabled(False)
+            return
+        pinned = service.is_pinned(chapter_id, record)
+        self.pin_button.setText(
+            "✓ 已加入（点击移除）" if pinned else "＋ 加入当前章"
+        )
+        eligible = (
+            record.review_status in {ReviewStatus.APPROVED, ReviewStatus.LOCKED}
+            and record.status == MemoryStatus.CURRENT
+        )
+        self.pin_button.setEnabled(pinned or eligible)
+        summaries = tuple(
+            item
+            for item in self._records.values()
+            if item.source_type == "SUMMARY"
+            and item.review_status in {ReviewStatus.APPROVED, ReviewStatus.LOCKED}
+            and item.status == MemoryStatus.CURRENT
+        )
+        self.pin_summaries_button.setEnabled(bool(summaries))
+        self.pin_summaries_button.setToolTip(
+            f"当前有 {len(summaries)} 条已审查压缩前文可加入"
+        )
+
+    def _toggle_current_pin(self) -> None:
+        record = self._current_record()
+        service = self._pin_service
+        chapter_id = self._pin_chapter_id
+        if record is None or service is None or not chapter_id:
+            return
+        try:
+            if service.is_pinned(chapter_id, record):
+                service.unpin(chapter_id, record)
+                self.metadata_label.setText(f"已从当前章 AI 参考移除：{record.title}")
+            else:
+                service.pin(chapter_id, record)
+                self.metadata_label.setText(f"已加入当前章 AI 参考：{record.title}")
+        except (KeyError, PermissionError, RuntimeError, ValueError) as error:
+            self.metadata_label.setText(f"加入当前章失败：{error}")
+        self._refresh_pin_buttons()
+
+    def _pin_compressed_history(self) -> None:
+        service = self._pin_service
+        chapter_id = self._pin_chapter_id
+        if service is None or not chapter_id:
+            return
+        pinned = service.pin_compressed_history(
+            chapter_id,
+            tuple(self._records.values()),
+        )
+        self.metadata_label.setText(
+            f"已将 {len(pinned)} 条可用压缩前文加入当前章 AI 参考。"
+            "最终采用情况仍受本次生成的 Token 预算约束。"
+        )
+        self._refresh_pin_buttons()
 
     def _save_current(self) -> None:
         record = self._current_record()

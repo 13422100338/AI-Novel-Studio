@@ -10,6 +10,9 @@ from ai_novel_studio.core.context.history_retriever import HistoryRetriever
 from ai_novel_studio.core.context.style_retriever import StyleRetriever
 from ai_novel_studio.core.memory.narrative_clue_ledger import NarrativeClueLedger
 from ai_novel_studio.domain.memory import Character, KnowledgeSubject
+from ai_novel_studio.infrastructure.storage.chapter_context_pin_repository import (
+    ChapterContextPinRepository,
+)
 from ai_novel_studio.infrastructure.storage.character_memory_repository import (
     CharacterMemoryRepository,
 )
@@ -27,6 +30,7 @@ class GenerationMemoryContextProvider:
     def __init__(self, project: ProjectRepository) -> None:
         self.project = project
         self.characters = CharacterMemoryRepository(project)
+        self.pins = ChapterContextPinRepository(project)
         self.narrative = NarrativeMemoryRepository(project)
         self.styles = StyleRepository(project)
         self.history = HistoryRetriever(SearchRepository(project))
@@ -42,12 +46,31 @@ class GenerationMemoryContextProvider:
         reference_text = "\n".join((requirement, *recent_chapter_texts[:2]))
         participants = self._relevant_characters(reference_text, participant_ids)
         blocks: list[ContextBlock] = []
+        blocks.extend(self._manual_pin_blocks(chapter_id))
         blocks.extend(self._character_blocks(chapter_id, participants))
         blocks.extend(self._clue_blocks(chapter_id))
         blocks.extend(self._style_blocks(chapter_id, participants))
         blocks.extend(self._history_blocks(chapter_id, requirement, participants))
         blocks.extend(self._summary_blocks(chapter_id))
         return tuple(blocks)
+
+    def _manual_pin_blocks(self, chapter_id: str) -> tuple[ContextBlock, ...]:
+        return tuple(
+            ContextBlock(
+                f"manual-pin-{pin.id}",
+                pin.context_category,
+                f"人工固定记忆：{pin.title}\n{pin.content}",
+                5 + min(index, 2),
+                False,
+                f"MANUAL_PIN/{pin.source_type}",
+                pin.source_id,
+                pin.source_chapter_id,
+                pin.source_revision,
+                pin.source_hash,
+                f"人工固定到当前章：{pin.title}",
+            )
+            for index, pin in enumerate(self.pins.list_for_chapter(chapter_id))
+        )
 
     def _relevant_characters(
         self,

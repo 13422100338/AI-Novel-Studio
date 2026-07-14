@@ -21,6 +21,7 @@ EXPECTED_TABLES = {
     "memory_dependencies",
     "memory_documents",
     "context_manifests",
+    "chapter_context_pins",
     "memory_fts",
 }
 

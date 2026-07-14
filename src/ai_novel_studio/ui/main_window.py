@@ -16,6 +16,9 @@ from PySide6.QtWidgets import (
 )
 
 from ai_novel_studio.application.brief_lifecycle_service import BriefValidationError
+from ai_novel_studio.application.chapter_context_pin_service import (
+    ChapterContextPinService,
+)
 from ai_novel_studio.application.character_status_service import CharacterStatusService
 from ai_novel_studio.application.chat_context_service import ChatContextService
 from ai_novel_studio.application.deterministic_audit_service import (
@@ -61,6 +64,9 @@ from ai_novel_studio.infrastructure.llm.contract_runner import LLMContractRunner
 from ai_novel_studio.infrastructure.storage.chapter_brief_repository import (
     ImmutableBriefError,
     StaleBriefError,
+)
+from ai_novel_studio.infrastructure.storage.chapter_context_pin_repository import (
+    ChapterContextPinRepository,
 )
 from ai_novel_studio.infrastructure.storage.character_memory_repository import (
     CharacterMemoryRepository,
@@ -1064,12 +1070,24 @@ class MainWindow(QMainWindow):
             self.memory_window = MemoryWindow(self.data, self)
             self.memory_window.setting_save_requested.connect(self.save_setting_document)
             self.memory_window.setting_analyze_requested.connect(self.analyze_setting_document)
-        if self.project_runtime is not None:
-            self.memory_window.bind(
-                MemoryWorkspaceService(ProjectMemoryWorkspaceGateway(self.project_runtime.project)),
-                "__all__",
-            )
+        self._bind_memory_window()
         self._show_workspace_window(self.memory_window)
+
+    def _bind_memory_window(self) -> None:
+        if self.memory_window is None or self.project_runtime is None:
+            return
+        project = self.project_runtime.project
+        chapter_id = self.current_chapter_id
+        self.memory_window.bind(
+            MemoryWorkspaceService(ProjectMemoryWorkspaceGateway(project)),
+            "__all__",
+            pin_service=(
+                ChapterContextPinService(ChapterContextPinRepository(project))
+                if chapter_id
+                else None
+            ),
+            target_chapter_id=chapter_id,
+        )
 
     def save_setting_document(
         self, title: str, document_type: str, text: str, source_id: object
@@ -1123,13 +1141,7 @@ class MainWindow(QMainWindow):
                 f"整理完成：正典/人物/伏笔候选 {result.created_canon} 条，"
                 f"文风候选 {result.created_style} 条",
             )
-            if self.project_runtime is not None:
-                self.memory_window.bind(
-                    MemoryWorkspaceService(
-                        ProjectMemoryWorkspaceGateway(self.project_runtime.project)
-                    ),
-                    "__all__",
-                )
+            self._bind_memory_window()
 
     def fail_setting_document(self, message: str) -> None:
         if self.memory_window is not None:
@@ -1171,12 +1183,7 @@ class MainWindow(QMainWindow):
             f"索引 {report.indexed_documents} 章{failure_text}。"
         )
         self.refresh_character_sidebar()
-        runtime = self.project_runtime
-        if self.memory_window is not None and runtime is not None:
-            self.memory_window.bind(
-                MemoryWorkspaceService(ProjectMemoryWorkspaceGateway(runtime.project)),
-                "__all__",
-            )
+        self._bind_memory_window()
         snapshot_method = getattr(
             getattr(self.model_runtime, "service", None), "usage_snapshot", None
         )

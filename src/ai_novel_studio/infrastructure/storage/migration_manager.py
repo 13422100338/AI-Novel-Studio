@@ -1,7 +1,7 @@
 import sqlite3
 from collections.abc import Callable
 
-LATEST_SCHEMA_VERSION = 6
+LATEST_SCHEMA_VERSION = 7
 
 
 def _migration_1(connection: sqlite3.Connection) -> None:
@@ -120,7 +120,7 @@ def _migration_2(connection: sqlite3.Connection) -> None:
             id TEXT PRIMARY KEY,
             title TEXT NOT NULL,
             detail TEXT NOT NULL,
-            source_chapter_id TEXT REFERENCES chapters(id),
+            source_chapter_id TEXT REFERENCES chapters(id) ON DELETE SET NULL,
             source_paragraph_id TEXT,
             confidence REAL NOT NULL CHECK(confidence >= 0 AND confidence <= 1),
             authority TEXT NOT NULL,
@@ -591,6 +591,30 @@ def _migration_6(connection: sqlite3.Connection) -> None:
         connection.execute(statement)
 
 
+def _migration_7(connection: sqlite3.Connection) -> None:
+    statements = (
+        """
+        CREATE TABLE chapter_context_pins (
+            id TEXT PRIMARY KEY,
+            chapter_id TEXT NOT NULL REFERENCES chapters(id) ON DELETE CASCADE,
+            source_type TEXT NOT NULL,
+            source_id TEXT NOT NULL,
+            context_category TEXT NOT NULL CHECK(context_category IN ('MEMORY', 'HISTORY')),
+            title TEXT NOT NULL,
+            content TEXT NOT NULL,
+            source_chapter_id TEXT REFERENCES chapters(id),
+            source_revision INTEGER CHECK(source_revision IS NULL OR source_revision >= 0),
+            source_hash TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            UNIQUE(chapter_id, source_type, source_id)
+        )
+        """,
+        "CREATE INDEX chapter_context_pins_chapter ON chapter_context_pins(chapter_id, created_at)",
+    )
+    for statement in statements:
+        connection.execute(statement)
+
+
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     1: _migration_1,
     2: _migration_2,
@@ -598,6 +622,7 @@ MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     4: _migration_4,
     5: _migration_5,
     6: _migration_6,
+    7: _migration_7,
 }
 
 

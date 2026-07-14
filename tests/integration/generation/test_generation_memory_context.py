@@ -1,8 +1,14 @@
 from pathlib import Path
 
+from ai_novel_studio.application.chapter_context_pin_service import (
+    ChapterContextPinService,
+)
 from ai_novel_studio.application.generation_context_service import (
     GenerationContextService,
     GenerationPreparationRequest,
+)
+from ai_novel_studio.application.project_memory_workspace_gateway import (
+    ProjectMemoryWorkspaceGateway,
 )
 from ai_novel_studio.core.context.context_manifest import ContextManifestRepository
 from ai_novel_studio.domain.generation import CreationMode
@@ -10,6 +16,9 @@ from ai_novel_studio.domain.memory import Authority, ReviewStatus, SourceType, S
 from ai_novel_studio.infrastructure.llm import ModelCapabilities
 from ai_novel_studio.infrastructure.storage.chapter_brief_repository import (
     ChapterBriefRepository,
+)
+from ai_novel_studio.infrastructure.storage.chapter_context_pin_repository import (
+    ChapterContextPinRepository,
 )
 from ai_novel_studio.infrastructure.storage.chapter_repository import ChapterRepository
 from ai_novel_studio.infrastructure.storage.chapter_requirement_repository import (
@@ -55,13 +64,21 @@ def test_basic_generation_includes_relevant_state_and_compressed_history(
         source_type=SourceType.HUMAN,
         review_status=ReviewStatus.APPROVED,
     )
-    SummaryRepository(project).add_human_summary(
+    summary = SummaryRepository(project).add_human_summary(
         SummaryLevel.CHAPTER,
         first.id,
         "Eric found a sealed map and chose to hide it.",
         (first.id,),
         authority=Authority.USER_CONFIRMED,
         review_status=ReviewStatus.APPROVED,
+    )
+    summary_record = next(
+        record
+        for record in ProjectMemoryWorkspaceGateway(project).load_before("__all__")
+        if record.id == summary.id
+    )
+    ChapterContextPinService(ChapterContextPinRepository(project)).pin(
+        current.id, summary_record
     )
 
     service = GenerationContextService(
@@ -91,5 +108,7 @@ def test_basic_generation_includes_relevant_state_and_compressed_history(
     selected_types = {item.source_type for item in prepared.manifest.selected}
     assert "CHARACTER_STATE" in selected_types
     assert "SUMMARY" in selected_types
+    assert "MANUAL_PIN/SUMMARY" in selected_types
     assert "Protect the map" in prepared.messages[5].content
     assert "Eric found a sealed map" in prepared.messages[6].content
+    assert "人工固定记忆" in prepared.messages[6].content

@@ -3,6 +3,7 @@ from __future__ import annotations
 from PySide6.QtCore import QTimer, Signal
 from PySide6.QtGui import QTextCursor
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QFrame,
     QHBoxLayout,
@@ -48,10 +49,14 @@ class ManuscriptPanel(QFrame):
 
         self.mode_combo = QComboBox(self)
         self.mode_combo.addItem("快速", CreationMode.BASIC.value)
-        self.mode_combo.addItem("标准", CreationMode.STANDARD.value)
-        self.mode_combo.addItem("严格", CreationMode.STRICT.value)
+        self.mode_combo.addItem("普通", CreationMode.STANDARD.value)
         self.mode_combo.setCurrentIndex(1)
         self.mode_combo.setAccessibleName("创作档位")
+        self.pre_accept_audit = QCheckBox("采用前强制审校", self)
+        self.pre_accept_audit.setAccessibleName("普通模式采用前强制审校")
+        self.pre_accept_audit.setToolTip(
+            "开启后，草稿必须通过确定性检查和模型语义审校才能采用。"
+        )
 
         self.target_words = self._spin_box(500, 50000, 3500, "目标字数")
         self.output_token_limit = self._spin_box(256, 200000, 8000, "输出 Token 上限")
@@ -62,6 +67,7 @@ class ManuscriptPanel(QFrame):
         title_row.addWidget(self.chapter_title, 1)
         title_row.addWidget(QLabel("档位", self))
         title_row.addWidget(self.mode_combo)
+        title_row.addWidget(self.pre_accept_audit)
 
         settings_row = QHBoxLayout()
         settings_row.addWidget(QLabel("目标字数", self))
@@ -191,6 +197,7 @@ class ManuscriptPanel(QFrame):
 
         self.font_size.valueChanged.connect(self._set_editor_font_size)
         self.mode_combo.currentIndexChanged.connect(self._refresh_generation_controls)
+        self.pre_accept_audit.toggled.connect(self._refresh_generation_controls)
         self._word_count_timer = QTimer(self)
         self._word_count_timer.setSingleShot(True)
         self._word_count_timer.setInterval(250)
@@ -295,19 +302,29 @@ class ManuscriptPanel(QFrame):
         self._refresh_generation_controls()
 
     def set_creation_mode(self, mode: CreationMode) -> None:
+        if mode == CreationMode.STRICT:
+            self.set_creation_mode(CreationMode.STANDARD)
+            self.pre_accept_audit.setChecked(True)
+            return
         for index in range(self.mode_combo.count()):
             if self.mode_combo.itemData(index) == mode.value:
                 self.mode_combo.setCurrentIndex(index)
+                if mode in {CreationMode.BASIC, CreationMode.STANDARD}:
+                    self.pre_accept_audit.setChecked(False)
                 return
         raise ValueError(f"unknown creation mode: {mode}")
 
     def current_creation_mode(self) -> CreationMode:
         data = self.mode_combo.currentData()
         if isinstance(data, CreationMode):
-            return data
-        if isinstance(data, str):
-            return CreationMode(data)
-        return CreationMode.STANDARD
+            mode = data
+        elif isinstance(data, str):
+            mode = CreationMode(data)
+        else:
+            mode = CreationMode.STANDARD
+        if mode == CreationMode.STANDARD and self.pre_accept_audit.isChecked():
+            return CreationMode.STRICT
+        return mode
 
     def begin_generation_draft(self) -> None:
         if not self._draft_preview_active:
@@ -435,15 +452,16 @@ class ManuscriptPanel(QFrame):
         self._enable_draft_decision_buttons()
 
     def _refresh_generation_controls(self) -> None:
+        mode = self.current_creation_mode()
+        self.pre_accept_audit.setEnabled(mode != CreationMode.BASIC)
         if not self._phase5_generation_enabled:
             self.generate_button.setEnabled(False)
             self.generate_button.setToolTip("阶段 5：正文生成管线接入后可用")
             return
-        mode = self.current_creation_mode()
         needs_brief = mode in {CreationMode.STANDARD, CreationMode.STRICT}
         if needs_brief and not self._frozen_brief_available:
             self.generate_button.setEnabled(False)
-            self.generate_button.setToolTip("标准/严格模式需要先冻结当前章 Brief")
+            self.generate_button.setToolTip("普通模式需要先冻结当前章 Brief")
             return
         if self.cancel_generation_button.isEnabled():
             self.generate_button.setEnabled(False)

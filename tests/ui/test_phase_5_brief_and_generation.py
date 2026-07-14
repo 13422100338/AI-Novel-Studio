@@ -69,6 +69,8 @@ def test_generation_controls_follow_mode_and_brief_state(qtbot: QtBot) -> None:
     qtbot.addWidget(panel)
 
     panel.set_phase5_generation_enabled(True, frozen_brief_available=False)
+    assert panel.mode_combo.count() == 2
+    assert [panel.mode_combo.itemText(index) for index in range(2)] == ["快速", "普通"]
 
     panel.set_creation_mode(CreationMode.BASIC)
     assert panel.generate_button.isEnabled() is True
@@ -79,6 +81,14 @@ def test_generation_controls_follow_mode_and_brief_state(qtbot: QtBot) -> None:
     assert panel.generate_button.isEnabled() is True
     panel.set_creation_mode(CreationMode.STRICT)
     assert panel.generate_button.isEnabled() is True
+    assert panel.mode_combo.currentText() == "普通"
+    assert panel.pre_accept_audit.isChecked()
+    assert panel.current_creation_mode() == CreationMode.STRICT
+    panel.set_creation_mode(CreationMode.STANDARD)
+    assert not panel.pre_accept_audit.isChecked()
+    assert panel.current_creation_mode() == CreationMode.STANDARD
+    panel.set_creation_mode(CreationMode.BASIC)
+    assert not panel.pre_accept_audit.isChecked()
 
 
 def test_generation_request_emits_mode_token_limit_and_target_words(

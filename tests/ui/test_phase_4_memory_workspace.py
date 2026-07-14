@@ -7,12 +7,29 @@ from PySide6.QtWidgets import QMessageBox
 from pytest import MonkeyPatch
 from pytestqt.qtbot import QtBot
 
+from ai_novel_studio.application.chapter_context_pin_service import (
+    ChapterContextPinService,
+)
 from ai_novel_studio.application.memory_workspace_service import (
     MemoryWorkspaceField,
     MemoryWorkspaceRecord,
     MemoryWorkspaceService,
 )
-from ai_novel_studio.domain.memory import Authority, MemoryStatus, ReviewStatus
+from ai_novel_studio.application.project_memory_workspace_gateway import (
+    ProjectMemoryWorkspaceGateway,
+)
+from ai_novel_studio.domain.memory import (
+    Authority,
+    MemoryStatus,
+    ReviewStatus,
+    SummaryLevel,
+)
+from ai_novel_studio.infrastructure.storage.chapter_context_pin_repository import (
+    ChapterContextPinRepository,
+)
+from ai_novel_studio.infrastructure.storage.chapter_repository import ChapterRepository
+from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
+from ai_novel_studio.infrastructure.storage.summary_repository import SummaryRepository
 from ai_novel_studio.ui.demo_data import WorkspaceDemoData
 from ai_novel_studio.ui.pages.memory_window import MemoryWindow
 
@@ -146,6 +163,40 @@ def test_memory_window_binds_metadata_edit_and_explicit_promotion(qtbot: QtBot) 
     assert gateway.promote_count == 1
     assert "APPROVED" in window.metadata_label.text()
     assert window.promote_button.isEnabled() is False
+
+
+def test_memory_window_can_add_and_remove_reviewed_memory_for_current_chapter(
+    qtbot: QtBot, tmp_path
+) -> None:  # type: ignore[no-untyped-def]
+    project = ProjectRepository.create(tmp_path / "novel", "Novel")
+    volume = project.list_volumes()[0]
+    chapters = ChapterRepository(project)
+    first = chapters.create_chapter(volume.id, "Opening", "1", "body")
+    target = chapters.create_chapter(volume.id, "Target", "2")
+    SummaryRepository(project).add_human_summary(
+        SummaryLevel.CHAPTER,
+        first.id,
+        "Reviewed summary",
+        (first.id,),
+        authority=Authority.USER_CONFIRMED,
+        review_status=ReviewStatus.APPROVED,
+    )
+    window = MemoryWindow(WorkspaceDemoData.sample())
+    qtbot.addWidget(window)
+    window.bind(
+        MemoryWorkspaceService(ProjectMemoryWorkspaceGateway(project)),
+        "__all__",
+        pin_service=ChapterContextPinService(ChapterContextPinRepository(project)),
+        target_chapter_id=target.id,
+    )
+
+    qtbot.mouseClick(window.pin_button, Qt.MouseButton.LeftButton)
+    assert "已加入" in window.pin_button.text()
+    assert "已加入当前章" in window.metadata_label.text()
+
+    qtbot.mouseClick(window.pin_button, Qt.MouseButton.LeftButton)
+    assert window.pin_button.text().startswith("＋")
+    assert "移除" in window.metadata_label.text()
 
 
 def test_memory_window_saves_structured_character_fields(qtbot: QtBot) -> None:
