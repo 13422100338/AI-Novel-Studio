@@ -3,6 +3,9 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass, replace
 
+from ai_novel_studio.application.generation_memory_context_provider import (
+    GenerationMemoryContextProvider,
+)
 from ai_novel_studio.core.context.context_builder import (
     ContextBlock,
     ContextBuilder,
@@ -18,6 +21,7 @@ from ai_novel_studio.core.context.prose_prompt import (
     system_prompt_blocks,
 )
 from ai_novel_studio.core.context.token_budget import TokenBudget
+from ai_novel_studio.domain.chapter import Chapter
 from ai_novel_studio.domain.generation import (
     BriefStatus,
     ChapterBrief,
@@ -95,6 +99,7 @@ class GenerationContextService:
         self.runs = runs
         self.manifests = manifests
         self.builder = builder or ContextBuilder()
+        self.memory_context = GenerationMemoryContextProvider(project)
 
     def prepare(self, request: GenerationPreparationRequest) -> PreparedGeneration:
         requirement = self.requirements.get(request.chapter_id)
@@ -256,10 +261,21 @@ class GenerationContextService:
                 )
 
         previous = self.chapters.list_before(request.chapter_id)
-        for distance, chapter in enumerate(reversed(previous), start=1):
+        recent_contents: list[tuple[Chapter, str]] = []
+        for chapter in tuple(reversed(previous))[:3]:
             content = self.chapters.read_content(chapter.id)
             if not content.strip():
                 continue
+            recent_contents.append((chapter, content))
+        blocks.extend(
+            self.memory_context.blocks(
+                request.chapter_id,
+                requirement.content,
+                tuple(content for _chapter, content in recent_contents),
+                brief.participants if brief is not None else (),
+            )
+        )
+        for distance, (chapter, content) in enumerate(recent_contents, start=1):
             fallback = chapter.synopsis.strip() or None
             blocks.append(
                 ContextBlock(
@@ -273,7 +289,7 @@ class GenerationContextService:
                     chapter.id,
                     chapter.revision,
                     _hash(content),
-                    f"当前章之前第 {distance} 近的章节全文",
+                    f"近期第 {distance} 章全文：{chapter.title}",
                     fallback_content=(
                         f"《{chapter.title}》摘要\n{fallback}" if fallback is not None else None
                     ),

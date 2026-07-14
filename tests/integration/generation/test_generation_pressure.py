@@ -122,7 +122,10 @@ def test_phase_5_pipeline_handles_hundred_chapter_pressure_recovery_and_acceptan
     assert prepared.run.status == GenerationStatus.READY
     assert prepared.manifest.run_id == prepared.run.id
     assert prepared.manifest.selected
-    assert prepared.manifest.omitted
+    recent_full = tuple(
+        item for item in prepared.manifest.selected if item.category == "RECENT_FULL"
+    )
+    assert 1 <= len(recent_full) <= 3
     assert prepared.run.output_token_limit == 48_000
 
     chunks = ("A" * 20, "B" * 20, "C" * 20, "D" * 20, "E" * 20, "F" * 20)

@@ -566,6 +566,11 @@ def test_ai_reference_window_shows_latest_context_manifest(
     assert window.reference_window.table.item(0, 0).text() == "采用"
     assert window.reference_window.table.item(0, 3).text() == "上一章全文"
     assert window.reference_window.table.item(1, 0).text() == "省略"
+    window.reference_window.table.setCurrentCell(0, 0)
+    assert "完整来源：CHAPTER / chapter-source" in (
+        window.reference_window.detail.toPlainText()
+    )
+    assert "选择理由：上一章全文" in window.reference_window.detail.toPlainText()
 
 
 def test_changed_requirement_reports_brief_error_and_can_recompile(

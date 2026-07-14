@@ -18,6 +18,7 @@ class PlotMemorySelection:
     approved_count: int
     review_count: int
     estimated_tokens: int
+    summaries: tuple[SummaryNode, ...] = ()
 
 
 class PlotMemoryContextService:
@@ -47,7 +48,7 @@ class PlotMemoryContextService:
         chosen: list[tuple[SummaryNode, str]] = []
         used = 0
         for summary in reversed(ordered):
-            rendered = self._render(summary)
+            rendered = self.render(summary)
             cost = self.estimator.estimate(rendered)
             if chosen and used + cost > token_budget:
                 continue
@@ -58,7 +59,7 @@ class PlotMemoryContextService:
             used += cost
         chosen.reverse()
         if not chosen:
-            return PlotMemorySelection(None, 0, 0, 0)
+            return PlotMemorySelection(None, 0, 0, 0, ())
         content = (
             "以下是当前章之前的小说前文记忆。标记为【已审查】的内容可作为可信剧情依据；"
             "标记为【待审查】的内容只是模型候选，可能遗漏或出错，不得当作正典。\n\n"
@@ -73,6 +74,7 @@ class PlotMemoryContextService:
             approved,
             len(chosen) - approved,
             self.estimator.estimate(content),
+            tuple(item for item, _rendered in chosen),
         )
 
     @staticmethod
@@ -108,7 +110,7 @@ class PlotMemoryContextService:
         return (int(row[0]), int(row[1]), summary.id) if row else (-1, -1, summary.id)
 
     @staticmethod
-    def _render(summary: SummaryNode) -> str:
+    def render(summary: SummaryNode) -> str:
         label = (
             "已审查"
             if summary.review_status in {ReviewStatus.APPROVED, ReviewStatus.LOCKED}

@@ -53,6 +53,10 @@ def test_plot_memory_prefers_reviewed_summary_and_labels_unreviewed_fallback(
     assert "不得当作正典" in selection.message.content
     assert selection.approved_count == 1
     assert selection.review_count == 1
+    assert tuple(item.content for item in selection.summaries) == (
+        "第一章已确认剧情",
+        "第二章尚未审查剧情",
+    )
 
 
 def test_plot_memory_excludes_current_and_later_chapters(tmp_path: Path) -> None:
