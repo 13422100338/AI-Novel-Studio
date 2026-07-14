@@ -77,6 +77,33 @@ def test_character_state_is_append_only_and_excludes_current_future_events(tmp_p
     assert repository.get_character(character.id).aliases == ("阿岚",)
 
 
+def test_character_states_can_be_loaded_in_one_batch(tmp_path: Path) -> None:
+    project, chapters = _project_with_three_chapters(tmp_path)
+    repository = CharacterMemoryRepository(project)
+    first = repository.create_character("林岚")
+    second = repository.create_character("苏澄")
+    for character, goal in ((first, "检查来信"), (second, "守住码头")):
+        repository.append_state(
+            character.id,
+            chapters[0].id,
+            motivation="推进调查",
+            psychology="警惕",
+            current_goal=goal,
+            relationships="仍在观察",
+            recent_activity="返回旧港",
+            confidence=1,
+            source_type=SourceType.HUMAN,
+            review_status=ReviewStatus.APPROVED,
+        )
+
+    states = repository.state_candidates_before_many(
+        (first.id, second.id), chapters[1].id
+    )
+
+    assert states[first.id][0].current_goal == "检查来信"
+    assert states[second.id][0].current_goal == "守住码头"
+
+
 def test_character_and_reader_knowledge_are_separate_and_time_bounded(tmp_path: Path) -> None:
     project, chapters = _project_with_three_chapters(tmp_path)
     repository = CharacterMemoryRepository(project)
@@ -153,4 +180,3 @@ def test_timeline_reports_same_boundary_conflicts_instead_of_guessing(tmp_path: 
 
     assert snapshot.state is None
     assert {event.psychology for event in snapshot.conflicting_states} == {"冷静", "恐慌"}
-

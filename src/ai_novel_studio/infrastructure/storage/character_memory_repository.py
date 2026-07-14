@@ -177,6 +177,55 @@ class CharacterMemoryRepository:
             if (row["volume_order"], row["chapter_order"]) == latest_position
         )
 
+    def state_candidates_before_many(
+        self,
+        character_ids: tuple[str, ...],
+        chapter_id: str,
+        *,
+        inclusive: bool = False,
+    ) -> dict[str, tuple[CharacterStateEvent, ...]]:
+        unique_ids = tuple(dict.fromkeys(value for value in character_ids if value))
+        if not unique_ids:
+            return {}
+        comparison = "<=" if inclusive else "<"
+        placeholders = ", ".join("?" for _ in unique_ids)
+        with self.project.database.connect() as connection:
+            target = connection.execute(
+                "SELECT 1 FROM chapters WHERE id = ?", (chapter_id,)
+            ).fetchone()
+            if target is None:
+                raise KeyError(f"unknown chapter: {chapter_id}")
+            rows = connection.execute(
+                f"""
+                WITH target AS (
+                    SELECT v.sort_index AS volume_order, c.sort_index AS chapter_order
+                    FROM chapters c JOIN volumes v ON v.id = c.volume_id WHERE c.id = ?
+                )
+                SELECT e.*, v.sort_index AS volume_order, c.sort_index AS chapter_order
+                FROM character_state_events e
+                JOIN chapters c ON c.id = e.chapter_id
+                JOIN volumes v ON v.id = c.volume_id
+                CROSS JOIN target t
+                WHERE e.character_id IN ({placeholders})
+                  AND e.review_status IN ('APPROVED', 'LOCKED')
+                  AND ((v.sort_index < t.volume_order) OR
+                       (v.sort_index = t.volume_order AND
+                        c.sort_index {comparison} t.chapter_order))
+                ORDER BY e.character_id, v.sort_index DESC, c.sort_index DESC,
+                         e.created_at DESC, e.id
+                """,
+                (chapter_id, *unique_ids),
+            ).fetchall()
+        latest_positions: dict[str, tuple[int, int]] = {}
+        grouped: dict[str, list[CharacterStateEvent]] = {}
+        for row in rows:
+            character_id = str(row["character_id"])
+            position = (int(row["volume_order"]), int(row["chapter_order"]))
+            latest = latest_positions.setdefault(character_id, position)
+            if position == latest:
+                grouped.setdefault(character_id, []).append(self._state(row))
+        return {character_id: tuple(events) for character_id, events in grouped.items()}
+
     def state_before(
         self,
         character_id: str,

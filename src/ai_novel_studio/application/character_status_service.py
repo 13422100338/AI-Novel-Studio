@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from ai_novel_studio.domain.memory import ReviewStatus, SourceType
 from ai_novel_studio.infrastructure.storage.character_memory_repository import (
     CharacterMemoryRepository,
+    MemoryConflictError,
 )
 
 
@@ -25,13 +26,18 @@ class CharacterStatusService:
         self.repository = repository
 
     def list_for_chapter(self, chapter_id: str) -> tuple[CharacterStatusRecord, ...]:
+        characters = self.repository.list_characters()
+        states_by_character = self.repository.state_candidates_before_many(
+            tuple(character.id for character in characters),
+            chapter_id,
+            inclusive=True,
+        )
         records: list[CharacterStatusRecord] = []
-        for character in self.repository.list_characters():
-            state = self.repository.state_before(
-                character.id,
-                chapter_id,
-                inclusive=True,
-            )
+        for character in characters:
+            candidates = states_by_character.get(character.id, ())
+            if len(candidates) > 1:
+                raise MemoryConflictError("同一时间边界存在多个人物状态")
+            state = candidates[0] if candidates else None
             records.append(
                 CharacterStatusRecord(
                     id=character.id,
