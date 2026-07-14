@@ -4,9 +4,11 @@ from pathlib import Path
 import pytest
 
 from ai_novel_studio.application.generation_context_service import (
+    BASIC_UNKNOWN_CONTEXT_INPUT_LIMIT,
     GenerationContextService,
     GenerationPreparationRequest,
     StandardModeBriefError,
+    UnknownContextWindowError,
 )
 from ai_novel_studio.core.brief.source_fingerprint import BriefSourceSnapshot
 from ai_novel_studio.core.context.context_builder import RequiredContextOverflowError
@@ -124,6 +126,40 @@ def test_basic_preparation_preserves_output_limit_and_links_manifest(
     assert prepared.run.context_manifest_id == prepared.manifest.id
     assert prepared.manifest.run_id == prepared.run.id
     assert workspace["manifests"].load(prepared.manifest.id) == prepared.manifest
+
+
+def test_basic_mode_uses_conservative_input_budget_when_context_window_is_unknown(
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    unknown_capabilities = ModelCapabilities(max_output_tokens=None)
+
+    prepared = workspace["service"].prepare(
+        _request(
+            workspace,
+            output_token_limit=8_000,
+            model_capabilities=unknown_capabilities,
+        )
+    )
+
+    assert prepared.run.status == GenerationStatus.READY
+    assert prepared.run.output_token_limit == 8_000
+    assert prepared.manifest.input_token_limit == BASIC_UNKNOWN_CONTEXT_INPUT_LIMIT
+    assert prepared.manifest.warnings == (
+        "模型未报告上下文窗口；快速模式仅使用保守的 "
+        f"{BASIC_UNKNOWN_CONTEXT_INPUT_LIMIT} Token 输入预算",
+    )
+
+    with pytest.raises(UnknownContextWindowError, match="上下文窗口未知"):
+        workspace["service"].prepare(
+            _request(
+                workspace,
+                mode=CreationMode.STANDARD,
+                brief_id=workspace["brief"].id,
+                output_token_limit=8_000,
+                model_capabilities=unknown_capabilities,
+            )
+        )
 
 
 def test_standard_and_strict_require_current_frozen_brief(

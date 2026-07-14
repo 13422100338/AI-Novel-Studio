@@ -45,6 +45,9 @@ class UnknownContextWindowError(ValueError):
     pass
 
 
+BASIC_UNKNOWN_CONTEXT_INPUT_LIMIT = 4_096
+
+
 @dataclass(frozen=True, slots=True)
 class GenerationPreparationRequest:
     chapter_id: str
@@ -99,8 +102,19 @@ class GenerationContextService:
             raise ValueError("当前章要求不能为空")
         brief = self._validated_brief(request)
         context_window = request.model_capabilities.context_window
+        context_warning: str | None = None
         if context_window is None:
-            raise UnknownContextWindowError("模型上下文窗口未知，无法安全准备生成")
+            if request.mode != CreationMode.BASIC:
+                raise UnknownContextWindowError("模型上下文窗口未知，无法安全准备生成")
+            context_window = (
+                request.output_token_limit
+                + request.safety_margin
+                + BASIC_UNKNOWN_CONTEXT_INPUT_LIMIT
+            )
+            context_warning = (
+                "模型未报告上下文窗口；快速模式仅使用保守的 "
+                f"{BASIC_UNKNOWN_CONTEXT_INPUT_LIMIT} Token 输入预算"
+            )
         budget = TokenBudget(
             context_window,
             request.output_token_limit,
@@ -123,15 +137,21 @@ class GenerationContextService:
             built = self.builder.build(
                 ContextBuildRequest(request.chapter_id, run.id, budget, blocks)
             )
-            self.manifests.save(built.manifest)
-            selected = self._selected_blocks(blocks, built.manifest)
+            manifest = built.manifest
+            if context_warning is not None:
+                manifest = replace(
+                    manifest,
+                    warnings=manifest.warnings + (context_warning,),
+                )
+            self.manifests.save(manifest)
+            selected = self._selected_blocks(blocks, manifest)
             messages = build_prose_messages(requirement, brief, selected)
-            ready = self.runs.mark_ready(run.id, built.manifest.id)
+            ready = self.runs.mark_ready(run.id, manifest.id)
         except BaseException as error:
             self.runs.fail_preparation(run.id, type(error).__name__, str(error))
             raise
 
-        return PreparedGeneration(ready, built.manifest, selected, messages)
+        return PreparedGeneration(ready, manifest, selected, messages)
 
     def _validated_brief(
         self, request: GenerationPreparationRequest
