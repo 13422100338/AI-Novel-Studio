@@ -5,6 +5,8 @@ from pytestqt.qtbot import QtBot
 from ai_novel_studio.application.manuscript_memory_build_service import (
     ManuscriptMemoryBuildFailure,
     ManuscriptMemoryBuildReport,
+    MemoryBuildProgress,
+    MemoryBuildProgressPhase,
 )
 from ai_novel_studio.application.model_tasks import StyleAuditFinding, StyleAuditResult
 from ai_novel_studio.application.project_runtime import ProjectRuntime
@@ -179,6 +181,29 @@ def test_memory_build_failure_status_names_the_retryable_chapter(qtbot: QtBot) -
     status = window.manuscript_panel.pipeline_status_label.text()
     assert "Problem Chapter" in status
     assert "人物成长" in status
+
+
+def test_memory_build_status_distinguishes_scanning_model_calls_and_pending_count(
+    qtbot: QtBot,
+) -> None:
+    window = MainWindow(model_runtime=UiModelRuntime(Path.cwd()))
+    qtbot.addWidget(window)
+
+    window.update_memory_build_progress(
+        MemoryBuildProgress(MemoryBuildProgressPhase.SCANNING, 2, 10, "Second")
+    )
+    assert "正在扫描章节 2/10" in window.manuscript_panel.pipeline_status_label.text()
+    assert "调用模型" not in window.manuscript_panel.pipeline_status_label.text()
+
+    window.update_memory_build_progress(
+        MemoryBuildProgress(MemoryBuildProgressPhase.MODEL_CALL, 2, 10, "Second")
+    )
+    assert "正在调用模型 2/10" in window.manuscript_panel.pipeline_status_label.text()
+
+    window.finish_project_memory(
+        ManuscriptMemoryBuildReport(10, 0, 9, 10, pending_upgrade_summaries=1)
+    )
+    assert "待模型升级 1 条" in window.manuscript_panel.pipeline_status_label.text()
 
 
 def test_main_window_opens_real_project_and_loads_chapter(qtbot: QtBot, tmp_path: Path) -> None:

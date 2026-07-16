@@ -4,6 +4,8 @@ from pytestqt.qtbot import QtBot
 
 from ai_novel_studio.application.manuscript_memory_build_service import (
     ManuscriptMemoryBuildReport,
+    MemoryBuildProgress,
+    MemoryBuildProgressPhase,
 )
 from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
 from ai_novel_studio.ui.qt.memory_build_coordinator import MemoryBuildCoordinator
@@ -13,7 +15,7 @@ class FakeBuildService:
     def build_all(self, project, *, progress=None, should_cancel=None):  # type: ignore[no-untyped-def]
         assert project is not None
         assert progress is not None
-        progress(1, 1, "第一章")
+        progress(MemoryBuildProgress(MemoryBuildProgressPhase.SCANNING, 1, 1, "第一章"))
         return ManuscriptMemoryBuildReport(1, 1, 0, 1)
 
 
@@ -22,16 +24,16 @@ def test_memory_build_runs_outside_ui_and_emits_progress(
 ) -> None:
     project = ProjectRepository.create(tmp_path / "novel", "Novel")
     coordinator = MemoryBuildCoordinator(FakeBuildService())  # type: ignore[arg-type]
-    progress: list[tuple[int, int, str]] = []
+    progress: list[MemoryBuildProgress] = []
     reports: list[ManuscriptMemoryBuildReport] = []
-    coordinator.progress_changed.connect(
-        lambda done, total, title: progress.append((done, total, title))
-    )
+    coordinator.progress_changed.connect(progress.append)
     coordinator.completed.connect(reports.append)
 
     coordinator.start(project)
 
     qtbot.waitUntil(lambda: bool(reports), timeout=3_000)
-    assert progress == [(1, 1, "第一章")]
+    assert progress == [
+        MemoryBuildProgress(MemoryBuildProgressPhase.SCANNING, 1, 1, "第一章")
+    ]
     assert reports[0].processed_chapters == 1
     assert coordinator.is_running is False

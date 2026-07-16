@@ -532,24 +532,31 @@ class ProjectMemoryWorkspaceGateway:
         connection.execute(statements[table], (record_id,))
 
     def _summary_record(self, summary: SummaryNode) -> MemoryWorkspaceRecord:
-        fallback = (
-            summary.model_profile_id in {
-                "local-import-baseline",
-                MODEL_RETRY_PROFILE_ID,
-            }
+        fallback_profile = summary.model_profile_id in {
+            "local-import-baseline",
+            MODEL_RETRY_PROFILE_ID,
+        }
+        historical_fallback = fallback_profile and summary.status == MemoryStatus.STALE
+        pending_fallback = (
+            fallback_profile
             and summary.authority == Authority.MODEL_EXTRACTED
             and summary.review_status == ReviewStatus.REVIEW
+            and summary.status == MemoryStatus.REVIEW
         )
+        title = self._summary_title(summary)
+        source_type = "SUMMARY"
+        if historical_fallback:
+            title = title.replace("章节摘要", "章节摘要（历史版本）")
+            source_type = "SUMMARY_HISTORY"
+        elif pending_fallback:
+            title = title.replace("章节摘要", "章节摘要（待模型升级）")
+            source_type = "SUMMARY_FALLBACK"
         return MemoryWorkspaceRecord(
             id=summary.id,
             category="压缩前文",
-            title=(
-                self._summary_title(summary).replace("章节摘要", "章节摘要（待模型升级）")
-                if fallback
-                else self._summary_title(summary)
-            ),
+            title=title,
             content=summary.content,
-            source_type="SUMMARY_FALLBACK" if fallback else "SUMMARY",
+            source_type=source_type,
             source_chapter_id=summary.source_chapter_ids[0] if summary.source_chapter_ids else None,
             source_revision=summary.source_revisions[0][1] if summary.source_revisions else None,
             source_hash=summary.content_hash,
@@ -557,8 +564,12 @@ class ProjectMemoryWorkspaceGateway:
             review_status=summary.review_status,
             status=summary.status,
             revision=summary.revision,
-            editable=True,
-            promotable=summary.review_status == ReviewStatus.REVIEW and not fallback,
+            editable=not historical_fallback,
+            promotable=(
+                summary.review_status == ReviewStatus.REVIEW
+                and not pending_fallback
+                and not historical_fallback
+            ),
         )
 
     def _summary_title(self, summary: SummaryNode) -> str:

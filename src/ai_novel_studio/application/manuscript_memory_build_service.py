@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import Protocol
 
 from ai_novel_studio.application.memory_analysis_service import (
     CharacterStateCandidate,
     MemoryCandidateBundle,
 )
+from ai_novel_studio.domain.chapter import Chapter
 from ai_novel_studio.domain.memory import (
     Authority,
     Character,
@@ -38,6 +40,25 @@ class MemoryAnalyzer(Protocol):
     ) -> MemoryCandidateBundle: ...
 
 
+class MemoryBuildProgressPhase(StrEnum):
+    SCANNING = "SCANNING"
+    MODEL_CALL = "MODEL_CALL"
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryBuildProgress:
+    phase: MemoryBuildProgressPhase
+    current: int
+    total: int
+    chapter_title: str
+
+    def __post_init__(self) -> None:
+        if self.current < 1 or self.total < 1 or self.current > self.total:
+            raise ValueError("记忆整理进度必须位于有效章节范围内")
+        if not self.chapter_title.strip():
+            raise ValueError("记忆整理进度必须包含章节标题")
+
+
 @dataclass(frozen=True, slots=True)
 class ManuscriptMemoryBuildFailure:
     chapter_id: str
@@ -54,6 +75,7 @@ class ManuscriptMemoryBuildReport:
     created_character_states: int = 0
     fallback_summaries: int = 0
     upgraded_summaries: int = 0
+    pending_upgrade_summaries: int = 0
     created_canon: int = 0
     created_clues: int = 0
     created_knowledge: int = 0
@@ -75,7 +97,7 @@ class ManuscriptMemoryBuildService:
         self,
         project: ProjectRepository,
         *,
-        progress: Callable[[int, int, str], None] | None = None,
+        progress: Callable[[MemoryBuildProgress], None] | None = None,
         should_cancel: Callable[[], bool] | None = None,
     ) -> ManuscriptMemoryBuildReport:
         chapters = ChapterRepository(project)
@@ -107,6 +129,16 @@ class ManuscriptMemoryBuildService:
             if should_cancel is not None and should_cancel():
                 cancelled = True
                 break
+            current = processed + 1
+            if progress is not None:
+                progress(
+                    MemoryBuildProgress(
+                        MemoryBuildProgressPhase.SCANNING,
+                        current,
+                        total,
+                        chapter.title,
+                    )
+                )
             content = chapters.read_content(chapter.id)
             processed += 1
             if content.strip():
@@ -117,6 +149,15 @@ class ManuscriptMemoryBuildService:
                 if current_summaries and fallback is None:
                     skipped += 1
                 else:
+                    if progress is not None and self.analyzer is not None:
+                        progress(
+                            MemoryBuildProgress(
+                                MemoryBuildProgressPhase.MODEL_CALL,
+                                current,
+                                total,
+                                chapter.title,
+                            )
+                        )
                     bundle, error = self._extract_model_bundle(
                         chapter.id, chapter.revision, content
                     )
@@ -180,8 +221,9 @@ class ManuscriptMemoryBuildService:
                             created_clues += ledger_counts[1]
                             created_knowledge += ledger_counts[2]
                             created_style_rules += ledger_counts[3]
-            if progress is not None:
-                progress(processed, total, chapter.title)
+        pending_upgrade_summaries = self._pending_upgrade_count(
+            summaries, chapter_rows
+        )
 
         return ManuscriptMemoryBuildReport(
             processed_chapters=processed,
@@ -191,6 +233,7 @@ class ManuscriptMemoryBuildService:
             created_character_states=created_character_states,
             fallback_summaries=fallback_summaries,
             upgraded_summaries=upgraded_summaries,
+            pending_upgrade_summaries=pending_upgrade_summaries,
             created_canon=created_canon,
             created_clues=created_clues,
             created_knowledge=created_knowledge,
@@ -380,6 +423,36 @@ class ManuscriptMemoryBuildService:
         ):
             return summary
         return None
+
+    def _pending_upgrade_count(
+        self,
+        repository: SummaryRepository,
+        chapters: list[Chapter],
+    ) -> int:
+        if not chapters:
+            return 0
+        chapter_ids = tuple(chapter.id for chapter in chapters)
+        current_sources = {
+            chapter_id: (revision, content_hash)
+            for chapter_id, revision, content_hash in repository.source_revisions(
+                chapter_ids
+            )
+        }
+        current_by_scope: dict[str, list[SummaryNode]] = {}
+        for summary in repository.list_all():
+            source = current_sources.get(summary.scope_id)
+            if (
+                summary.level == SummaryLevel.CHAPTER
+                and source is not None
+                and summary.source_chapter_ids == (summary.scope_id,)
+                and summary.source_revisions == ((summary.scope_id, *source),)
+            ):
+                current_by_scope.setdefault(summary.scope_id, []).append(summary)
+        return sum(
+            self._upgradable_fallback(tuple(current_by_scope.get(chapter_id, ())))
+            is not None
+            for chapter_id in current_sources
+        )
 
     @staticmethod
     def _extractive_summary(title: str, content: str) -> str:

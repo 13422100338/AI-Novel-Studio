@@ -2,6 +2,8 @@ from pathlib import Path
 
 from ai_novel_studio.application.manuscript_memory_build_service import (
     ManuscriptMemoryBuildService,
+    MemoryBuildProgress,
+    MemoryBuildProgressPhase,
 )
 from ai_novel_studio.application.memory_analysis_service import (
     CanonCandidate,
@@ -239,6 +241,66 @@ def test_failed_fallback_retry_is_not_counted_as_unchanged_summary(
     assert after.content == before.content
 
 
+def test_stale_fallback_is_historical_and_not_double_counted_as_pending_upgrade(
+    tmp_path: Path,
+) -> None:
+    project = ProjectRepository.create(tmp_path / "novel", "Imported Novel")
+    volume = project.list_volumes()[0]
+    chapters = ChapterRepository(project)
+    chapter = chapters.create_chapter(volume.id, "Problem Chapter", "1", "Old body")
+    repository = SummaryRepository(project)
+
+    first = ManuscriptMemoryBuildService().build_all(project)
+    chapters.save_content(
+        chapter.id,
+        "Rewritten body",
+        source="manual",
+        reason="rewrite",
+    )
+    second = ManuscriptMemoryBuildService(FailingAnalyzer()).build_all(project)
+    stored = repository.list_scope(SummaryLevel.CHAPTER, chapter.id)
+
+    assert first.pending_upgrade_summaries == 1
+    assert second.pending_upgrade_summaries == 1
+    assert len(stored) == 2
+    assert sum(item.status == MemoryStatus.STALE for item in stored) == 1
+    assert sum(item.status == MemoryStatus.REVIEW for item in stored) == 1
+
+
+def test_progress_distinguishes_chapter_scan_from_actual_model_call(
+    tmp_path: Path,
+) -> None:
+    project = ProjectRepository.create(tmp_path / "novel", "Imported Novel")
+    volume = project.list_volumes()[0]
+    chapters = ChapterRepository(project)
+    first = chapters.create_chapter(volume.id, "First", "1", "First body")
+    second = chapters.create_chapter(volume.id, "Second", "2", "Second body")
+    SummaryRepository(project).add_candidate(
+        SummaryLevel.CHAPTER,
+        first.id,
+        "Current summary",
+        (first.id,),
+        model_profile_id="memory-extraction",
+    )
+    analyzer = FakeMemoryAnalyzer()
+    progress: list[MemoryBuildProgress] = []
+
+    report = ManuscriptMemoryBuildService(analyzer).build_all(
+        project,
+        progress=progress.append,
+    )
+
+    assert analyzer.calls == [second.id]
+    assert [
+        (item.phase, item.current, item.total, item.chapter_title) for item in progress
+    ] == [
+        (MemoryBuildProgressPhase.SCANNING, 1, 2, "First"),
+        (MemoryBuildProgressPhase.SCANNING, 2, 2, "Second"),
+        (MemoryBuildProgressPhase.MODEL_CALL, 2, 2, "Second"),
+    ]
+    assert report.pending_upgrade_summaries == 0
+
+
 def test_build_reports_model_failures_and_supports_progress_and_cancel(
     tmp_path: Path,
 ) -> None:
@@ -247,11 +309,11 @@ def test_build_reports_model_failures_and_supports_progress_and_cancel(
     chapters = ChapterRepository(project)
     chapters.create_chapter(volume.id, "第一章", "第1章", "正文一")
     chapters.create_chapter(volume.id, "第二章", "第2章", "正文二")
-    progress: list[tuple[int, int, str]] = []
+    progress: list[MemoryBuildProgress] = []
 
     report = ManuscriptMemoryBuildService(FailingAnalyzer()).build_all(
         project,
-        progress=lambda done, total, title: progress.append((done, total, title)),
+        progress=progress.append,
         should_cancel=lambda: bool(progress),
     )
 
@@ -259,7 +321,13 @@ def test_build_reports_model_failures_and_supports_progress_and_cancel(
     assert report.cancelled is True
     assert len(report.failures) == 1
     assert "invalid structured memory" in report.failures[0].message
-    assert progress == [(1, 2, "第一章")]
+    assert [item.phase for item in progress] == [
+        MemoryBuildProgressPhase.SCANNING,
+        MemoryBuildProgressPhase.MODEL_CALL,
+    ]
+    assert {(item.current, item.total, item.chapter_title) for item in progress} == {
+        (1, 2, "第一章")
+    }
 
 
 class FullMemoryAnalyzer(FakeMemoryAnalyzer):

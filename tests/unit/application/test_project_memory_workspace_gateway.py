@@ -11,6 +11,7 @@ from ai_novel_studio.domain.memory import (
     ClueType,
     KnowledgeState,
     KnowledgeSubject,
+    MemoryStatus,
     ReviewStatus,
     SourceType,
     StyleScope,
@@ -55,6 +56,40 @@ def test_gateway_exposes_summary_candidates_for_memory_window(tmp_path: Path) ->
     assert records[0].promotable is False
     assert updated.content == "人工修订摘要"
     assert promoted.review_status == ReviewStatus.APPROVED
+
+
+def test_gateway_labels_stale_fallback_as_read_only_historical_version(
+    tmp_path: Path,
+) -> None:
+    project = ProjectRepository.create(tmp_path / "novel", "Novel")
+    volume = project.list_volumes()[0]
+    chapters = ChapterRepository(project)
+    chapter = chapters.create_chapter(volume.id, "Opening", "1", "old body")
+    summary = SummaryRepository(project).add_candidate(
+        SummaryLevel.CHAPTER,
+        chapter.id,
+        "旧保底摘要",
+        (chapter.id,),
+        model_profile_id="local-import-baseline",
+    )
+    chapters.save_content(
+        chapter.id,
+        "rewritten body",
+        source="manual",
+        reason="rewrite",
+    )
+
+    record = next(
+        item
+        for item in ProjectMemoryWorkspaceGateway(project).load_before("__all__")
+        if item.id == summary.id
+    )
+
+    assert record.title == "章节摘要（历史版本）：Opening"
+    assert record.source_type == "SUMMARY_HISTORY"
+    assert record.status == MemoryStatus.STALE
+    assert record.editable is False
+    assert record.promotable is False
 
 
 def test_gateway_can_undo_model_summary_promotion_for_a_targeted_retry(

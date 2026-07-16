@@ -30,6 +30,8 @@ from ai_novel_studio.application.manuscript_memory_build_service import (
     ManuscriptMemoryBuildFailure,
     ManuscriptMemoryBuildReport,
     ManuscriptMemoryBuildService,
+    MemoryBuildProgress,
+    MemoryBuildProgressPhase,
 )
 from ai_novel_studio.application.memory_analysis_service import MemoryAnalysisService
 from ai_novel_studio.application.memory_workspace_service import MemoryWorkspaceService
@@ -1244,8 +1246,18 @@ class MainWindow(QMainWindow):
         self.manuscript_panel.pipeline_status_label.setText("正在准备记忆整理……")
         self.memory_build_coordinator.start(self.project_runtime.project)
 
-    def update_memory_build_progress(self, done: int, total: int, title: str) -> None:
-        self.manuscript_panel.pipeline_status_label.setText(f"正在整理记忆 {done}/{total}：{title}")
+    def update_memory_build_progress(self, progress: MemoryBuildProgress) -> None:
+        if progress.phase == MemoryBuildProgressPhase.MODEL_CALL:
+            text = (
+                f"正在调用模型 {progress.current}/{progress.total}："
+                f"{progress.chapter_title}"
+            )
+        else:
+            text = (
+                f"正在扫描章节 {progress.current}/{progress.total}："
+                f"{progress.chapter_title}（检查是否需要模型整理）"
+            )
+        self.manuscript_panel.pipeline_status_label.setText(text)
 
     def finish_project_memory(self, report: ManuscriptMemoryBuildReport) -> None:
         self.chapter_sidebar.set_memory_build_running(False)
@@ -1259,7 +1271,8 @@ class MainWindow(QMainWindow):
             f"线索 {report.created_clues} 条，"
             f"知识 {report.created_knowledge} 条，"
             f"跳过未变化摘要 {report.skipped_current_summaries} 条，"
-            f"保底摘要 {report.fallback_summaries} 条，"
+            f"本轮新增保底摘要 {report.fallback_summaries} 条，"
+            f"待模型升级 {report.pending_upgrade_summaries} 条，"
             f"索引 {report.indexed_documents} 章{failure_text}。"
         )
         self.refresh_character_sidebar()

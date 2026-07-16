@@ -8,6 +8,7 @@ from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal, Slot
 
 from ai_novel_studio.application.manuscript_memory_build_service import (
     ManuscriptMemoryBuildReport,
+    MemoryBuildProgress,
 )
 from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
 
@@ -17,7 +18,7 @@ class MemoryBuildPort(Protocol):
         self,
         project: ProjectRepository,
         *,
-        progress: Callable[[int, int, str], None] | None = None,
+        progress: Callable[[MemoryBuildProgress], None] | None = None,
         should_cancel: Callable[[], bool] | None = None,
     ) -> ManuscriptMemoryBuildReport: ...
 
@@ -43,7 +44,7 @@ class _MemoryBuildJob(QRunnable):
 
 
 class MemoryBuildCoordinator(QObject):
-    progress_changed = Signal(int, int, str)
+    progress_changed = Signal(object)
     completed = Signal(object)
     failed = Signal(str)
 
