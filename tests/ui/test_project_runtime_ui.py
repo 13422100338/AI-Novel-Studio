@@ -388,6 +388,29 @@ def test_main_window_builds_memory_for_open_project(qtbot: QtBot, tmp_path: Path
     assert window.memory_window.tabs.tabText(1) == "压缩前文"
 
 
+def test_memory_window_opens_character_identity_review_for_project(
+    qtbot: QtBot, tmp_path: Path
+) -> None:
+    runtime, chapter_id = _project_with_chapter(tmp_path / "novel", tmp_path)
+    memory = CharacterMemoryRepository(runtime.project)
+    memory.create_character("艾瑞克")
+    memory.create_character("艾瑞克·温德米尔")
+    window = MainWindow(model_runtime=UiModelRuntime(tmp_path), project_runtime=runtime)
+    qtbot.addWidget(window)
+    window.load_project_chapter(chapter_id)
+
+    window.open_memory_window()
+    assert window.memory_window is not None
+    assert window.memory_window.identity_review_button.isEnabled()
+
+    window.memory_window.identity_review_button.click()
+
+    dialog = window.memory_window.identity_dialog
+    assert dialog is not None
+    assert dialog.isVisible()
+    assert dialog.candidate_selector.count() == 1
+
+
 def test_main_window_displays_one_time_bounded_card_per_character(
     qtbot: QtBot, tmp_path: Path
 ) -> None:

@@ -22,6 +22,9 @@ from PySide6.QtWidgets import (
 from ai_novel_studio.application.chapter_context_pin_service import (
     ChapterContextPinService,
 )
+from ai_novel_studio.application.character_identity_service import (
+    CharacterIdentityService,
+)
 from ai_novel_studio.application.memory_workspace_service import (
     MemoryBulkPromotionResult,
     MemoryWorkspaceRecord,
@@ -31,6 +34,9 @@ from ai_novel_studio.application.project_guidance_service import ProjectGuidance
 from ai_novel_studio.domain.memory import Authority, MemoryStatus, ReviewStatus
 from ai_novel_studio.ui.demo_data import WorkspaceDemoData
 from ai_novel_studio.ui.i18n import language_manager
+from ai_novel_studio.ui.pages.character_identity_conflict_dialog import (
+    CharacterIdentityConflictDialog,
+)
 from ai_novel_studio.ui.qt.memory_promotion_coordinator import (
     MemoryPromotionCoordinator,
 )
@@ -46,6 +52,7 @@ CANON_GROUPS = (
 class MemoryWindow(QMainWindow):
     setting_save_requested = Signal(str, str, str, object)
     setting_analyze_requested = Signal(str, str, str, object)
+    identity_changed = Signal()
 
     def __init__(self, data: WorkspaceDemoData, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -63,6 +70,8 @@ class MemoryWindow(QMainWindow):
         self._guidance_service: ProjectGuidanceService | None = None
         self._guidance_project_id: str | None = None
         self._guidance_revision = 0
+        self._identity_service: CharacterIdentityService | None = None
+        self.identity_dialog: CharacterIdentityConflictDialog | None = None
 
         self.setWindowTitle("记忆库 · AI Novel Studio")
         self.setMinimumSize(820, 640)
@@ -128,10 +137,18 @@ class MemoryWindow(QMainWindow):
         self.pin_summaries_button.setAccessibleName("将可用压缩前文加入当前章 AI 参考")
         self.pin_summaries_button.setEnabled(False)
         self.pin_summaries_button.clicked.connect(self._pin_compressed_history)
+        self.identity_review_button = QPushButton("人物身份冲突", note)
+        self.identity_review_button.setAccessibleName("审查疑似重复人物卡")
+        self.identity_review_button.setToolTip(
+            "按名称和别名列出疑似重复卡；只有人工确认后才会归并。"
+        )
+        self.identity_review_button.setEnabled(False)
+        self.identity_review_button.clicked.connect(self._open_identity_review)
         actions.addWidget(self.save_button)
         actions.addWidget(self.promote_button)
         actions.addWidget(self.promote_all_button)
         actions.addWidget(self.retry_button)
+        actions.addWidget(self.identity_review_button)
         actions.addStretch(1)
         note_layout.addLayout(actions)
         pin_actions = QHBoxLayout()
@@ -157,6 +174,7 @@ class MemoryWindow(QMainWindow):
         pin_service: ChapterContextPinService | None = None,
         target_chapter_id: str | None = None,
         guidance_service: ProjectGuidanceService | None = None,
+        identity_service: CharacterIdentityService | None = None,
     ) -> None:
         if (
             self._promotion_coordinator is not None
@@ -182,6 +200,8 @@ class MemoryWindow(QMainWindow):
         self._service = service
         self._pin_service = pin_service
         self._pin_chapter_id = target_chapter_id
+        self._identity_service = identity_service
+        self.identity_review_button.setEnabled(identity_service is not None)
         self._promotion_coordinator = MemoryPromotionCoordinator(service, self)
         self._promotion_coordinator.progress_changed.connect(
             self._bulk_promotion_progress
@@ -226,6 +246,17 @@ class MemoryWindow(QMainWindow):
         # remain immediately usable; the project guidance tab stays available at index 0.
         self.tabs.setCurrentIndex(1)
         self._refresh_current_record()
+
+    def _open_identity_review(self) -> None:
+        if self._identity_service is None:
+            return
+        if self.identity_dialog is not None and self.identity_dialog.isVisible():
+            self.identity_dialog.raise_()
+            self.identity_dialog.activateWindow()
+            return
+        self.identity_dialog = CharacterIdentityConflictDialog(self._identity_service, self)
+        self.identity_dialog.changed.connect(self.identity_changed.emit)
+        self.identity_dialog.show()
 
     def _add_setting_tab(self) -> None:
         page = QWidget(self.tabs)

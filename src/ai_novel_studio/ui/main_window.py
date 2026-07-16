@@ -19,6 +19,9 @@ from ai_novel_studio.application.brief_lifecycle_service import BriefValidationE
 from ai_novel_studio.application.chapter_context_pin_service import (
     ChapterContextPinService,
 )
+from ai_novel_studio.application.character_identity_service import (
+    CharacterIdentityService,
+)
 from ai_novel_studio.application.character_status_service import CharacterStatusService
 from ai_novel_studio.application.chat_context_service import ChatContextService
 from ai_novel_studio.application.deterministic_audit_service import (
@@ -1155,6 +1158,7 @@ class MainWindow(QMainWindow):
             self.memory_window = MemoryWindow(self.data, self)
             self.memory_window.setting_save_requested.connect(self.save_setting_document)
             self.memory_window.setting_analyze_requested.connect(self.analyze_setting_document)
+            self.memory_window.identity_changed.connect(self._character_identity_changed)
         self._bind_memory_window()
         self._show_workspace_window(self.memory_window)
 
@@ -1173,7 +1177,12 @@ class MainWindow(QMainWindow):
             ),
             target_chapter_id=chapter_id,
             guidance_service=ProjectGuidanceService(ProjectGuidanceRepository(project)),
+            identity_service=CharacterIdentityService(project),
         )
+
+    def _character_identity_changed(self) -> None:
+        self.refresh_character_sidebar()
+        self._bind_memory_window()
 
     def save_setting_document(
         self, title: str, document_type: str, text: str, source_id: object
