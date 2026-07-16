@@ -90,6 +90,16 @@ class CharacterMemoryRepository:
             for row in rows
         )
 
+    def update_character_profile(self, character_id: str, profile: str) -> Character:
+        with self.project.database.connect() as connection, connection:
+            cursor = connection.execute(
+                "UPDATE characters SET profile = ?, updated_at = ? WHERE id = ?",
+                (profile, _now().isoformat(), character_id),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError(f"unknown character: {character_id}")
+        return self.get_character(character_id)
+
     def append_state(
         self,
         character_id: str,
@@ -147,7 +157,7 @@ class CharacterMemoryRepository:
                 SELECT e.* FROM character_state_events e
                 JOIN chapters c ON c.id = e.chapter_id
                 JOIN volumes v ON v.id = c.volume_id
-                WHERE e.character_id = ?
+                WHERE e.character_id = ? AND c.is_deleted = 0
                 ORDER BY v.sort_index, c.sort_index, e.created_at, e.id
                 """,
                 (character_id,),
@@ -168,9 +178,56 @@ class CharacterMemoryRepository:
                 JOIN chapters c ON c.id = e.chapter_id
                 JOIN volumes v ON v.id = c.volume_id
                 WHERE e.character_id IN ({placeholders})
+                  AND c.is_deleted = 0
                 ORDER BY e.character_id, v.sort_index, c.sort_index, e.created_at, e.id
                 """,
                 unique_ids,
+            ).fetchall()
+        grouped: dict[str, list[CharacterStateEvent]] = {}
+        for row in rows:
+            grouped.setdefault(str(row["character_id"]), []).append(self._state(row))
+        return {character_id: tuple(events) for character_id, events in grouped.items()}
+
+    def state_histories_before_many(
+        self,
+        character_ids: tuple[str, ...],
+        chapter_id: str,
+        *,
+        inclusive: bool = False,
+    ) -> dict[str, tuple[CharacterStateEvent, ...]]:
+        """Return reviewed state history before a chapter in one database query."""
+        unique_ids = tuple(dict.fromkeys(value for value in character_ids if value))
+        if not unique_ids:
+            return {}
+        comparison = "<=" if inclusive else "<"
+        placeholders = ", ".join("?" for _ in unique_ids)
+        with self.project.database.connect() as connection:
+            target = connection.execute(
+                "SELECT 1 FROM chapters WHERE id = ? AND is_deleted = 0", (chapter_id,)
+            ).fetchone()
+            if target is None:
+                raise KeyError(f"unknown chapter: {chapter_id}")
+            rows = connection.execute(
+                f"""
+                WITH target AS (
+                    SELECT v.sort_index AS volume_order, c.sort_index AS chapter_order
+                    FROM chapters c JOIN volumes v ON v.id = c.volume_id
+                    WHERE c.id = ? AND c.is_deleted = 0
+                )
+                SELECT e.*, v.sort_index AS volume_order, c.sort_index AS chapter_order
+                FROM character_state_events e
+                JOIN chapters c ON c.id = e.chapter_id
+                JOIN volumes v ON v.id = c.volume_id
+                CROSS JOIN target t
+                WHERE e.character_id IN ({placeholders})
+                  AND c.is_deleted = 0
+                  AND e.review_status IN ('APPROVED', 'LOCKED')
+                  AND ((v.sort_index < t.volume_order) OR
+                       (v.sort_index = t.volume_order AND
+                        c.sort_index {comparison} t.chapter_order))
+                ORDER BY e.character_id, v.sort_index, c.sort_index, e.created_at, e.id
+                """,
+                (chapter_id, *unique_ids),
             ).fetchall()
         grouped: dict[str, list[CharacterStateEvent]] = {}
         for row in rows:
@@ -214,7 +271,7 @@ class CharacterMemoryRepository:
         placeholders = ", ".join("?" for _ in unique_ids)
         with self.project.database.connect() as connection:
             target = connection.execute(
-                "SELECT 1 FROM chapters WHERE id = ?", (chapter_id,)
+                "SELECT 1 FROM chapters WHERE id = ? AND is_deleted = 0", (chapter_id,)
             ).fetchone()
             if target is None:
                 raise KeyError(f"unknown chapter: {chapter_id}")
@@ -222,7 +279,8 @@ class CharacterMemoryRepository:
                 f"""
                 WITH target AS (
                     SELECT v.sort_index AS volume_order, c.sort_index AS chapter_order
-                    FROM chapters c JOIN volumes v ON v.id = c.volume_id WHERE c.id = ?
+                    FROM chapters c JOIN volumes v ON v.id = c.volume_id
+                    WHERE c.id = ? AND c.is_deleted = 0
                 )
                 SELECT e.*, v.sort_index AS volume_order, c.sort_index AS chapter_order
                 FROM character_state_events e
@@ -230,6 +288,7 @@ class CharacterMemoryRepository:
                 JOIN volumes v ON v.id = c.volume_id
                 CROSS JOIN target t
                 WHERE e.character_id IN ({placeholders})
+                  AND c.is_deleted = 0
                   AND e.review_status IN ('APPROVED', 'LOCKED')
                   AND ((v.sort_index < t.volume_order) OR
                        (v.sort_index = t.volume_order AND
@@ -377,6 +436,50 @@ class CharacterMemoryRepository:
             for _, row in sorted(latest.items())
         )
 
+    def latest_knowledge_entries(
+        self,
+        subject_type: KnowledgeSubject,
+        subject_id: str,
+        *,
+        include_review: bool = False,
+    ) -> tuple[KnowledgeSnapshotEntry, ...]:
+        statuses = "'APPROVED', 'LOCKED', 'REVIEW'" if include_review else "'APPROVED', 'LOCKED'"
+        with self.project.database.connect() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT e.*, i.title, i.detail, i.authority,
+                    i.review_status AS item_review_status,
+                    v.sort_index AS volume_order, c.sort_index AS chapter_order
+                FROM knowledge_state_events e
+                JOIN knowledge_items i ON i.id = e.knowledge_id
+                JOIN chapters c ON c.id = e.chapter_id
+                JOIN volumes v ON v.id = c.volume_id
+                WHERE e.subject_type = ? AND e.subject_id = ?
+                  AND e.review_status IN ({statuses})
+                  AND i.review_status IN ({statuses})
+                  AND c.is_deleted = 0
+                ORDER BY e.knowledge_id, v.sort_index DESC, c.sort_index DESC,
+                         e.created_at DESC, e.id
+                """,
+                (subject_type.value, subject_id),
+            ).fetchall()
+        latest: dict[str, sqlite3.Row] = {}
+        for row in rows:
+            latest.setdefault(row["knowledge_id"], row)
+        ordered = sorted(
+            latest.values(),
+            key=lambda row: (
+                int(row["volume_order"]),
+                int(row["chapter_order"]),
+                row["created_at"],
+                row["id"],
+            ),
+        )
+        return tuple(
+            KnowledgeSnapshotEntry(self._knowledge_item(row), self._knowledge_event(row))
+            for row in ordered
+        )
+
     def _temporal_rows(
         self,
         table: str,
@@ -389,7 +492,7 @@ class CharacterMemoryRepository:
         comparison = "<=" if inclusive else "<"
         with self.project.database.connect() as connection:
             target = connection.execute(
-                "SELECT 1 FROM chapters WHERE id = ?", (chapter_id,)
+                "SELECT 1 FROM chapters WHERE id = ? AND is_deleted = 0", (chapter_id,)
             ).fetchone()
             if target is None:
                 raise KeyError(f"unknown chapter: {chapter_id}")
@@ -397,7 +500,8 @@ class CharacterMemoryRepository:
                 f"""
                 WITH target AS (
                     SELECT v.sort_index AS volume_order, c.sort_index AS chapter_order
-                    FROM chapters c JOIN volumes v ON v.id = c.volume_id WHERE c.id = ?
+                    FROM chapters c JOIN volumes v ON v.id = c.volume_id
+                    WHERE c.id = ? AND c.is_deleted = 0
                 )
                 SELECT e.*, v.sort_index AS volume_order, c.sort_index AS chapter_order
                 FROM {table} e
@@ -405,6 +509,7 @@ class CharacterMemoryRepository:
                 JOIN volumes v ON v.id = c.volume_id
                 CROSS JOIN target t
                 WHERE e.{subject_column} = ?
+                  AND c.is_deleted = 0
                   AND e.review_status IN ('APPROVED', 'LOCKED')
                   AND ((v.sort_index < t.volume_order) OR
                        (v.sort_index = t.volume_order AND

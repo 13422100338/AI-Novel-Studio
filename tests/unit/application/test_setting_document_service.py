@@ -39,7 +39,7 @@ def test_setting_analysis_uses_memory_route_and_validates_nested_fields() -> Non
     result = SettingDocumentAnalysisService(runner).analyze("设定", "混合设定", "正文")
     assert runner.purpose == TaskPurpose.MEMORY_EXTRACTION
     assert result.characters[0][0] == "林默"
-    assert result.style == (("叙事视角", "限知第三人称。"),)
+    assert result.style == ()
 
 
 def test_setting_analysis_accepts_alias_text_array() -> None:
@@ -88,4 +88,4 @@ def test_setting_source_and_candidates_are_not_silently_approved(tmp_path: Path)
     assert source["review_status"] == ReviewStatus.APPROVED.value
     assert canon and all(row["review_status"] == ReviewStatus.REVIEW.value for row in canon)
     assert all(row["source_paragraph_id"] == f"SETTING:{report.source_id}" for row in canon)
-    assert styles and all(row["review_status"] == ReviewStatus.REVIEW.value for row in styles)
+    assert styles == []

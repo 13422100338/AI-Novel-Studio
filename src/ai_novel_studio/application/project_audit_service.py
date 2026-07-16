@@ -79,12 +79,13 @@ class ProjectAuditService:
         requirement: str,
         mode: CreationMode,
     ) -> tuple[AuditFinding, ...]:
-        del requirement
         chapter = self.chapters.get_chapter(chapter_id, include_deleted=False)
         saved_text = self.chapters.read_content(chapter_id)
         if text == saved_text and revision == chapter.revision:
             return self.workflow.run_deterministic_for_formal_chapter(
-                chapter_id, mode=mode
+                chapter_id,
+                mode=mode,
+                requirement_content=requirement,
             ).findings
         return self.workflow.run_deterministic_for_draft(
             chapter_id=chapter_id,
@@ -92,6 +93,7 @@ class ProjectAuditService:
             draft_text=text,
             base_chapter_revision=revision,
             mode=mode,
+            requirement_content=requirement,
         ).findings
 
     def model_context_rules(self, chapter_id: str) -> tuple[str, ...]:

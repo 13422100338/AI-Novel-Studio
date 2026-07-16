@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import cast
@@ -94,9 +95,18 @@ _CONTRACT = JsonObjectContract(
         JsonField("canon", list),
         JsonField("clues", list),
         JsonField("knowledge", list),
-        JsonField("style", list),
     )
 )
+
+_SUMMARY_SECTIONS = (
+    "剧情概况",
+    "关键情节点",
+    "人物成长",
+    "连续性要点",
+    "细节摘录",
+)
+_SUMMARY_HEADING = re.compile(r"^##[ \t]+(.+?)[ \t]*$", re.MULTILINE)
+_DETAIL_PREFIX = re.compile(r"^(?:[-*+]\s*|\d+[.)、]\s*)")
 
 _SYSTEM_PROMPT = """你是长篇小说记忆提取器。只分析用户给出的当前章正文。
 只返回一个 JSON 对象，不要输出思考过程、Markdown 代码围栏或解释文字。
@@ -106,8 +116,8 @@ _SYSTEM_PROMPT = """你是长篇小说记忆提取器。只分析用户给出的
   ## 剧情概况
   ## 关键情节点
   ## 人物成长
-  ## 伏笔与未决问题
   ## 连续性要点
+  ## 细节摘录
 - character_states: 数组。每项字段为 character_name、motivation、psychology、
   current_goal、relationships、recent_activity。
 - canon: 数组。每项字段为 title、detail。
@@ -115,27 +125,28 @@ _SYSTEM_PROMPT = """你是长篇小说记忆提取器。只分析用户给出的
   clue_type 只能是 FORESHADOW、MISDIRECTION、OPEN_QUESTION、AUTHOR_PROMISE、
   ATMOSPHERIC_HINT；action 只能是 PLANT、REINFORCE、REDIRECT、REVEAL、
   RESOLVE、ABANDON。
-- knowledge: 数组。每项字段为 subject_type、subject_id、title、detail、state。
-  subject_type 只能是 CHARACTER 或 READER；CHARACTER 的 subject_id 填人物姓名，
-  READER 的 subject_id 填 READER；state 只能是 UNKNOWN、SUSPECTED、
-  MISUNDERSTOOD、KNOWN、FORGOTTEN。
-- style: 数组。每项字段为 scope_type、scope_id、rule_type、rule_text。
-  scope_type 只能是 BOOK、GENRE_OR_SCENE、CHARACTER、CHAPTER；CHAPTER 的
-  scope_id 必须使用输入里的 source_chapter_id，CHARACTER 的 scope_id 填人物姓名。
+- knowledge: 数组。只提取读者在本章新增知道、怀疑或误解的内容，每项字段为
+  subject_type、subject_id、title、detail、state。subject_type 必须填 READER，
+  subject_id 必须填 READER；state 只能是 SUSPECTED、MISUNDERSTOOD 或 KNOWN。
+  人物掌握的信息直接写入对应人物状态，不要生成人物知识项。
 
-摘要不是缩写正文：只保留会影响后续创作的事件因果、人物变化、承诺、伏笔、
-未决冲突、世界规则和连续性事实。没有内容的数组返回 []。不确定的信息不要猜测。
+摘要不是缩写正文。剧情概况应把本章因果和结果说明白，最多 1000 个字符；其余小节
+按本章信息密度决定条目数量，不要为了凑长度重复正文。细节摘录只选择正文中有戏剧性、
+辨识度或能维持行文质感的原句，每条使用“- 原文：<逐字摘录>”，不得改写或虚构；没有
+合适内容时写“- 无”。伏笔、作者承诺、悬念和未决问题只写入 clues 数组，不得在 summary
+中重复。summary 只保留已经发生的事件因果、人物变化、世界规则和连续性事实。
+没有内容的数组返回 []。不确定的信息不要猜测。
 所有结果只是待人工审查候选，不能覆盖已有正典。"""
 
 _SYSTEM_PROMPT += (
     "\n字段类型示例（内容仅用于说明格式）：\n"
     '{"summary":"## 剧情概况\\n本章概况\\n## 关键情节点\\n- 事件'
-    '\\n## 人物成长\\n- 变化\\n## 伏笔与未决问题\\n- 问题'
-    '\\n## 连续性要点\\n- 事实","character_states":['
+    '\\n## 人物成长\\n- 变化\\n## 连续性要点\\n- 事实'
+    '\\n## 细节摘录\\n- 原文：正文原句","character_states":['
     '{"character_name":"甲","motivation":"查明真相","psychology":"警惕",'
     '"current_goal":"核对线索","relationships":"暂不信任乙",'
     '"recent_activity":"收到来信"}],"canon":[],"clues":[],'
-    '"knowledge":[],"style":[]}\n'
+    '"knowledge":[]}\n'
 )
 
 
@@ -175,11 +186,15 @@ class MemoryAnalysisService:
             self._output_limit_for(text),
             _CONTRACT,
         )
+        knowledge = tuple(
+            _knowledge(value, index)
+            for index, value in enumerate(_required_list(payload, "knowledge"))
+        )
         return MemoryCandidateBundle(
             source_chapter_id=chapter_id,
             source_revision=revision,
             source_hash=hashlib.sha256(text.encode("utf-8")).hexdigest(),
-            summary=SummaryCandidate(_required_string(payload, "summary")),
+            summary=SummaryCandidate(_validated_summary(payload, text)),
             character_states=tuple(
                 _character_state(value, index)
                 for index, value in enumerate(_required_list(payload, "character_states"))
@@ -193,13 +208,12 @@ class MemoryAnalysisService:
                 for index, value in enumerate(_required_list(payload, "clues"))
             ),
             knowledge=tuple(
-                _knowledge(value, index)
-                for index, value in enumerate(_required_list(payload, "knowledge"))
+                candidate
+                for candidate in knowledge
+                if candidate.subject_type == KnowledgeSubject.READER
             ),
-            style=tuple(
-                _style(value, index)
-                for index, value in enumerate(_required_list(payload, "style"))
-            ),
+            # 文风自动候选已退役；人工样章仍由独立的文风工作区维护。
+            style=(),
         )
 
     def _output_limit_for(self, text: str) -> int:
@@ -217,6 +231,55 @@ def _required_list(payload: dict[str, object], field: str) -> list[object]:
     if not isinstance(value, list):
         raise MemoryCandidateValidationError(f"字段 {field} 必须是数组")
     return cast(list[object], value)
+
+
+def _validated_summary(payload: dict[str, object], source_text: str) -> str:
+    summary = _required_string(payload, "summary")
+    matches = tuple(_SUMMARY_HEADING.finditer(summary))
+    headings = tuple(match.group(1).strip() for match in matches)
+
+    if "伏笔与未决问题" in headings:
+        raise MemoryCandidateValidationError(
+            "字段 summary 不得包含伏笔与未决问题；请改写入 clues 数组"
+        )
+    if headings != _SUMMARY_SECTIONS:
+        missing = [section for section in _SUMMARY_SECTIONS if section not in headings]
+        if missing:
+            raise MemoryCandidateValidationError(
+                f"字段 summary 缺少固定小节：{'、'.join(missing)}"
+            )
+        raise MemoryCandidateValidationError(
+            "字段 summary 的小节必须按固定顺序排列，且不能增加其他小节"
+        )
+
+    sections = {
+        heading: (
+            summary[match.end() : matches[index + 1].start()].strip()
+            if index + 1 < len(matches)
+            else summary[match.end() :].strip()
+        )
+        for index, (heading, match) in enumerate(zip(headings, matches, strict=True))
+    }
+    if len(sections["剧情概况"]) > 1_000:
+        raise MemoryCandidateValidationError("字段 summary.剧情概况 不能超过 1000 个字符")
+
+    normalized_source = _compact_text(source_text)
+    for line in sections["细节摘录"].splitlines():
+        excerpt = _DETAIL_PREFIX.sub("", line.strip()).strip()
+        if excerpt.startswith("原文："):
+            excerpt = excerpt.removeprefix("原文：").strip()
+        excerpt = excerpt.strip("“”‘’\"'")
+        if not excerpt or excerpt == "无":
+            continue
+        if _compact_text(excerpt) not in normalized_source:
+            raise MemoryCandidateValidationError(
+                "字段 summary.细节摘录 必须逐字来自当前章原文"
+            )
+    return summary
+
+
+def _compact_text(value: str) -> str:
+    return re.sub(r"\s+", "", value)
 
 
 def _required_string(payload: dict[str, object], field: str, *, path: str = "") -> str:

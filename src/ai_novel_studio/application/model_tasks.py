@@ -118,38 +118,78 @@ class ModelTaskService:
         manuscript_excerpt: str,
         output_token_limit: int,
     ) -> str:
+        contract = JsonObjectContract(
+            (
+                JsonField("chapter_goal", str),
+                JsonField("hard_events", list),
+                JsonField("character_psychology", list),
+                JsonField("forbidden_changes", list),
+                JsonField("creative_freedom", list),
+            )
+        )
         transcript = "\n".join(f"{message.role}: {message.content}" for message in conversation)
         messages = (
             LLMMessage("system", _DIRECTOR_SYSTEM),
             LLMMessage(
                 "user",
-                "根据以下剧情商讨和当前正文，输出一份正式当前章要求。"
-                "它是给作者审查的章节级指令，应明确必须发生、禁止改变、人物心理和可自由发挥范围。"
-                "不要写正文，不要加寒暄。\n\n"
+                "根据以下剧情商讨和当前正文，整理一份正式当前章要求。"
+                "只返回 JSON，不得写小说正文、对话片段或寒暄。"
+                "chapter_goal 必须是文本；hard_events、character_psychology、"
+                "forbidden_changes、creative_freedom 必须是文本数组。"
+                "没有可靠依据的项目返回空数组，不得编造。\n\n"
                 f"剧情商讨：\n{transcript or '（无）'}\n\n"
                 f"当前正文：\n{manuscript_excerpt or '（空）'}",
             ),
         )
-        response = self.gateway.complete(
+        data = self.contracts.run_json(
             TaskPurpose.CHAPTER_REQUIREMENT,
             messages,
             output_token_limit,
-            temperature=0.3,
+            contract,
         )
-        result = response.text.strip()
-        if not result:
-            raise ContractValidationError("当前章要求不能为空")
-        return result
+        return self._render_chapter_requirement(data)
 
     def normalize_brief(self, source: str, output_token_limit: int) -> NormalizedBrief:
         contract = JsonObjectContract(
             (
-                JsonField("dramatic_function", (str, list)),
-                JsonField("hard_events", (list, str)),
-                JsonField("soft_goals", (list, str)),
-                JsonField("forbidden_changes", (list, str)),
-                JsonField("creative_freedom", (list, str)),
-            )
+                JsonField(
+                    "dramatic_function",
+                    (str, list),
+                    required=False,
+                    aliases=("dramaticFunction", "dramatic_functions", "戏剧功能", "戏剧作用"),
+                ),
+                JsonField(
+                    "hard_events",
+                    (list, str),
+                    required=False,
+                    aliases=(
+                        "hardEvents",
+                        "must_events",
+                        "required_events",
+                        "必须事件",
+                        "硬性事件",
+                    ),
+                ),
+                JsonField(
+                    "soft_goals",
+                    (list, str),
+                    required=False,
+                    aliases=("softGoals", "软性目标"),
+                ),
+                JsonField(
+                    "forbidden_changes",
+                    (list, str),
+                    required=False,
+                    aliases=("forbiddenChanges", "禁止修改", "禁止改变"),
+                ),
+                JsonField(
+                    "creative_freedom",
+                    (list, str),
+                    required=False,
+                    aliases=("creativeFreedom", "自由空间", "创作自由"),
+                ),
+            ),
+            minimum_present=1,
         )
         messages = (
             LLMMessage(
@@ -184,14 +224,37 @@ class ModelTaskService:
         rules: tuple[str, ...],
         output_token_limit: int,
     ) -> StyleAuditResult:
+        finding_contract = JsonObjectContract(
+            (
+                JsonField("category", str, aliases=("type", "类别")),
+                JsonField("issue", str, aliases=("problem", "explanation", "问题")),
+                JsonField("evidence", str, aliases=("quote", "excerpt", "证据", "原文")),
+                JsonField("severity", str, aliases=("level", "严重程度")),
+            )
+        )
         contract = JsonObjectContract(
-            (JsonField("summary", str), JsonField("findings", list))
+            (
+                JsonField(
+                    "summary",
+                    str,
+                    required=False,
+                    aliases=("overview", "摘要"),
+                ),
+                JsonField(
+                    "findings",
+                    list,
+                    aliases=("issues", "问题列表"),
+                    item_contract=finding_contract,
+                ),
+            )
         )
         messages = (
             LLMMessage(
                 "system",
                 "你是独立文风审校员。只报告问题和原文证据，不改写正文，不改变剧情事实。"
-                "findings 中每项必须包含 category、issue、evidence、severity 文本字段。",
+                "findings 中每项必须包含 category、issue、evidence、severity 文本字段。"
+                "category 只能是 STYLE、REQUIREMENT、CHARACTER、KNOWLEDGE、CLUE、"
+                "CANON、TIMELINE、FORMAT；severity 只能是 INFO、WARNING、ERROR、BLOCKER。",
             ),
             LLMMessage(
                 "user",
@@ -217,14 +280,14 @@ class ModelTaskService:
             finding = cast(dict[str, object], item)
             findings.append(
                 StyleAuditFinding(
-                    category=self._text(finding, "category"),
+                    category=self._audit_category(finding),
                     issue=self._text(finding, "issue"),
                     evidence=self._text(finding, "evidence"),
-                    severity=self._text(finding, "severity"),
+                    severity=self._audit_severity(finding),
                 )
             )
         return StyleAuditResult(
-            summary=self._text(data, "summary"),
+            summary=self._optional_text(data, "summary"),
             findings=tuple(findings),
         )
 
@@ -233,6 +296,15 @@ class ModelTaskService:
         value = data.get(key)
         if not isinstance(value, str) or not value.strip():
             raise ContractValidationError(f"字段 {key} 必须是非空文本")
+        return value.strip()
+
+    @staticmethod
+    def _optional_text(data: dict[str, object], key: str) -> str:
+        value = data.get(key)
+        if value is None:
+            return ""
+        if not isinstance(value, str):
+            raise ContractValidationError(f"字段 {key} 必须是文本")
         return value.strip()
 
     @staticmethod
@@ -247,6 +319,8 @@ class ModelTaskService:
     @staticmethod
     def _brief_text(data: dict[str, object], key: str) -> str:
         value = data.get(key)
+        if value is None or value == "" or value == []:
+            return ""
         if isinstance(value, str) and value.strip():
             return value.strip()
         if isinstance(value, list) and value and all(
@@ -258,6 +332,8 @@ class ModelTaskService:
     @staticmethod
     def _brief_text_tuple(data: dict[str, object], key: str) -> tuple[str, ...]:
         value = data.get(key)
+        if value is None or value == "":
+            return ()
         if isinstance(value, str) and value.strip():
             return (value.strip(),)
         if isinstance(value, list) and all(
@@ -265,3 +341,62 @@ class ModelTaskService:
         ):
             return tuple(cast(str, item).strip() for item in value)
         raise ContractValidationError(f"字段 {key} 必须是文本或文本数组")
+
+    @classmethod
+    def _render_chapter_requirement(cls, data: dict[str, object]) -> str:
+        goal = cls._text(data, "chapter_goal")
+        sections = (
+            ("必须发生", cls._text_tuple(data, "hard_events")),
+            ("人物状态与心理", cls._text_tuple(data, "character_psychology")),
+            ("禁止改变", cls._text_tuple(data, "forbidden_changes")),
+            ("可自由发挥", cls._text_tuple(data, "creative_freedom")),
+        )
+        rendered = [f"## 当前章目标\n{goal}"]
+        for title, values in sections:
+            body = "\n".join(f"- {value}" for value in values) or "- 无"
+            rendered.append(f"## {title}\n{body}")
+        return "\n\n".join(rendered)
+
+    @classmethod
+    def _audit_category(cls, data: dict[str, object]) -> str:
+        value = cls._text(data, "category")
+        aliases = {
+            "声音": "STYLE",
+            "文风": "STYLE",
+            "风格": "STYLE",
+            "要求": "REQUIREMENT",
+            "人物": "CHARACTER",
+            "知识": "KNOWLEDGE",
+            "伏笔": "CLUE",
+            "正典": "CANON",
+            "时间线": "TIMELINE",
+            "格式": "FORMAT",
+        }
+        normalized = aliases.get(value, value.upper())
+        allowed = {
+            "STYLE",
+            "REQUIREMENT",
+            "CHARACTER",
+            "KNOWLEDGE",
+            "CLUE",
+            "CANON",
+            "TIMELINE",
+            "FORMAT",
+        }
+        if normalized not in allowed:
+            raise ContractValidationError(f"字段 category 包含未知分类：{value}")
+        return normalized
+
+    @classmethod
+    def _audit_severity(cls, data: dict[str, object]) -> str:
+        value = cls._text(data, "severity")
+        aliases = {
+            "低": "INFO",
+            "中": "WARNING",
+            "高": "ERROR",
+            "严重": "BLOCKER",
+        }
+        normalized = aliases.get(value, value.upper())
+        if normalized not in {"INFO", "WARNING", "ERROR", "BLOCKER"}:
+            raise ContractValidationError(f"字段 severity 包含未知级别：{value}")
+        return normalized

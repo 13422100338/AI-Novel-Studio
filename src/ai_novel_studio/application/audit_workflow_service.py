@@ -47,6 +47,7 @@ class AuditWorkflowService:
         chapter_id: str,
         *,
         mode: CreationMode,
+        requirement_content: str | None = None,
     ) -> AuditWorkflowResult:
         chapter = self.chapters.get_chapter(chapter_id, include_deleted=False)
         text = self.chapters.read_content(chapter_id)
@@ -57,6 +58,7 @@ class AuditWorkflowService:
             target_text=text,
             target_revision=chapter.revision,
             mode=mode,
+            requirement_content=requirement_content,
         )
 
     def run_deterministic_for_draft(
@@ -67,6 +69,7 @@ class AuditWorkflowService:
         draft_text: str,
         base_chapter_revision: int,
         mode: CreationMode,
+        requirement_content: str | None = None,
     ) -> AuditWorkflowResult:
         return self._run_deterministic(
             chapter_id=chapter_id,
@@ -75,6 +78,7 @@ class AuditWorkflowService:
             target_text=draft_text,
             target_revision=base_chapter_revision,
             mode=mode,
+            requirement_content=requirement_content,
         )
 
     def _run_deterministic(
@@ -86,6 +90,7 @@ class AuditWorkflowService:
         target_text: str,
         target_revision: int,
         mode: CreationMode,
+        requirement_content: str | None,
     ) -> AuditWorkflowResult:
         target_hash = _hash(target_text)
         run = self.audits.create_run(
@@ -98,14 +103,15 @@ class AuditWorkflowService:
             status=AuditRunStatus.PREPARING,
             prompt_version=DETERMINISTIC_AUDIT_PROMPT_VERSION,
         )
-        requirement = self.requirements.get_or_create(chapter_id)
+        if requirement_content is None:
+            requirement_content = self.requirements.get_or_create(chapter_id).content
         candidates = self.deterministic.run(
             DeterministicAuditRequest(
                 chapter_id=chapter_id,
                 target_text=target_text,
                 target_revision=target_revision,
                 target_hash=target_hash,
-                requirement_content=requirement.content,
+                requirement_content=requirement_content,
             )
         )
         findings = tuple(
@@ -128,4 +134,3 @@ class AuditWorkflowService:
 
 def _hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
-

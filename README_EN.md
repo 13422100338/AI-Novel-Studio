@@ -14,8 +14,8 @@ style guidance, and revision review in one inspectable and recoverable workflow.
 
 The project is designed for novels that may grow to millions of words. Instead of repeatedly
 sending the entire manuscript to a model, it keeps recent chapters at high fidelity and turns
-older material into layered summaries, character development, canon facts, narrative clues,
-and knowledge boundaries. Context is assembled dynamically for each task.
+older material into layered summaries, character cards, canon facts, narrative clues, and one
+time-bounded reader-knowledge summary. Context is assembled dynamically for each task.
 
 ### Design principles
 
@@ -134,7 +134,9 @@ which tool was requested, its parameters, returned sources, and any truncation.
 The memory library is not a single shortened version of the manuscript. It maintains multiple
 types of context with separate authority and review states:
 
-- Layered chapter, arc, volume, and book summaries;
+- Layered chapter, arc, volume, and book summaries. Chapter summaries separate plot overview,
+  key beats, character growth, continuity, and verbatim detail excerpts. Plot overview is capped
+  at 1,000 characters, while foreshadowing and unresolved questions remain in the clue ledger;
 - Character motivation, psychology, goals, relationships, and recent activity;
 - Canon facts and world rules;
 - Foreshadowing, open questions, promises, and clue events;
@@ -187,7 +189,7 @@ flowchart LR
 ```
 
 Context may include the current requirement, frozen Brief, recent full chapters, older summaries,
-volume and book context, relevant character state, active clues, canon, knowledge boundaries,
+volume and book context, relevant character cards, active clues, canon, the reader summary,
 style rules, samples, and retrieved evidence. A Context Manifest records what was selected or
 omitted and why.
 

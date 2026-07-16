@@ -14,7 +14,7 @@ from ai_novel_studio.core.context.context_manifest import (
 )
 from ai_novel_studio.domain.audit import AuditFindingStatus, AuditTargetKind
 from ai_novel_studio.domain.generation import BriefStatus, CreationMode, GenerationStatus
-from ai_novel_studio.domain.memory import Authority, ReviewStatus, SummaryLevel
+from ai_novel_studio.domain.memory import Authority, ReviewStatus, SourceType, SummaryLevel
 from ai_novel_studio.infrastructure.storage.audit_repository import AuditRepository
 from ai_novel_studio.infrastructure.storage.chapter_brief_repository import (
     ChapterBriefRepository,
@@ -27,6 +27,9 @@ from ai_novel_studio.infrastructure.storage.character_memory_repository import (
     CharacterMemoryRepository,
 )
 from ai_novel_studio.infrastructure.storage.generation_repository import GenerationRepository
+from ai_novel_studio.infrastructure.storage.project_guidance_repository import (
+    ProjectGuidanceRepository,
+)
 from ai_novel_studio.infrastructure.storage.summary_repository import SummaryRepository
 from ai_novel_studio.ui.main_window import MainWindow
 from ai_novel_studio.ui.pages.project_welcome import ProjectWelcome
@@ -194,11 +197,29 @@ def test_project_chat_history_is_restored_and_budgeted_after_reopen(
 def test_plot_conversation_receives_pre_chapter_memory(qtbot: QtBot, tmp_path: Path) -> None:
     runtime, first_id = _project_with_chapter(tmp_path / "novel", tmp_path)
     chapters = ChapterRepository(runtime.project)
-    second = chapters.create_chapter(
+    chapters.create_chapter(
         runtime.project.list_volumes()[0].id,
         "Second",
         "第2章",
         "第二章正文",
+    )
+    chapters.create_chapter(
+        runtime.project.list_volumes()[0].id,
+        "Third",
+        "第3章",
+        "第三章正文",
+    )
+    chapters.create_chapter(
+        runtime.project.list_volumes()[0].id,
+        "Fourth",
+        "第4章",
+        "第四章正文",
+    )
+    current = chapters.create_chapter(
+        runtime.project.list_volumes()[0].id,
+        "Fifth",
+        "第5章",
+        "第五章正文",
     )
     SummaryRepository(runtime.project).add_human_summary(
         SummaryLevel.CHAPTER,
@@ -210,13 +231,32 @@ def test_plot_conversation_receives_pre_chapter_memory(qtbot: QtBot, tmp_path: P
     )
     window = MainWindow(model_runtime=UiModelRuntime(tmp_path), project_runtime=runtime)
     qtbot.addWidget(window)
-    window.load_project_chapter(second.id)
+    window.load_project_chapter(current.id)
 
     messages = window._conversation_messages()
 
     assert messages[0].role == "system"
     assert "第一章已经确认的剧情" in messages[0].content
     assert "【已审查" in messages[0].content
+
+
+def test_plot_conversation_receives_project_guidance_without_summary(
+    qtbot: QtBot, tmp_path: Path
+) -> None:
+    runtime, chapter_id = _project_with_chapter(tmp_path / "novel", tmp_path)
+    saved = ProjectGuidanceRepository(runtime.project).save_manual(
+        "最高创作目的：讨论记忆与责任。",
+        expected_revision=0,
+    )
+    window = MainWindow(model_runtime=UiModelRuntime(tmp_path), project_runtime=runtime)
+    qtbot.addWidget(window)
+    window.load_project_chapter(chapter_id)
+
+    messages = window._conversation_messages()
+
+    assert messages[0].role == "system"
+    assert f"人工修订 {saved.revision}" in messages[0].content
+    assert saved.highest_system_prompt in messages[0].content
 
 
 def test_main_window_saves_current_real_chapter(qtbot: QtBot, tmp_path: Path) -> None:
@@ -257,18 +297,18 @@ def test_generation_synchronizes_visible_requirement_before_preparing(
     assert started
 
 
-def test_agent_mode_uses_current_project_chapter_id(qtbot: QtBot, tmp_path: Path) -> None:
+def test_retired_agent_mode_stays_disabled_for_open_project(
+    qtbot: QtBot, tmp_path: Path
+) -> None:
     runtime, chapter_id = _project_with_chapter(tmp_path / "novel", tmp_path)
     window = MainWindow(model_runtime=UiModelRuntime(tmp_path), project_runtime=runtime)
     qtbot.addWidget(window)
     window.load_project_chapter(chapter_id)
     window.plot_chat_panel.agent_mode_toggle.setChecked(True)
 
-    window.plot_chat_panel.composer.setPlainText("请检索前文")
-    window.plot_chat_panel.send_button.click()
-
-    assert window.last_agent_result is not None
-    assert runtime.agent_repository.list_turns(window.last_agent_result.run_id)
+    assert not window.plot_chat_panel.agent_mode_enabled()
+    assert window.last_agent_result is None
+    assert runtime.agent_repository.latest_run() is None
 
 
 def test_main_window_builds_memory_for_open_project(qtbot: QtBot, tmp_path: Path) -> None:
@@ -291,7 +331,52 @@ def test_main_window_builds_memory_for_open_project(qtbot: QtBot, tmp_path: Path
         ).fetchone()
     assert indexed is not None
     assert window.memory_window is not None
-    assert window.memory_window.tabs.tabText(0) == "压缩前文"
+    assert window.memory_window.tabs.tabText(0) == "小说最高提示"
+    assert window.memory_window.tabs.tabText(1) == "压缩前文"
+
+
+def test_main_window_displays_one_time_bounded_card_per_character(
+    qtbot: QtBot, tmp_path: Path
+) -> None:
+    runtime, first_chapter_id = _project_with_chapter(tmp_path / "novel", tmp_path)
+    second = ChapterRepository(runtime.project).create_chapter(
+        runtime.project.list_volumes()[0].id,
+        "Second",
+        "第2章",
+        "第二章正文",
+    )
+    repository = CharacterMemoryRepository(runtime.project)
+    character = repository.create_character("林默", ("阿默",), "谨慎的调查者")
+    for chapter_id, psychology, goal in (
+        (first_chapter_id, "保持警惕", "检查旧信"),
+        (second.id, "开始动摇", "进入钟楼"),
+    ):
+        repository.append_state(
+            character.id,
+            chapter_id,
+            motivation="查明真相",
+            psychology=psychology,
+            current_goal=goal,
+            relationships="逐渐信任同伴",
+            recent_activity=f"正在{goal}",
+            confidence=1,
+            source_type=SourceType.HUMAN,
+            review_status=ReviewStatus.APPROVED,
+        )
+
+    window = MainWindow(model_runtime=UiModelRuntime(tmp_path), project_runtime=runtime)
+    qtbot.addWidget(window)
+    window.load_project_chapter(second.id)
+
+    status = window.chapter_sidebar.character_status(character.id)
+    assert window.chapter_sidebar.character_combo.count() == 1
+    assert status["goal"] == "进入钟楼"
+    assert status["profile"] == "谨慎的调查者"
+    assert window.chapter_sidebar.profile_edit.toPlainText() == "谨慎的调查者"
+    assert "检查旧信" in status["journey"]
+    assert "进入钟楼" in status["journey"]
+    assert window.chapter_sidebar.journey_edit.isReadOnly()
+    assert window.chapter_sidebar.journey_edit.toPlainText() == status["journey"]
 
 
 def test_main_window_saves_sidebar_character_state_to_project_memory(
@@ -303,6 +388,9 @@ def test_main_window_saves_sidebar_character_state_to_project_memory(
     window.load_project_chapter(chapter_id)
 
     window.chapter_sidebar.begin_new_character("林默")
+    window.chapter_sidebar.profile_edit.setPlainText(
+        "克制谨慎；说话简短；紧张时会反复摩挲袖口"
+    )
     window.chapter_sidebar.psychology_edit.setPlainText("警惕但克制")
     window.chapter_sidebar.motivation_edit.setPlainText("确认旧信真伪")
     window.chapter_sidebar.goal_edit.setPlainText("进入档案室")
@@ -315,6 +403,7 @@ def test_main_window_saves_sidebar_character_state_to_project_memory(
     state = repository.state_before(character.id, chapter_id, inclusive=True)
 
     assert character.canonical_name == "林默"
+    assert character.profile == "克制谨慎；说话简短；紧张时会反复摩挲袖口"
     assert state is not None
     assert state.psychology == "警惕但克制"
     assert state.motivation == "确认旧信真伪"
@@ -531,7 +620,7 @@ def test_ai_reference_window_shows_latest_context_manifest(
                 "CHAPTER",
                 "chapter-source",
                 None,
-                None,
+                4,
                 "hash-source",
                 "上一章全文",
                 1_800,
@@ -545,7 +634,7 @@ def test_ai_reference_window_shows_latest_context_manifest(
                 "SUMMARY",
                 "summary-source",
                 None,
-                None,
+                2,
                 "hash-summary",
                 "超出 Token 预算",
             ),
@@ -564,10 +653,11 @@ def test_ai_reference_window_shows_latest_context_manifest(
     assert "输入约 2400 Token" in window.reference_window.status_label.text()
     assert window.reference_window.table.rowCount() == 2
     assert window.reference_window.table.item(0, 0).text() == "采用"
+    assert "修订 4" in window.reference_window.table.item(0, 2).text()
     assert window.reference_window.table.item(0, 3).text() == "上一章全文"
     assert window.reference_window.table.item(1, 0).text() == "省略"
     window.reference_window.table.setCurrentCell(0, 0)
-    assert "完整来源：CHAPTER / chapter-source" in (
+    assert "完整来源：CHAPTER / chapter-source / 修订 4" in (
         window.reference_window.detail.toPlainText()
     )
     assert "选择理由：上一章全文" in window.reference_window.detail.toPlainText()
@@ -648,6 +738,79 @@ def test_deterministic_audit_uses_and_persists_current_project_chapter(
         AuditFindingStatus.FALSE_POSITIVE
     )
     assert window.audit_window.deterministic_table.item(0, 3).text() == "FALSE_POSITIVE"
+
+
+def test_audit_failures_restore_buttons_and_show_actionable_errors(
+    qtbot: QtBot, tmp_path: Path, monkeypatch
+) -> None:
+    model_runtime = UiModelRuntime(tmp_path)
+    runtime, chapter_id = _project_with_chapter(tmp_path / "novel", tmp_path)
+    window = MainWindow(model_runtime=model_runtime, project_runtime=runtime)
+    qtbot.addWidget(window)
+    window.load_project_chapter(chapter_id)
+    window.open_audit_window()
+    assert window.audit_window is not None
+
+    monkeypatch.setattr(
+        runtime.audit_service,
+        "run_deterministic",
+        lambda **_kwargs: (_ for _ in ()).throw(ValueError("确定性输入无效")),
+    )
+    window.request_deterministic_audit()
+
+    assert "确定性输入无效" in window.audit_window.error_label.text()
+    assert window.audit_window.run_deterministic_audit_button.isEnabled()
+
+    monkeypatch.setattr(
+        model_runtime.coordinator,
+        "start_audit",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("审校模型不可用")),
+    )
+    window.request_model_audit()
+
+    assert "审校模型不可用" in window.audit_window.error_label.text()
+    assert window.audit_window.run_model_audit_button.isEnabled()
+
+
+def test_async_model_audit_failure_is_shown_inside_audit_window(
+    qtbot: QtBot, tmp_path: Path, monkeypatch
+) -> None:
+    model_runtime = UiModelRuntime(tmp_path)
+    runtime, chapter_id = _project_with_chapter(tmp_path / "novel", tmp_path)
+    window = MainWindow(model_runtime=model_runtime, project_runtime=runtime)
+    qtbot.addWidget(window)
+    window.load_project_chapter(chapter_id)
+    window.open_audit_window()
+    assert window.audit_window is not None
+    monkeypatch.setattr(model_runtime.coordinator, "start_audit", lambda *_args: None)
+
+    window.request_model_audit()
+    window.show_model_error("审校返回格式无效")
+
+    assert "审校返回格式无效" in window.audit_window.error_label.text()
+    assert window.audit_window.run_model_audit_button.isEnabled()
+
+
+def test_deterministic_audit_uses_visible_unsaved_requirement(
+    qtbot: QtBot, tmp_path: Path
+) -> None:
+    runtime, chapter_id = _project_with_chapter(tmp_path / "novel", tmp_path)
+    window = MainWindow(model_runtime=UiModelRuntime(tmp_path), project_runtime=runtime)
+    qtbot.addWidget(window)
+    window.load_project_chapter(chapter_id)
+    window.manuscript_panel.chapter_requirement.setPlainText(
+        "must: visible-only-required-event"
+    )
+    window.open_audit_window()
+
+    window.request_deterministic_audit()
+
+    runs = AuditRepository(runtime.project).list_runs_for_target(
+        target_kind=AuditTargetKind.FORMAL_CHAPTER,
+        target_id=chapter_id,
+    )
+    findings = AuditRepository(runtime.project).list_findings(runs[0].id)
+    assert any(item.evidence == "visible-only-required-event" for item in findings)
 
 
 def test_validated_repair_is_applied_only_after_user_confirmation(

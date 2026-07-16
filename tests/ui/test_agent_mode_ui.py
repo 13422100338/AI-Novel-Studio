@@ -4,7 +4,7 @@ from ai_novel_studio.domain.agent import (
     AgentToolCallStatus,
     AgentToolName,
 )
-from ai_novel_studio.infrastructure.llm import LLMMessage
+from ai_novel_studio.infrastructure.llm import LLMMessage, ModelRoute
 from ai_novel_studio.ui.main_window import MainWindow
 from ai_novel_studio.ui.pages.agent_trace_window import AgentTraceWindow
 
@@ -35,6 +35,19 @@ class FakeRuntime:
         self.settings_controller = None
 
 
+class RoutedFakeRuntime(FakeRuntime):
+    def __init__(self) -> None:
+        super().__init__()
+        route = ModelRoute("relay", "agent-model")
+        routes = type(
+            "Routes",
+            (),
+            {"resolve": lambda _self, _purpose: route},
+        )()
+        configuration = type("Configuration", (), {"routes": routes})()
+        self.gateway = type("Gateway", (), {"configuration": configuration})()
+
+
 class FakeAgentRuntime:
     def __init__(self) -> None:
         self.calls = []
@@ -51,14 +64,17 @@ def test_coordinator_only_runtime_keeps_memory_build_available_offline(qtbot):  
     assert window.manuscript_memory_build_service.analyzer is None
 
 
-def test_agent_mode_toggle_defaults_off(qtbot):  # type: ignore[no-untyped-def]
+def test_agent_mode_is_retired_and_cannot_be_reenabled(qtbot):  # type: ignore[no-untyped-def]
     window = MainWindow(model_runtime=FakeRuntime())
     qtbot.addWidget(window)
 
     assert not window.plot_chat_panel.agent_mode_enabled()
-    assert window.plot_chat_panel.agent_mode_toggle.text() == "工具检索"
-    assert window.plot_chat_panel.agent_trace_button.text() == "证据追踪"
-    assert window.plot_chat_panel.agent_trace_button.accessibleName() == "查看证据追踪"
+    assert window.plot_chat_panel.agent_mode_toggle.isHidden()
+    assert window.plot_chat_panel.agent_trace_button.isHidden()
+
+    window.plot_chat_panel.agent_mode_toggle.setChecked(True)
+
+    assert not window.plot_chat_panel.agent_mode_enabled()
 
 
 def test_normal_plot_chat_still_uses_existing_coordinator(qtbot):  # type: ignore[no-untyped-def]
@@ -72,8 +88,8 @@ def test_normal_plot_chat_still_uses_existing_coordinator(qtbot):  # type: ignor
     assert runtime.coordinator.chat_calls
 
 
-def test_agent_mode_sends_current_text_and_requirement_to_agent_runtime(qtbot):  # type: ignore[no-untyped-def]
-    runtime = FakeRuntime()
+def test_retired_agent_mode_always_uses_normal_plot_chat(qtbot):  # type: ignore[no-untyped-def]
+    runtime = RoutedFakeRuntime()
     agent_runtime = FakeAgentRuntime()
     window = MainWindow(model_runtime=runtime, agent_runtime=agent_runtime)
     qtbot.addWidget(window)
@@ -84,10 +100,8 @@ def test_agent_mode_sends_current_text_and_requirement_to_agent_runtime(qtbot): 
     window.plot_chat_panel.composer.setPlainText("Agent 讨论")
     window.plot_chat_panel.send_button.click()
 
-    assert not runtime.coordinator.chat_calls
-    assert agent_runtime.calls[0]["current_manuscript"] == "当前正文"
-    assert agent_runtime.calls[0]["chapter_requirement"] == "当前章要求"
-    assert window.plot_chat_panel.message_bubbles[-1].text() == "Agent 回答"
+    assert runtime.coordinator.chat_calls
+    assert not agent_runtime.calls
 
 
 def test_trace_window_displays_turns_tool_calls_and_omissions(qtbot):  # type: ignore[no-untyped-def]

@@ -3,6 +3,9 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
 
+from ai_novel_studio.application.reader_knowledge_summary_service import (
+    ReaderKnowledgeSummaryService,
+)
 from ai_novel_studio.core.brief.source_fingerprint import BriefSourceSnapshot
 from ai_novel_studio.core.context.history_retriever import HistoryRetriever
 from ai_novel_studio.core.context.style_retriever import StyleRetriever
@@ -14,7 +17,6 @@ from ai_novel_studio.domain.memory import (
     CanonEntry,
     CharacterStateEvent,
     KnowledgeStateEvent,
-    KnowledgeSubject,
 )
 from ai_novel_studio.infrastructure.storage.chapter_brief_repository import (
     ChapterBriefRepository,
@@ -97,6 +99,7 @@ class BriefContextProvider:
         self.styles = styles
         self.search = search
         self.briefs = briefs
+        self.reader_summary = ReaderKnowledgeSummaryService(project)
 
     def collect(self, request: BriefCompilationRequest) -> BriefCompilationInputs:
         requirement = self.requirements.get(request.chapter_id)
@@ -166,25 +169,13 @@ class BriefContextProvider:
                         f"人物 {snapshot.character.canonical_name} 在同一节点存在多个已审查状态",
                     )
                 )
-            for entry in snapshot.knowledge:
-                knowledge_texts.append(
-                    f"人物知识/{snapshot.character.canonical_name}/{entry.event.state.value}："
-                    f"{entry.item.title}（{entry.item.detail}）"
-                )
-                sources.append(
-                    self._knowledge_source(entry.event, entry.item.title, entry.item.detail)
-                )
-
-        reader_entries = self.characters.knowledge_before(
-            KnowledgeSubject.READER,
-            self.project.project.id,
-            request.chapter_id,
-        )
-        for entry in reader_entries:
-            knowledge_texts.append(
-                f"读者知识/{entry.event.state.value}：{entry.item.title}（{entry.item.detail}）"
+        reader_summary = self.reader_summary.summary_before(request.chapter_id)
+        if reader_summary is not None:
+            knowledge_texts.append(reader_summary.content)
+            sources.extend(
+                self._knowledge_source(entry.event, entry.item.title, entry.item.detail)
+                for entry in reader_summary.entries
             )
-            sources.append(self._knowledge_source(entry.event, entry.item.title, entry.item.detail))
 
         clue_texts: list[str] = []
         for timeline in NarrativeClueLedger(self.narrative).active_before(request.chapter_id):

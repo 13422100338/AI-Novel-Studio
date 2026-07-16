@@ -23,10 +23,20 @@ class RecordingGateway:
         return LLMResponse(self.responses.pop(0), "memory-model")
 
 
+def _valid_summary() -> str:
+    return (
+        "## 剧情概况\n主角收到一封来源不明的信，并决定核对信上的旧暗号。\n"
+        "## 关键情节点\n- 收到匿名旧信\n"
+        "## 人物成长\n- 主角由迟疑转为主动调查\n"
+        "## 连续性要点\n- 旧暗号属于失踪者\n"
+        "## 细节摘录\n- 无"
+    )
+
+
 def _valid_payload() -> str:
     return json.dumps(
         {
-            "summary": "主角收到一封来源不明的信。",
+            "summary": _valid_summary(),
             "character_states": [
                 {
                     "character_name": "林岚",
@@ -48,12 +58,19 @@ def _valid_payload() -> str:
             ],
             "knowledge": [
                 {
-                    "subject_type": "CHARACTER",
-                    "subject_id": "character-lin",
+                    "subject_type": "READER",
+                    "subject_id": "READER",
                     "title": "暗号来源",
-                    "detail": "林岚认出了暗号。",
+                    "detail": "读者看见林岚认出了暗号。",
                     "state": "KNOWN",
-                }
+                },
+                {
+                    "subject_type": "CHARACTER",
+                    "subject_id": "林岚",
+                    "title": "旧人物知识输出",
+                    "detail": "应由人物状态承载。",
+                    "state": "KNOWN",
+                },
             ],
             "style": [
                 {
@@ -76,12 +93,15 @@ def test_extracts_review_candidates_with_source_provenance_and_ordered_prompt() 
 
     assert result.source_chapter_id == "chapter-1"
     assert result.source_revision == 3
-    assert result.summary.content == "主角收到一封来源不明的信。"
+    assert result.summary.content == _valid_summary()
     assert result.authority == Authority.MODEL_EXTRACTED
     assert result.review_status == ReviewStatus.REVIEW
     assert result.character_states[0].current_goal == "核对暗号"
     assert result.clues[0].clue_type.value == "FORESHADOW"
     assert result.knowledge[0].state.value == "KNOWN"
+    assert len(result.knowledge) == 1
+    assert result.knowledge[0].subject_type.value == "READER"
+    assert result.style == ()
 
     purpose, messages, output_limit, options = gateway.calls[0]
     assert purpose == TaskPurpose.MEMORY_EXTRACTION
@@ -135,7 +155,55 @@ def test_memory_prompt_declares_nested_enum_values_and_structured_summary() -> N
     system_prompt = gateway.calls[0][1][0].content  # type: ignore[attr-defined]
     assert "FORESHADOW" in system_prompt
     assert "PLANT" in system_prompt
+    assert "style" not in system_prompt
+    assert "文风候选" not in system_prompt
     assert "## 剧情概况" in system_prompt
+    assert "## 细节摘录" in system_prompt
+    assert "## 伏笔与未决问题" not in system_prompt
+
+
+def test_rejects_summary_missing_required_section() -> None:
+    payload = json.loads(_valid_payload())
+    payload["summary"] = _valid_summary().replace("## 人物成长\n- 主角由迟疑转为主动调查\n", "")
+    gateway = RecordingGateway([json.dumps(payload, ensure_ascii=False)])
+    service = MemoryAnalysisService(LLMContractRunner(gateway))  # type: ignore[arg-type]
+
+    with pytest.raises(MemoryCandidateValidationError, match="人物成长"):
+        service.extract_candidates("chapter-1", 0, "原稿正文")
+
+
+def test_rejects_legacy_foreshadow_section_in_summary() -> None:
+    payload = json.loads(_valid_payload())
+    payload["summary"] = _valid_summary().replace(
+        "## 连续性要点", "## 伏笔与未决问题\n- 一封信仍待解释\n## 连续性要点"
+    )
+    gateway = RecordingGateway([json.dumps(payload, ensure_ascii=False)])
+    service = MemoryAnalysisService(LLMContractRunner(gateway))  # type: ignore[arg-type]
+
+    with pytest.raises(MemoryCandidateValidationError, match="伏笔"):
+        service.extract_candidates("chapter-1", 0, "原稿正文")
+
+
+def test_rejects_plot_overview_longer_than_one_thousand_characters() -> None:
+    payload = json.loads(_valid_payload())
+    payload["summary"] = _valid_summary().replace(
+        "主角收到一封来源不明的信，并决定核对信上的旧暗号。", "情" * 1001
+    )
+    gateway = RecordingGateway([json.dumps(payload, ensure_ascii=False)])
+    service = MemoryAnalysisService(LLMContractRunner(gateway))  # type: ignore[arg-type]
+
+    with pytest.raises(MemoryCandidateValidationError, match="1000"):
+        service.extract_candidates("chapter-1", 0, "原稿正文")
+
+
+def test_rejects_detail_excerpt_not_found_in_source_text() -> None:
+    payload = json.loads(_valid_payload())
+    payload["summary"] = _valid_summary().replace("- 无", "- 原文：模型虚构的原句")
+    gateway = RecordingGateway([json.dumps(payload, ensure_ascii=False)])
+    service = MemoryAnalysisService(LLMContractRunner(gateway))  # type: ignore[arg-type]
+
+    with pytest.raises(MemoryCandidateValidationError, match="原文"):
+        service.extract_candidates("chapter-1", 0, "原稿正文")
 
 
 def test_character_state_allows_unknown_fields_as_empty_strings() -> None:

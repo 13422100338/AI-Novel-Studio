@@ -30,9 +30,17 @@ from ai_novel_studio.application.memory_workspace_service import (
     MemoryWorkspaceRecord,
     MemoryWorkspaceService,
 )
-from ai_novel_studio.domain.memory import MemoryStatus, ReviewStatus
+from ai_novel_studio.application.project_guidance_service import ProjectGuidanceService
+from ai_novel_studio.domain.memory import Authority, MemoryStatus, ReviewStatus
 from ai_novel_studio.ui.demo_data import WorkspaceDemoData
 from ai_novel_studio.ui.i18n import language_manager
+
+CANON_GROUPS = (
+    ("WORLD", "世界观"),
+    ("CHARACTER_IDENTITY", "人物身份背景"),
+    ("ITEM_ABILITY", "重要物品、能力与兵器"),
+    ("ORGANIZATION", "组织、团队与成员"),
+)
 
 
 class MemoryWindow(QMainWindow):
@@ -44,12 +52,17 @@ class MemoryWindow(QMainWindow):
         self._service: MemoryWorkspaceService | None = None
         self._records: dict[str, MemoryWorkspaceRecord] = {}
         self.selectors: dict[str, QComboBox] = {}
+        self.group_selectors: dict[str, QComboBox] = {}
+        self._category_records: dict[str, list[MemoryWorkspaceRecord]] = {}
         self.editors: dict[str, QPlainTextEdit] = {}
         self.field_widgets: dict[str, dict[str, QWidget]] = {}
         self.setting_source_id: str | None = None
         self._promotion_coordinator: MemoryPromotionCoordinator | None = None
         self._pin_service: ChapterContextPinService | None = None
         self._pin_chapter_id: str | None = None
+        self._guidance_service: ProjectGuidanceService | None = None
+        self._guidance_project_id: str | None = None
+        self._guidance_revision = 0
 
         self.setWindowTitle("记忆库 · AI Novel Studio")
         self.setMinimumSize(820, 640)
@@ -64,7 +77,8 @@ class MemoryWindow(QMainWindow):
         title = QLabel("长篇记忆库", surface)
         title.setObjectName("panelTitle")
         self.explanation_label = QLabel(
-            "这里展示 AI 生成前可检索的压缩前文、人物与读者知识边界、正典和叙事线索。"
+            "AI 生成前，压缩前文只记录已发生剧情、人物成长、连续性与原文细节摘录；"
+            "伏笔和未决问题独立存放在叙事线索。"
             "模型提取内容只会成为待审查候选；只有用户明确晋升后才可成为当前记忆。",
             surface,
         )
@@ -73,6 +87,7 @@ class MemoryWindow(QMainWindow):
 
         self.tabs = QTabWidget(surface)
         self.tabs.setObjectName("memoryTabs")
+        self._add_guidance_tab()
         for tab_name, text in data.memory_tabs:
             self._add_demo_tab(tab_name, text)
         self._add_setting_tab()
@@ -98,8 +113,15 @@ class MemoryWindow(QMainWindow):
         self.promote_all_button.setAccessibleName("晋升记忆库中的全部待审查候选")
         self.promote_all_button.setEnabled(False)
         self.promote_all_button.clicked.connect(self._promote_all)
-        self.pin_button = QPushButton("＋ 加入当前章", note)
-        self.pin_button.setAccessibleName("将当前记忆加入当前章 AI 参考")
+        self.retry_button = QPushButton("撤销晋升并重整本章", note)
+        self.retry_button.setAccessibleName("撤销当前模型摘要晋升并标记重新整理")
+        self.retry_button.setToolTip(
+            "仅适用于已晋升的模型章节摘要；不会删除记录。标记后请点击主界面的“整理记忆”。"
+        )
+        self.retry_button.setEnabled(False)
+        self.retry_button.clicked.connect(self._request_model_retry)
+        self.pin_button = QPushButton("＋ 强制加入当前章", note)
+        self.pin_button.setAccessibleName("将当前记忆强制加入当前章 AI 参考")
         self.pin_button.setEnabled(False)
         self.pin_button.clicked.connect(self._toggle_current_pin)
         self.pin_summaries_button = QPushButton("一键加入压缩前文", note)
@@ -109,10 +131,11 @@ class MemoryWindow(QMainWindow):
         actions.addWidget(self.save_button)
         actions.addWidget(self.promote_button)
         actions.addWidget(self.promote_all_button)
+        actions.addWidget(self.retry_button)
         actions.addStretch(1)
         note_layout.addLayout(actions)
         pin_actions = QHBoxLayout()
-        pin_label = QLabel("当前章人工参考", note)
+        pin_label = QLabel("当前章人工必选参考", note)
         pin_label.setObjectName("sectionEyebrow")
         pin_actions.addWidget(pin_label)
         pin_actions.addWidget(self.pin_button)
@@ -133,6 +156,7 @@ class MemoryWindow(QMainWindow):
         *,
         pin_service: ChapterContextPinService | None = None,
         target_chapter_id: str | None = None,
+        guidance_service: ProjectGuidanceService | None = None,
     ) -> None:
         if (
             self._promotion_coordinator is not None
@@ -147,6 +171,10 @@ class MemoryWindow(QMainWindow):
             if hasattr(self, "setting_title_edit")
             else ("", "混合设定", "")
         )
+        guidance_draft = self.guidance_editor.toPlainText()
+        guidance_modified = self.guidance_editor.document().isModified()
+        guidance_project_id = self._guidance_project_id
+        guidance_revision = self._guidance_revision
         snapshot = service.load(before_chapter_id)
         grouped: dict[str, list[MemoryWorkspaceRecord]] = defaultdict(list)
         for record in snapshot.records:
@@ -163,8 +191,22 @@ class MemoryWindow(QMainWindow):
         self._records = {record.id: record for record in snapshot.records}
         self.tabs.clear()
         self.selectors.clear()
+        self.group_selectors.clear()
+        self._category_records.clear()
         self.editors.clear()
         self.field_widgets.clear()
+        self._add_guidance_tab()
+        self._bind_guidance(
+            guidance_service,
+            preserved_draft=(
+                guidance_draft
+                if guidance_modified
+                and guidance_service is not None
+                and guidance_service.project_id == guidance_project_id
+                else None
+            ),
+            preserved_revision=guidance_revision,
+        )
         for category, records in grouped.items():
             self._add_record_tab(category, records)
         self._add_setting_tab()
@@ -176,10 +218,13 @@ class MemoryWindow(QMainWindow):
             self.save_button.setEnabled(False)
             self.promote_button.setEnabled(False)
             self.promote_all_button.setEnabled(False)
+            self.retry_button.setEnabled(False)
             self.pin_button.setEnabled(False)
             self.pin_summaries_button.setEnabled(False)
             return
-        self.tabs.setCurrentIndex(0)
+        # Keep the first actual memory category selected so existing review actions
+        # remain immediately usable; the project guidance tab stays available at index 0.
+        self.tabs.setCurrentIndex(1)
         self._refresh_current_record()
 
     def _add_setting_tab(self) -> None:
@@ -218,6 +263,102 @@ class MemoryWindow(QMainWindow):
         layout.addLayout(buttons)
         self.tabs.addTab(page, "设定资料整理")
 
+    def _add_guidance_tab(self) -> None:
+        page = QWidget(self.tabs)
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(8, 10, 8, 8)
+        explanation = QLabel(
+            "这里保存整部小说不可被模型自动覆盖的最高创作指令，例如基本目的、主题、"
+            "写作视角和不可违背的总原则。它只能由用户人工编辑；本页不会调用 AI。",
+            page,
+        )
+        explanation.setWordWrap(True)
+        explanation.setObjectName("mutedLabel")
+        self.guidance_editor = QPlainTextEdit(page)
+        self.guidance_editor.setAccessibleName("编辑小说最高系统提示")
+        self.guidance_editor.setReadOnly(True)
+        self.guidance_editor.setPlaceholderText(
+            "例如：本书讲述人在失去中学习承担；使用第三人称限知视角……"
+        )
+        actions = QHBoxLayout()
+        self.guidance_save_button = QPushButton("保存最高提示", page)
+        self.guidance_save_button.setAccessibleName("人工保存小说最高系统提示")
+        self.guidance_save_button.setEnabled(False)
+        self.guidance_status_label = QLabel("当前未绑定项目", page)
+        self.guidance_status_label.setObjectName("mutedLabel")
+        self.guidance_save_button.clicked.connect(self._save_guidance)
+        self.guidance_editor.textChanged.connect(self._guidance_text_changed)
+        actions.addWidget(self.guidance_save_button)
+        actions.addWidget(self.guidance_status_label, 1)
+        layout.addWidget(explanation)
+        layout.addWidget(self.guidance_editor, 1)
+        layout.addLayout(actions)
+        self.tabs.addTab(page, "小说最高提示")
+
+    def _bind_guidance(
+        self,
+        service: ProjectGuidanceService | None,
+        *,
+        preserved_draft: str | None,
+        preserved_revision: int,
+    ) -> None:
+        self._guidance_service = service
+        if service is None:
+            self._guidance_project_id = None
+            self._guidance_revision = 0
+            self.guidance_editor.clear()
+            self.guidance_editor.setReadOnly(True)
+            self.guidance_editor.document().setModified(False)
+            self.guidance_save_button.setEnabled(False)
+            self.guidance_status_label.setText("当前未绑定项目")
+            return
+        self._guidance_project_id = service.project_id
+        self.guidance_editor.setReadOnly(False)
+        if preserved_draft is not None:
+            self._guidance_revision = preserved_revision
+            self.guidance_editor.setPlainText(preserved_draft)
+            self.guidance_editor.document().setModified(True)
+            self.guidance_save_button.setEnabled(True)
+            self.guidance_status_label.setText("保留了尚未保存的人工修改")
+            return
+        guidance = service.load()
+        self._guidance_revision = guidance.revision
+        self.guidance_editor.setPlainText(guidance.highest_system_prompt)
+        self.guidance_editor.document().setModified(False)
+        self.guidance_save_button.setEnabled(False)
+        self.guidance_status_label.setText(
+            f"已加载人工修订 {guidance.revision}"
+            if guidance.highest_system_prompt
+            else "尚未填写；仅在人工保存后生效"
+        )
+
+    def _guidance_text_changed(self) -> None:
+        if self._guidance_service is None:
+            self.guidance_save_button.setEnabled(False)
+            return
+        modified = self.guidance_editor.document().isModified()
+        self.guidance_save_button.setEnabled(modified)
+        if modified:
+            self.guidance_status_label.setText("有尚未保存的人工修改")
+
+    def _save_guidance(self) -> None:
+        service = self._guidance_service
+        if service is None:
+            return
+        try:
+            saved = service.save_manual(
+                self.guidance_editor.toPlainText(),
+                expected_revision=self._guidance_revision,
+            )
+        except (RuntimeError, ValueError) as error:
+            self.guidance_status_label.setText(f"保存失败：{error}")
+            return
+        self._guidance_revision = saved.revision
+        self.guidance_editor.setPlainText(saved.highest_system_prompt)
+        self.guidance_editor.document().setModified(False)
+        self.guidance_save_button.setEnabled(False)
+        self.guidance_status_label.setText(f"已人工保存 · 修订 {saved.revision}")
+
     def _setting_values(self) -> tuple[str, str, str]:
         return (
             self.setting_title_edit.text().strip(),
@@ -255,13 +396,36 @@ class MemoryWindow(QMainWindow):
         page_layout.setContentsMargins(0, 8, 0, 0)
         selector = QComboBox(page)
         selector.setAccessibleName(f"选择{category}记录")
-        for record in records:
-            selector.addItem(record.title, record.id)
         editor = QPlainTextEdit(page)
         editor.setAccessibleName(f"编辑{category}")
         field_widgets: dict[str, QWidget] = {}
         fields = records[0].fields
-        page_layout.addWidget(selector)
+        self._category_records[category] = records
+        if category == "正典事实" and any(record.group_key for record in records):
+            group_selector = QComboBox(page)
+            group_selector.setAccessibleName("选择正典卡片")
+            for group_key, group_title in CANON_GROUPS:
+                group_selector.addItem(group_title, group_key)
+            available_groups = {record.group_key for record in records}
+            first_available = next(
+                (
+                    index
+                    for index in range(group_selector.count())
+                    if group_selector.itemData(index) in available_groups
+                ),
+                0,
+            )
+            group_selector.setCurrentIndex(first_available)
+            selector.setAccessibleName("选择正典卡片内事实")
+            selectors_form = QFormLayout()
+            selectors_form.addRow("正典卡片", group_selector)
+            selectors_form.addRow("卡内事实", selector)
+            page_layout.addLayout(selectors_form)
+            self.group_selectors[category] = group_selector
+        else:
+            for record in records:
+                selector.addItem(record.title, record.id)
+            page_layout.addWidget(selector)
         if fields:
             form = QFormLayout()
             for field in fields:
@@ -284,7 +448,29 @@ class MemoryWindow(QMainWindow):
         self.editors[category] = editor
         self.field_widgets[category] = field_widgets
         selector.currentIndexChanged.connect(self._refresh_current_record)
+        bound_group_selector = self.group_selectors.get(category)
+        if bound_group_selector is not None:
+            bound_group_selector.currentIndexChanged.connect(
+                lambda _index, selected_category=category: self._filter_group_records(
+                    selected_category
+                )
+            )
+            self._filter_group_records(category)
         self.tabs.addTab(page, category)
+
+    def _filter_group_records(self, category: str) -> None:
+        group_selector = self.group_selectors.get(category)
+        selector = self.selectors.get(category)
+        if group_selector is None or selector is None:
+            return
+        selected_group = str(group_selector.currentData() or "")
+        selector.blockSignals(True)
+        selector.clear()
+        for record in self._category_records.get(category, []):
+            if record.group_key == selected_group:
+                selector.addItem(record.title, record.id)
+        selector.blockSignals(False)
+        self._refresh_current_record()
 
     def _current_record(self) -> MemoryWorkspaceRecord | None:
         category = self.tabs.tabText(self.tabs.currentIndex())
@@ -297,6 +483,24 @@ class MemoryWindow(QMainWindow):
     def _refresh_current_record(self, _index: int = -1) -> None:
         record = self._current_record()
         if record is None:
+            category = self.tabs.tabText(self.tabs.currentIndex())
+            selector = self.selectors.get(category)
+            if selector is not None and selector.count() == 0:
+                editor = self.editors.get(category)
+                if editor is not None:
+                    editor.clear()
+                    editor.setReadOnly(True)
+                for widget in self.field_widgets.get(category, {}).values():
+                    if isinstance(widget, QComboBox):
+                        widget.setCurrentIndex(-1)
+                        widget.setEnabled(False)
+                    elif isinstance(widget, QPlainTextEdit):
+                        widget.clear()
+                        widget.setReadOnly(True)
+                    elif isinstance(widget, QLineEdit):
+                        widget.clear()
+                        widget.setReadOnly(True)
+                self.metadata_label.setText("当前正典卡片暂无事实记录。")
             if self._service is not None:
                 self.save_button.setEnabled(False)
                 self.promote_button.setEnabled(False)
@@ -310,16 +514,16 @@ class MemoryWindow(QMainWindow):
         editor.setReadOnly(locked or not record.editable)
         widgets = self.field_widgets.get(category, {})
         for field in record.fields:
-            widget = widgets.get(field.key)
-            if isinstance(widget, QComboBox):
-                widget.setCurrentText(field.value)
-                widget.setEnabled(not locked)
-            elif isinstance(widget, QPlainTextEdit):
-                widget.setPlainText(field.value)
-                widget.setReadOnly(locked)
-            elif isinstance(widget, QLineEdit):
-                widget.setText(field.value)
-                widget.setReadOnly(locked)
+            field_widget = widgets.get(field.key)
+            if isinstance(field_widget, QComboBox):
+                field_widget.setCurrentText(field.value)
+                field_widget.setEnabled(not locked and field.editable)
+            elif isinstance(field_widget, QPlainTextEdit):
+                field_widget.setPlainText(field.value)
+                field_widget.setReadOnly(locked or not field.editable)
+            elif isinstance(field_widget, QLineEdit):
+                field_widget.setText(field.value)
+                field_widget.setReadOnly(locked or not field.editable)
         source = record.source_chapter_id or "无章节来源"
         source_revision = (
             str(record.source_revision) if record.source_revision is not None else "未知"
@@ -337,6 +541,17 @@ class MemoryWindow(QMainWindow):
         busy = self._bulk_promotion_running()
         self.save_button.setEnabled(record.editable and not locked and not busy)
         self.promote_button.setEnabled(record.promotable and not locked and not busy)
+        self.retry_button.setEnabled(
+            record.source_type == "SUMMARY"
+            and record.authority == Authority.MODEL_EXTRACTED
+            and record.review_status == ReviewStatus.APPROVED
+            and record.source_chapter_id is not None
+            and not busy
+        )
+        if record.source_type == "SUMMARY_FALLBACK":
+            self.retry_button.setText("本章已等待重新整理")
+        else:
+            self.retry_button.setText("撤销晋升并重整本章")
         self._refresh_bulk_promotion_button()
         self._refresh_pin_buttons()
 
@@ -350,7 +565,10 @@ class MemoryWindow(QMainWindow):
             return
         pinned = service.is_pinned(chapter_id, record)
         self.pin_button.setText(
-            "✓ 已加入（点击移除）" if pinned else "＋ 加入当前章"
+            "✓ 已强制加入（点击移除）" if pinned else "＋ 强制加入当前章"
+        )
+        self.pin_button.setToolTip(
+            "强制参考不会被 Token 预算静默省略；若总量超出模型输入能力，生成会明确失败。"
         )
         eligible = (
             record.review_status in {ReviewStatus.APPROVED, ReviewStatus.LOCKED}
@@ -396,8 +614,8 @@ class MemoryWindow(QMainWindow):
             tuple(self._records.values()),
         )
         self.metadata_label.setText(
-            f"已将 {len(pinned)} 条可用压缩前文加入当前章 AI 参考。"
-            "最终采用情况仍受本次生成的 Token 预算约束。"
+            f"已将 {len(pinned)} 条可用压缩前文强制加入当前章 AI 参考。"
+            "这些内容不会被静默省略；若超过模型输入能力，生成会明确报错。"
         )
         self._refresh_pin_buttons()
 
@@ -429,7 +647,24 @@ class MemoryWindow(QMainWindow):
             self.metadata_label.setText(f"保存失败：{error}")
             return
         self._records[updated.id] = updated
-        self._refresh_current_record()
+        category_records = self._category_records.get(category)
+        if category_records is not None:
+            self._category_records[category] = [
+                updated if item.id == updated.id else item for item in category_records
+            ]
+        group_selector = self.group_selectors.get(category)
+        if group_selector is not None and updated.group_key:
+            group_index = group_selector.findData(updated.group_key)
+            if group_index >= 0 and group_index != group_selector.currentIndex():
+                group_selector.setCurrentIndex(group_index)
+            else:
+                self._filter_group_records(category)
+            selector = self.selectors[category]
+            record_index = selector.findData(updated.id)
+            if record_index >= 0:
+                selector.setCurrentIndex(record_index)
+        else:
+            self._refresh_current_record()
 
     def _promote_current(self) -> None:
         record = self._current_record()
@@ -443,6 +678,36 @@ class MemoryWindow(QMainWindow):
             return
         self._records[promoted.id] = promoted
         self._refresh_current_record()
+
+    def _request_model_retry(self) -> None:
+        record = self._current_record()
+        service = self._service
+        if record is None or service is None:
+            return
+        answer = QMessageBox.question(
+            self,
+            "确认撤销晋升",
+            "这会把当前模型章节摘要退回待审查，并标记为下次“整理记忆”时重新提取。\n"
+            "旧摘要及该章已经晋升的其他记忆不会删除；重新提取的结果会作为待审查候选。\n"
+            "人工确认或锁定摘要不会受影响。是否继续？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            retried = service.request_model_retry(
+                record.id, expected_revision=record.revision
+            )
+        except (KeyError, PermissionError, RuntimeError, ValueError) as error:
+            self.metadata_label.setText(f"撤销晋升失败：{error}")
+            return
+        self._records[retried.id] = retried
+        self._refresh_current_record()
+        self.metadata_label.setText(
+            "已撤销晋升并标记本章重整。请关闭记忆库后点击左侧“整理记忆”；"
+            "正常章节不会重新调用模型。"
+        )
 
     def _refresh_bulk_promotion_button(self) -> None:
         count = (
@@ -540,6 +805,7 @@ class MemoryWindow(QMainWindow):
             self.save_button.setEnabled(False)
             self.promote_button.setEnabled(False)
             self.promote_all_button.setEnabled(False)
+            self.retry_button.setEnabled(False)
 
     def _bulk_promotion_running(self) -> bool:
         return bool(

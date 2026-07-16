@@ -67,15 +67,16 @@ def test_latest_schema_keeps_generation_tables_and_preserves_v2_data(tmp_path) -
                 "SELECT name FROM sqlite_master WHERE type = 'index'"
             )
         }
-        title = connection.execute(
-            "SELECT title FROM canon_entries WHERE id = 'canon-1'"
-        ).fetchone()[0]
+        title, category = connection.execute(
+            "SELECT title, category FROM canon_entries WHERE id = 'canon-1'"
+        ).fetchone()
         version = connection.execute("PRAGMA user_version").fetchone()[0]
     finally:
         connection.close()
 
-    assert version == LATEST_SCHEMA_VERSION == 7
+    assert version == LATEST_SCHEMA_VERSION == 9
     assert title == "旧港状态"
+    assert category is None
     assert {
         "chapter_requirements",
         "chapter_briefs",

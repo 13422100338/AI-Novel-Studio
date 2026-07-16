@@ -4,6 +4,7 @@ from ai_novel_studio.application.model_tasks import (
     ChatSummaryResult,
     ModelTaskService,
     NormalizedBrief,
+    StyleAuditFinding,
     StyleAuditResult,
 )
 from ai_novel_studio.infrastructure.llm import (
@@ -73,7 +74,15 @@ def test_chat_summary_preserves_long_term_decisions_in_validated_json() -> None:
 
 
 def test_requirement_draft_uses_plot_route_and_returns_nonempty_formal_instruction() -> None:
-    gateway = FakeGateway(["本章必须让主角发现信封封口被替换，但不能确认幕后人。"])
+    gateway = FakeGateway(
+        [
+            '{"chapter_goal":"让主角开始怀疑信件来源",'
+            '"hard_events":["发现信封封口被替换"],'
+            '"character_psychology":["主角警惕但保持克制"],'
+            '"forbidden_changes":["不能确认幕后人"],'
+            '"creative_freedom":["环境细节"]}'
+        ]
+    )
     service = ModelTaskService(gateway)  # type: ignore[arg-type]
 
     result = service.draft_chapter_requirement(
@@ -82,10 +91,13 @@ def test_requirement_draft_uses_plot_route_and_returns_nonempty_formal_instructi
         2000,
     )
 
-    assert result.startswith("本章必须")
-    purpose, messages, _, _ = gateway.calls[0]
+    assert result.startswith("## 当前章目标")
+    assert "- 发现信封封口被替换" in result
+    assert "## 禁止改变\n- 不能确认幕后人" in result
+    purpose, messages, _, kwargs = gateway.calls[0]
     assert purpose == TaskPurpose.CHAPTER_REQUIREMENT
-    assert "正式当前章要求" in messages[-1].content
+    assert "不得写小说正文" in messages[-1].content
+    assert kwargs["json_mode"] is True
 
 
 def test_brief_normalization_uses_json_contract_and_typed_result() -> None:
@@ -129,6 +141,43 @@ def test_brief_normalization_accepts_safe_scalar_list_shape_variants() -> None:
     assert result.creative_freedom == ("环境细节",)
 
 
+def test_brief_normalization_accepts_known_aliases_and_missing_sections() -> None:
+    gateway = FakeGateway(
+        ['{"戏剧功能":"推动调查","必须事件":"发现封口"}']
+    )
+    service = ModelTaskService(gateway)  # type: ignore[arg-type]
+
+    result = service.normalize_brief("未经整理的 Brief", 4000)
+
+    assert result == NormalizedBrief(
+        dramatic_function="推动调查",
+        hard_events=("发现封口",),
+        soft_goals=(),
+        forbidden_changes=(),
+        creative_freedom=(),
+    )
+
+
+def test_brief_normalization_retries_unrecognized_payload_with_exact_schema() -> None:
+    gateway = FakeGateway(
+        [
+            '{"content":"推动调查"}',
+            '{"dramatic_function":"推动调查","hard_events":[],"soft_goals":[],'
+            '"forbidden_changes":[],"creative_freedom":[]}',
+        ]
+    )
+    service = ModelTaskService(gateway)  # type: ignore[arg-type]
+
+    result = service.normalize_brief("未经整理的 Brief", 4000)
+
+    assert result.dramatic_function == "推动调查"
+    assert len(gateway.calls) == 2
+    correction = gateway.calls[1][1][-1].content
+    assert "合同字段" in correction
+    assert "dramatic_function" in correction
+    assert "hard_events" in correction
+
+
 def test_style_audit_returns_findings_without_modifying_manuscript() -> None:
     gateway = FakeGateway(
         [
@@ -143,5 +192,42 @@ def test_style_audit_returns_findings_without_modifying_manuscript() -> None:
 
     assert isinstance(result, StyleAuditResult)
     assert result.summary == "人物声音略显一致"
+    assert result.findings[0].category == "STYLE"
+    assert result.findings[0].severity == "WARNING"
     assert result.findings[0].evidence == "两人用词相同"
     assert gateway.calls[0][0] == TaskPurpose.STYLE_AUDIT
+
+
+def test_style_audit_accepts_nested_aliases_and_missing_summary() -> None:
+    gateway = FakeGateway(
+        [
+            '{"findings":[{"category":"STYLE","problem":"声音区分不足",'
+            '"quote":"两人用词相同","level":"WARNING"}]}'
+        ]
+    )
+    service = ModelTaskService(gateway)  # type: ignore[arg-type]
+
+    result = service.audit_style("原始正文", (), 4000)
+
+    assert result.summary == ""
+    assert result.findings == (
+        StyleAuditFinding("STYLE", "声音区分不足", "两人用词相同", "WARNING"),
+    )
+
+
+def test_style_audit_retries_when_nested_finding_is_incomplete() -> None:
+    gateway = FakeGateway(
+        [
+            '{"summary":"发现问题","findings":[{"category":"STYLE"}]}',
+            '{"summary":"发现问题","findings":[{"category":"STYLE",'
+            '"issue":"声音区分不足","evidence":"两人用词相同",'
+            '"severity":"WARNING"}]}',
+        ]
+    )
+    service = ModelTaskService(gateway)  # type: ignore[arg-type]
+
+    result = service.audit_style("原始正文", (), 4000)
+
+    assert result.findings[0].issue == "声音区分不足"
+    assert len(gateway.calls) == 2
+    assert "findings[0]" in gateway.calls[1][1][-1].content

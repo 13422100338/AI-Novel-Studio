@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from ai_novel_studio.domain.identifiers import new_id
 from ai_novel_studio.domain.memory import (
     Authority,
+    CanonCategory,
     CanonEntry,
     ClueAction,
     ClueType,
@@ -51,6 +52,7 @@ class NarrativeMemoryRepository:
         confidence: float,
         authority: Authority,
         review_status: ReviewStatus,
+        category: CanonCategory | None = None,
     ) -> CanonEntry:
         if not title.strip() or not detail.strip():
             raise ValueError("正典标题和详情不能为空")
@@ -65,10 +67,14 @@ class NarrativeMemoryRepository:
             MemoryStatus.CURRENT,
             review_status,
             _now(),
+            category,
         )
         with self.project.database.connect() as connection, connection:
             connection.execute(
-                "INSERT INTO canon_entries VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO canon_entries "
+                "(id, title, detail, source_chapter_id, source_paragraph_id, confidence, "
+                "authority, status, review_status, created_at, updated_at, category) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     entry.id,
                     entry.title,
@@ -81,6 +87,7 @@ class NarrativeMemoryRepository:
                     entry.review_status.value,
                     entry.created_at.isoformat(),
                     entry.created_at.isoformat(),
+                    entry.category.value if entry.category is not None else None,
                 ),
             )
         return entry
@@ -104,6 +111,49 @@ class NarrativeMemoryRepository:
                 ORDER BY e.created_at, e.id
                 """,
                 (chapter_id, title),
+            ).fetchall()
+        return tuple(self._canon(row) for row in rows)
+
+    def list_canon_before(self, chapter_id: str) -> tuple[CanonEntry, ...]:
+        """Return all reviewed current canon facts visible before a chapter."""
+        with self.project.database.connect() as connection:
+            target = connection.execute(
+                "SELECT 1 FROM chapters WHERE id = ? AND is_deleted = 0",
+                (chapter_id,),
+            ).fetchone()
+            if target is None:
+                raise KeyError(f"unknown chapter: {chapter_id}")
+            rows = connection.execute(
+                """
+                WITH target AS (
+                    SELECT v.sort_index AS volume_order, c.sort_index AS chapter_order
+                    FROM chapters c JOIN volumes v ON v.id = c.volume_id
+                    WHERE c.id = ? AND c.is_deleted = 0
+                )
+                SELECT e.* FROM canon_entries e
+                LEFT JOIN chapters c ON c.id = e.source_chapter_id
+                LEFT JOIN volumes v ON v.id = c.volume_id
+                CROSS JOIN target t
+                WHERE e.status = 'CURRENT'
+                  AND e.review_status IN ('APPROVED', 'LOCKED')
+                  AND (
+                    e.source_chapter_id IS NULL OR
+                    (
+                      c.is_deleted = 0 AND
+                      (
+                        v.sort_index < t.volume_order OR
+                        (v.sort_index = t.volume_order AND c.sort_index < t.chapter_order)
+                      )
+                    )
+                  )
+                ORDER BY
+                  CASE WHEN e.source_chapter_id IS NULL THEN 0 ELSE 1 END,
+                  COALESCE(v.sort_index, -1),
+                  COALESCE(c.sort_index, -1),
+                  e.created_at,
+                  e.id
+                """,
+                (chapter_id,),
             ).fetchall()
         return tuple(self._canon(row) for row in rows)
 
@@ -256,6 +306,7 @@ class NarrativeMemoryRepository:
             MemoryStatus(row["status"]),
             ReviewStatus(row["review_status"]),
             _time(row["created_at"]),
+            CanonCategory(row["category"]) if row["category"] else None,
         )
 
     @staticmethod
@@ -283,4 +334,3 @@ class NarrativeMemoryRepository:
             ReviewStatus(row["review_status"]),
             _time(row["created_at"]),
         )
-

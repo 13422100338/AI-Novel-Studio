@@ -22,6 +22,7 @@ EXPECTED_TABLES = {
     "memory_documents",
     "context_manifests",
     "chapter_context_pins",
+    "project_guidance",
     "memory_fts",
 }
 

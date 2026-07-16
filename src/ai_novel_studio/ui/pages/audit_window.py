@@ -262,6 +262,11 @@ class AuditWindow(QMainWindow):
         self.run_model_audit_button.setEnabled(True)
         self.run_model_audit_button.setText("重新运行模型审校")
 
+    def show_deterministic_error(self, message: str) -> None:
+        self.error_label.setText(f"确定性检查失败：{message}")
+        self.run_deterministic_audit_button.setEnabled(True)
+        self.run_deterministic_audit_button.setText("重新运行确定性检查")
+
     def _select_finding(self, table: QTableWidget, row: int) -> None:
         source_item = table.item(row, 0) if row >= 0 else None
         evidence_item = table.item(row, 2) if row >= 0 else None

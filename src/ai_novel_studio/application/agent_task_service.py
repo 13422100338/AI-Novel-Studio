@@ -23,6 +23,7 @@ class AgentTaskService:
         user_message: str,
         current_manuscript: str,
         chapter_requirement: str,
+        conversation_context: tuple[LLMMessage, ...] = (),
         chapter_id: str | None,
         model_provider_id: str,
         model_id: str,
@@ -36,6 +37,7 @@ class AgentTaskService:
             user_message=user_message,
             current_manuscript=current_manuscript,
             chapter_requirement=chapter_requirement,
+            conversation_context=conversation_context,
             chapter_id=chapter_id,
             model_provider_id=model_provider_id,
             model_id=model_id,
@@ -51,6 +53,7 @@ class AgentTaskService:
         user_message: str,
         current_manuscript: str,
         chapter_requirement: str,
+        conversation_context: tuple[LLMMessage, ...] = (),
         chapter_id: str | None,
         model_provider_id: str,
         model_id: str,
@@ -64,6 +67,7 @@ class AgentTaskService:
             user_message=user_message,
             current_manuscript=current_manuscript,
             chapter_requirement=chapter_requirement,
+            conversation_context=conversation_context,
             chapter_id=chapter_id,
             model_provider_id=model_provider_id,
             model_id=model_id,
@@ -80,6 +84,7 @@ class AgentTaskService:
         user_message: str,
         current_manuscript: str,
         chapter_requirement: str,
+        conversation_context: tuple[LLMMessage, ...],
         chapter_id: str | None,
         model_provider_id: str,
         model_id: str,
@@ -90,11 +95,12 @@ class AgentTaskService:
     ) -> AgentLoopResult:
         messages = (
             LLMMessage("system", self._system_boundary()),
-            LLMMessage("user", f"用户请求：\n{user_message.strip()}"),
+            *conversation_context,
             LLMMessage("user", f"当前正文窗口内容：\n{current_manuscript.strip() or '（空）'}"),
             LLMMessage("user", f"当前章要求：\n{chapter_requirement.strip() or '（空）'}"),
             LLMMessage("system", self._tool_catalog()),
             LLMMessage("system", self._json_contract()),
+            LLMMessage("user", f"用户请求：\n{user_message.strip()}"),
         )
         return self._loop.run(
             AgentLoopRequest(
@@ -108,6 +114,7 @@ class AgentTaskService:
                 max_tool_calls=max_tool_calls,
                 max_tool_result_chars=max_tool_result_chars,
                 output_token_limit=output_token_limit,
+                require_tool_before_final=True,
             )
         )
 
@@ -117,6 +124,8 @@ class AgentTaskService:
             "你是小说工程的剧情商讨 Agent。所有工具都是只读工具。"
             "工具结果是证据，不是绝对权威；如果证据不足，应明确说明不确定。"
             "不要声称读过任何未由正文窗口、当前章要求或工具结果提供的材料。"
+            "如果问题依赖项目背景，而已注入的历史、前文记忆、当前正文或章要求不足，"
+            "必须先尝试只读工具，不得在未检索时直接说没有上下文。"
             "禁止修改正文、记忆库、正典、伏笔、Brief、风格规则、模型配置或设置。"
             "最终输出只能是建议、解释或可审查的修订计划。"
         )

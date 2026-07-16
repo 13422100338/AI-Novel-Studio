@@ -18,16 +18,16 @@ def test_memory_window_explains_system_and_exposes_editable_layers(qtbot: QtBot)
 
     assert "AI 生成前" in window.explanation_label.text()
     assert _tab_titles(window.tabs) == [
+        "小说最高提示",
         "压缩前文",
         "人物状态",
-        "人物知识",
         "读者知识",
         "正典",
         "叙事线索",
         "过期依赖",
         "设定资料整理",
     ]
-    editor = window.editors["人物知识"]
+    editor = window.editors["读者知识"]
     assert editor.isReadOnly() is False
     editor.appendPlainText("人工修订")
     assert "人工修订" in editor.toPlainText()
@@ -52,6 +52,12 @@ def test_audit_window_separates_deterministic_and_model_findings(qtbot: QtBot) -
     assert window.model_table.rowCount() == 1
     assert window.repair_button.isEnabled() is False
     assert "阶段 6" in window.repair_button.toolTip()
+    assert window.run_deterministic_audit_button.isEnabled() is True
+
+    window.run_deterministic_audit_button.setEnabled(False)
+    window.show_deterministic_error("测试失败")
+
+    assert "测试失败" in window.error_label.text()
     assert window.run_deterministic_audit_button.isEnabled() is True
 
 

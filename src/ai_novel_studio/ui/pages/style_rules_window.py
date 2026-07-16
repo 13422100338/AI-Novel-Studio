@@ -26,6 +26,7 @@ from ai_novel_studio.domain.memory import (
     StyleScope,
 )
 from ai_novel_studio.ui.demo_data import WorkspaceDemoData
+from ai_novel_studio.ui.feature_flags import LEGACY_STYLE_AUTOMATION_VISIBLE
 
 _SCOPE_LABELS = {
     StyleScope.BOOK: "全书",
@@ -57,10 +58,11 @@ class StyleRulesWindow(QMainWindow):
         surface.setObjectName("appSurface")
         layout = QVBoxLayout(surface)
         layout.setContentsMargins(16, 16, 16, 16)
-        title = QLabel("分层文风系统", surface)
+        title = QLabel("人工文风样章", surface)
         title.setObjectName("panelTitle")
         explanation = QLabel(
-            "人工规则和未锁定样章可编辑；锁定样章作为高权威参考，生成时按全书、场景、人物和章节范围检索。",
+            "当前仅使用人工样章作为文风参考。旧分层规则和 AI 候选数据仍保留，"
+            "但已停止在界面中使用，等待后续安全迁移。",
             surface,
         )
         explanation.setObjectName("mutedLabel")
@@ -72,6 +74,10 @@ class StyleRulesWindow(QMainWindow):
         self._build_rules_tab(data)
         self._build_samples_tab()
         self._build_candidates_tab()
+        if not LEGACY_STYLE_AUTOMATION_VISIBLE:
+            self.tabs.setTabVisible(0, False)
+            self.tabs.setTabVisible(2, False)
+            self.tabs.setCurrentIndex(1)
 
         layout.addWidget(title)
         layout.addWidget(explanation)

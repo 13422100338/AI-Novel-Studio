@@ -91,7 +91,7 @@ class ReferenceWindow(QMainWindow):
             (
                 "采用（摘要回退）" if item.used_fallback else "采用",
                 item.category,
-                f"{item.source_type} / {item.source_id}",
+                _source_label(item.source_type, item.source_id, item.source_revision),
                 item.rationale,
                 str(item.estimated_tokens),
             )
@@ -101,7 +101,7 @@ class ReferenceWindow(QMainWindow):
             (
                 "省略",
                 item.category,
-                f"{item.source_type} / {item.source_id}",
+                _source_label(item.source_type, item.source_id, item.source_revision),
                 item.reason,
                 "—",
             )
@@ -147,3 +147,10 @@ class ReferenceWindow(QMainWindow):
             self.detail.setPlainText(self._row_details[current_row])
         else:
             self.detail.clear()
+
+
+def _source_label(
+    source_type: str, source_id: str, source_revision: int | None
+) -> str:
+    revision = "未知" if source_revision is None else str(source_revision)
+    return f"{source_type} / {source_id} / 修订 {revision}"

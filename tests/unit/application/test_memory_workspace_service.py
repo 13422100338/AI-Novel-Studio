@@ -16,6 +16,7 @@ class FakeWorkspaceGateway:
         self.loaded_boundary: str | None = None
         self.updated: list[tuple[str, str, int]] = []
         self.promoted: list[tuple[str, int]] = []
+        self.retry_requests: list[tuple[str, int]] = []
 
     def load_before(self, chapter_id: str) -> tuple[MemoryWorkspaceRecord, ...]:
         self.loaded_boundary = chapter_id
@@ -36,6 +37,20 @@ class FakeWorkspaceGateway:
             revision=record.revision + 1,
             review_status=ReviewStatus.APPROVED,
             status=MemoryStatus.CURRENT,
+            promotable=False,
+        )
+
+    def request_model_retry(
+        self, record_id: str, expected_revision: int
+    ) -> MemoryWorkspaceRecord:
+        self.retry_requests.append((record_id, expected_revision))
+        record = next(item for item in self.records if item.id == record_id)
+        return replace(
+            record,
+            source_type="SUMMARY_FALLBACK",
+            revision=record.revision + 1,
+            review_status=ReviewStatus.REVIEW,
+            status=MemoryStatus.REVIEW,
             promotable=False,
         )
 
@@ -104,6 +119,44 @@ def test_locked_human_record_is_blocked_before_the_gateway_is_called() -> None:
 
     assert gateway.updated == []
     assert gateway.promoted == []
+
+
+def test_approved_model_summary_can_be_marked_for_model_retry() -> None:
+    approved = replace(
+        _record("summary-approved"),
+        review_status=ReviewStatus.APPROVED,
+        status=MemoryStatus.CURRENT,
+        promotable=False,
+    )
+    gateway = FakeWorkspaceGateway((approved,))
+    service = MemoryWorkspaceService(gateway)
+    service.load("chapter-2")
+
+    retried = service.request_model_retry("summary-approved", expected_revision=1)
+
+    assert gateway.retry_requests == [("summary-approved", 1)]
+    assert retried.source_type == "SUMMARY_FALLBACK"
+    assert retried.review_status == ReviewStatus.REVIEW
+    assert retried.status == MemoryStatus.REVIEW
+    assert retried.revision == 2
+
+
+def test_structured_memory_cannot_be_marked_for_model_retry() -> None:
+    structured = replace(
+        _record("character-state"),
+        source_type="CHARACTER_STATE",
+        review_status=ReviewStatus.APPROVED,
+        status=MemoryStatus.CURRENT,
+        promotable=False,
+    )
+    gateway = FakeWorkspaceGateway((structured,))
+    service = MemoryWorkspaceService(gateway)
+    service.load("chapter-2")
+
+    with pytest.raises(PermissionError, match="章节摘要"):
+        service.request_model_retry("character-state", expected_revision=1)
+
+    assert gateway.retry_requests == []
 
 
 def test_promote_all_only_processes_review_candidates_and_continues_after_failure() -> None:

@@ -1,7 +1,7 @@
 import sqlite3
 from collections.abc import Callable
 
-LATEST_SCHEMA_VERSION = 7
+LATEST_SCHEMA_VERSION = 9
 
 
 def _migration_1(connection: sqlite3.Connection) -> None:
@@ -615,6 +615,30 @@ def _migration_7(connection: sqlite3.Connection) -> None:
         connection.execute(statement)
 
 
+def _migration_8(connection: sqlite3.Connection) -> None:
+    connection.execute(
+        """
+        CREATE TABLE project_guidance (
+            project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+            highest_system_prompt TEXT NOT NULL DEFAULT '',
+            revision INTEGER NOT NULL DEFAULT 0 CHECK(revision >= 0),
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+
+
+def _migration_9(connection: sqlite3.Connection) -> None:
+    connection.execute(
+        """
+        ALTER TABLE canon_entries ADD COLUMN category TEXT
+        CHECK(category IS NULL OR category IN (
+            'WORLD', 'CHARACTER_IDENTITY', 'ITEM_ABILITY', 'ORGANIZATION'
+        ))
+        """
+    )
+
+
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     1: _migration_1,
     2: _migration_2,
@@ -623,6 +647,8 @@ MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     5: _migration_5,
     6: _migration_6,
     7: _migration_7,
+    8: _migration_8,
+    9: _migration_9,
 }
 
 

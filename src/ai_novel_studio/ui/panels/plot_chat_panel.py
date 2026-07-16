@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 )
 
 from ai_novel_studio.ui.demo_data import DemoMessage
+from ai_novel_studio.ui.feature_flags import AGENT_TOOLS_ENABLED
 from ai_novel_studio.ui.widgets.chat_bubble import ChatBubble
 
 
@@ -59,21 +60,25 @@ class PlotChatPanel(QFrame):
         self.agent_mode_toggle.setToolTip(
             "开启后，剧情商讨模型可通过只读工具查询章节、记忆、人物、伏笔、正典与审校证据；不会自动修改正文或记忆库。"
         )
+        self.agent_mode_toggle.setChecked(False)
+        self.agent_mode_toggle.setEnabled(AGENT_TOOLS_ENABLED)
+        self.agent_mode_toggle.setVisible(AGENT_TOOLS_ENABLED)
         self.agent_trace_button = QPushButton("证据追踪", self)
         self.agent_trace_button.setObjectName("agentTraceButton")
         self.agent_trace_button.setAccessibleName("查看证据追踪")
         self.agent_trace_button.setToolTip("查看最近一次只读工具调用与证据来源")
         self.agent_trace_button.clicked.connect(self.agent_trace_requested)
+        self.agent_trace_button.setVisible(AGENT_TOOLS_ENABLED)
         self.summary_button = QPushButton("历史摘要", self)
         self.summary_button.setAccessibleName("查看和编辑剧情商讨长期摘要")
         self.summary_button.setToolTip("查看和修改发送给剧情模型的长期商讨摘要")
         self.summary_button.clicked.connect(self.summary_requested)
 
         self.advanced_button = QToolButton(self)
-        self.advanced_button.setText("工具 ▾")
+        self.advanced_button.setText("更多 ▾")
         self.advanced_button.setCheckable(True)
-        self.advanced_button.setAccessibleName("展开剧情商讨工具")
-        self.advanced_button.setToolTip("展开工具检索、证据追踪、历史摘要和独立窗口")
+        self.advanced_button.setAccessibleName("展开剧情商讨更多操作")
+        self.advanced_button.setToolTip("展开历史摘要和独立窗口")
 
         self.advanced_tools = QFrame(self)
         self.advanced_tools.setObjectName("plotChatAdvancedTools")
@@ -140,7 +145,7 @@ class PlotChatPanel(QFrame):
 
     def _toggle_advanced_tools(self, expanded: bool) -> None:
         self.advanced_tools.setVisible(expanded)
-        self.advanced_button.setText("工具 ▴" if expanded else "工具 ▾")
+        self.advanced_button.setText("更多 ▴" if expanded else "更多 ▾")
 
     def send_current_message(self) -> None:
         text = self.composer.toPlainText().strip()
@@ -181,7 +186,7 @@ class PlotChatPanel(QFrame):
         self._scroll_to_bottom()
 
     def agent_mode_enabled(self) -> bool:
-        return self.agent_mode_toggle.isChecked()
+        return AGENT_TOOLS_ENABLED and self.agent_mode_toggle.isChecked()
 
     def begin_assistant_response(self) -> None:
         if self._streaming_bubble is not None:

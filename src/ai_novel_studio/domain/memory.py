@@ -38,6 +38,22 @@ class MemoryStatus(StrEnum):
     FAILED = "FAILED"
 
 
+class CanonCategory(StrEnum):
+    WORLD = "WORLD"
+    CHARACTER_IDENTITY = "CHARACTER_IDENTITY"
+    ITEM_ABILITY = "ITEM_ABILITY"
+    ORGANIZATION = "ORGANIZATION"
+
+    @property
+    def display_title(self) -> str:
+        return {
+            CanonCategory.WORLD: "世界观",
+            CanonCategory.CHARACTER_IDENTITY: "人物身份背景",
+            CanonCategory.ITEM_ABILITY: "重要物品、能力与兵器",
+            CanonCategory.ORGANIZATION: "组织、团队与成员",
+        }[self]
+
+
 class SourceType(StrEnum):
     HUMAN = "HUMAN"
     MODEL = "MODEL"
@@ -176,6 +192,7 @@ class CanonEntry:
     status: MemoryStatus
     review_status: ReviewStatus
     created_at: datetime
+    category: CanonCategory | None = None
 
     def __post_init__(self) -> None:
         _confidence(self.confidence)

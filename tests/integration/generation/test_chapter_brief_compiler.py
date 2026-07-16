@@ -226,9 +226,10 @@ def test_compiler_uses_requirement_first_and_excludes_current_future_evidence(
     assert compiled.sources[0].source_type == "CHAPTER_REQUIREMENT"
     assert compiled.brief.status == BriefStatus.DRAFT
     assert compiled.brief.dramatic_purpose == "旧暗号"
-    assert "人物知识" in "\n".join(compiled.brief.knowledge)
-    assert "读者知识" in "\n".join(compiled.brief.knowledge)
-    assert workspace["character_knowledge"].id in source_ids
+    assert "人物知识" not in "\n".join(compiled.brief.knowledge)
+    assert len(compiled.brief.knowledge) == 1
+    assert compiled.brief.knowledge[0].startswith("【读者当前知识摘要】")
+    assert workspace["character_knowledge"].id not in source_ids
     assert workspace["reader_knowledge"].id in source_ids
     assert workspace["future_state"].id not in source_ids
     assert workspace["future_knowledge"].id not in source_ids

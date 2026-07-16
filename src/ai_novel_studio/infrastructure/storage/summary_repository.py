@@ -32,6 +32,9 @@ class StaleSummaryWriteError(RuntimeError):
     pass
 
 
+MODEL_RETRY_PROFILE_ID = "memory-retry-requested"
+
+
 class SummaryRepository:
     def __init__(self, project: ProjectRepository) -> None:
         self.project = project
@@ -209,16 +212,58 @@ class SummaryRepository:
             raise ProtectedMemoryError("模型不能覆盖用户确认摘要")
         if not content.strip():
             raise ValueError("摘要内容不能为空")
+        authority = (
+            Authority.USER_CONFIRMED
+            if source_type == SourceType.HUMAN
+            else summary.authority
+        )
+        model_profile_id = (
+            None if source_type == SourceType.HUMAN else summary.model_profile_id
+        )
         with self.project.database.connect() as connection, connection:
             cursor = connection.execute(
                 """
                 UPDATE summary_nodes SET content = ?, content_hash = ?,
+                    model_profile_id = ?, authority = ?,
                     revision = revision + 1, updated_at = ?
                 WHERE id = ? AND revision = ?
                 """,
                 (
                     content.strip(),
                     _hash(content.strip()),
+                    model_profile_id,
+                    authority.value,
+                    _now().isoformat(),
+                    summary_id,
+                    expected_revision,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise StaleSummaryWriteError("摘要修订已变化，请重新载入")
+        return self.get(summary_id)
+
+    def request_model_retry(
+        self, summary_id: str, *, expected_revision: int
+    ) -> SummaryNode:
+        summary = self.get(summary_id)
+        if summary.review_status == ReviewStatus.LOCKED:
+            raise ProtectedMemoryError("锁定摘要不能撤销晋升")
+        if summary.level != SummaryLevel.CHAPTER or len(summary.source_chapter_ids) != 1:
+            raise ProtectedMemoryError("只有单章摘要可以标记为重新整理")
+        if summary.authority != Authority.MODEL_EXTRACTED:
+            raise ProtectedMemoryError("人工确认摘要不能交给模型覆盖")
+        if summary.review_status != ReviewStatus.APPROVED:
+            raise ProtectedMemoryError("只有已晋升的模型摘要可以撤销晋升")
+        with self.project.database.connect() as connection, connection:
+            cursor = connection.execute(
+                """
+                UPDATE summary_nodes
+                SET review_status = 'REVIEW', status = 'REVIEW',
+                    model_profile_id = ?, revision = revision + 1, updated_at = ?
+                WHERE id = ? AND revision = ?
+                """,
+                (
+                    MODEL_RETRY_PROFILE_ID,
                     _now().isoformat(),
                     summary_id,
                     expected_revision,

@@ -32,10 +32,16 @@ class JsonAdapter(ProviderAdapter):
                 json.dumps({"summary": "ok", "findings": []}),
                 request.model_id,
             )
-        return LLMResponse(
-            json.dumps({"action": "final", "final_answer": "检索建议"}),
-            request.model_id,
-        )
+        if any("只读工具返回" in message.content for message in request.messages):
+            payload = {"action": "final", "final_answer": "检索建议"}
+        else:
+            payload = {
+                "action": "tool",
+                "tool_calls": [
+                    {"tool_name": "SEARCH_MEMORY", "arguments": {"query": "old letter"}}
+                ],
+            }
+        return LLMResponse(json.dumps(payload), request.model_id)
 
     def stream(self, request, profile, api_key):  # type: ignore[no-untyped-def]
         yield LLMStreamEvent(StreamEventKind.TEXT, text="模型生成正文")

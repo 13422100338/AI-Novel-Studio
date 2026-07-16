@@ -105,7 +105,9 @@ def test_settings_exposes_independent_plot_prose_and_advanced_routes(qtbot: QtBo
     assert saved.routes.prose == ModelRoute(profile.id, "prose-model")
 
 
-def test_settings_can_override_agent_assistant_route(qtbot: QtBot) -> None:
+def test_settings_does_not_create_agent_override_while_feature_is_hidden(
+    qtbot: QtBot,
+) -> None:
     controller = FakeSettingsController()
     dialog = SettingsDialog(controller=controller)
     qtbot.addWidget(dialog)
@@ -132,7 +134,7 @@ def test_settings_can_override_agent_assistant_route(qtbot: QtBot) -> None:
     dialog.save_button.click()
 
     overrides = dict(controller.save_calls[0][0].routes.overrides)
-    assert overrides[TaskPurpose.AGENT_ASSISTANT] == ModelRoute(profile.id, "agent-model")
+    assert TaskPurpose.AGENT_ASSISTANT not in overrides
 
 
 def test_settings_can_probe_selected_model_capabilities(qtbot: QtBot) -> None:
@@ -291,6 +293,48 @@ def test_settings_restores_all_saved_task_routes(qtbot: QtBot) -> None:
         dialog.audit_model_combo,
     ):
         assert combo.currentData() == route
+
+
+def test_settings_preserves_hidden_and_unrepresented_routes_across_restart(
+    qtbot: QtBot,
+    tmp_path: Path,
+) -> None:
+    controller = FakeSettingsController()
+    profile = _provider()
+    model = ModelProfile("relay", "deepseek-v4-pro")
+    route = ModelRoute("relay", "deepseek-v4-pro")
+    controller.configuration = ModelConfiguration(
+        providers=(profile,),
+        models=(model,),
+        routes=TaskRoutes(
+            plot=route,
+            prose=route,
+            overrides=(
+                (TaskPurpose.AGENT_ASSISTANT, route),
+                (TaskPurpose.MEMORY_EXTRACTION, route),
+                (TaskPurpose.LOCAL_REPAIR, route),
+            ),
+        ),
+    )
+    dialog = SettingsDialog(controller=controller)
+    qtbot.addWidget(dialog)
+
+    assert dialog.agent_model_combo.isHidden()
+    dialog.agent_model_combo.setCurrentIndex(0)
+    dialog.save_button.click()
+
+    saved = controller.save_calls[0][0]
+    overrides = dict(saved.routes.overrides)
+    assert overrides[TaskPurpose.AGENT_ASSISTANT] == route
+    assert overrides[TaskPurpose.MEMORY_EXTRACTION] == route
+    assert overrides[TaskPurpose.LOCAL_REPAIR] == route
+
+    repository = ModelConfigRepository(
+        tmp_path / "model-config.json",
+        MemoryCredentialStore(),
+    )
+    repository.save(saved, {})
+    assert repository.load() == saved
 
 
 def test_editing_existing_connection_preserves_credential_reference(qtbot: QtBot) -> None:

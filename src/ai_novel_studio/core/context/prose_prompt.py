@@ -27,9 +27,14 @@ def build_prose_messages(
 
     brief_text = _brief_text(brief) if brief is not None else "基础模式：仅遵守当前章要求。"
     target = _joined(by_category, "TARGET")
+    project_guidance = tuple(
+        LLMMessage("system", "小说最高系统提示（人工维护）：\n" + content)
+        for content in by_category.get("PROJECT_GUIDANCE", ())
+    )
     return (
         LLMMessage("system", _WRITER_SYSTEM),
         LLMMessage("system", _FORMAT_SYSTEM),
+    ) + project_guidance + (
         LLMMessage("user", f"当前章要求：\n{requirement.content}"),
         LLMMessage(
             "user",

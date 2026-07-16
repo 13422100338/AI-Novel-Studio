@@ -92,6 +92,51 @@ def test_agent_loop_executes_tool_then_final_answer(tmp_path: Path) -> None:
     )
 
 
+def test_agent_loop_requires_tool_before_final_when_retrieval_is_enabled(
+    tmp_path: Path,
+) -> None:
+    model = FakeModel(
+        [
+            {"action": "final", "final_answer": "没有上下文。"},
+            {
+                "action": "tool",
+                "tool_calls": [
+                    {"tool_name": "SEARCH_MEMORY", "arguments": {"query": "过往经历"}}
+                ],
+            },
+            {"action": "final", "final_answer": "根据检索到的前文给出建议。"},
+        ]
+    )
+    service, repository = _service(tmp_path, model)
+
+    result = service.run(
+        AgentLoopRequest(
+            chapter_id=None,
+            purpose=AgentPurpose.PLOT_DISCUSSION,
+            messages=(LLMMessage("user", "请参考前文"),),
+            model_provider_id="provider",
+            model_id="model",
+            prompt_version="agent-v1",
+            max_iterations=4,
+            max_tool_calls=2,
+            max_tool_result_chars=200,
+            output_token_limit=100,
+            require_tool_before_final=True,
+        )
+    )
+
+    assert result.status == AgentRunStatus.COMPLETED
+    assert len(repository.list_tool_calls(result.run_id)) == 1
+    assert any(
+        "必须先调用至少一个只读工具" in message.content
+        for message in model.messages[1]
+    )
+    assert any(
+        message.role == "user" and "未信任证据" in message.content
+        for message in model.messages[2]
+    )
+
+
 def test_agent_loop_rejects_forbidden_tool_and_records_failure(tmp_path: Path) -> None:
     model = FakeModel(
         [{"action": "tool", "tool_calls": [{"tool_name": "WRITE_CHAPTER", "arguments": {}}]}]

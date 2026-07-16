@@ -21,6 +21,31 @@ class CharacterStatusRecord:
     recent: str
 
 
+@dataclass(frozen=True, slots=True)
+class CharacterJourneyEntry:
+    state_id: str
+    chapter_id: str
+    motivation: str
+    psychology: str
+    goal: str
+    relationships: str
+    recent_activity: str
+
+
+@dataclass(frozen=True, slots=True)
+class CharacterStatusCard:
+    id: str
+    name: str
+    aliases: tuple[str, ...]
+    profile: str
+    motivation: str
+    psychology: str
+    goal: str
+    relationships: str
+    recent: str
+    journey: tuple[CharacterJourneyEntry, ...]
+
+
 class CharacterStatusService:
     def __init__(self, repository: CharacterMemoryRepository) -> None:
         self.repository = repository
@@ -52,6 +77,59 @@ class CharacterStatusService:
             )
         return tuple(records)
 
+    def list_cards_for_chapter(
+        self,
+        chapter_id: str,
+        *,
+        inclusive: bool = False,
+    ) -> tuple[CharacterStatusCard, ...]:
+        """Build one non-destructive, time-bounded card for each character."""
+        characters = self.repository.list_characters()
+        character_ids = tuple(character.id for character in characters)
+        states_by_character = self.repository.state_candidates_before_many(
+            character_ids,
+            chapter_id,
+            inclusive=inclusive,
+        )
+        histories_by_character = self.repository.state_histories_before_many(
+            character_ids,
+            chapter_id,
+            inclusive=inclusive,
+        )
+        cards: list[CharacterStatusCard] = []
+        for character in characters:
+            candidates = states_by_character.get(character.id, ())
+            if len(candidates) > 1:
+                raise MemoryConflictError("同一时间边界存在多个人物状态")
+            state = candidates[0] if candidates else None
+            journey = tuple(
+                CharacterJourneyEntry(
+                    state_id=event.id,
+                    chapter_id=event.chapter_id,
+                    motivation=event.motivation,
+                    psychology=event.psychology,
+                    goal=event.current_goal,
+                    relationships=event.relationships,
+                    recent_activity=event.recent_activity,
+                )
+                for event in histories_by_character.get(character.id, ())
+            )
+            cards.append(
+                CharacterStatusCard(
+                    id=character.id,
+                    name=character.canonical_name,
+                    aliases=character.aliases,
+                    profile=character.profile,
+                    motivation=state.motivation if state is not None else "",
+                    psychology=state.psychology if state is not None else "",
+                    goal=state.current_goal if state is not None else "",
+                    relationships=state.relationships if state is not None else "",
+                    recent=state.recent_activity if state is not None else "",
+                    journey=journey,
+                )
+            )
+        return tuple(cards)
+
     def save(
         self,
         chapter_id: str,
@@ -63,6 +141,7 @@ class CharacterStatusService:
         goal: str,
         relationships: str = "",
         recent: str,
+        profile: str | None = None,
     ) -> CharacterStatusRecord:
         normalized_name = name.strip()
         if not normalized_name:
@@ -75,7 +154,12 @@ class CharacterStatusService:
             except KeyError:
                 character = None
         if character is None:
-            character = self.repository.create_character(normalized_name)
+            character = self.repository.create_character(
+                normalized_name,
+                profile=profile or "",
+            )
+        elif profile is not None and profile != character.profile:
+            character = self.repository.update_character_profile(character.id, profile)
 
         event = self.repository.append_state(
             character.id,

@@ -6,6 +6,7 @@ from dataclasses import dataclass, replace
 from ai_novel_studio.application.generation_memory_context_provider import (
     GenerationMemoryContextProvider,
 )
+from ai_novel_studio.application.project_guidance_service import ProjectGuidanceService
 from ai_novel_studio.core.context.context_builder import (
     ContextBlock,
     ContextBuilder,
@@ -38,6 +39,9 @@ from ai_novel_studio.infrastructure.storage.chapter_requirement_repository impor
     ChapterRequirementRepository,
 )
 from ai_novel_studio.infrastructure.storage.generation_repository import GenerationRepository
+from ai_novel_studio.infrastructure.storage.project_guidance_repository import (
+    ProjectGuidanceRepository,
+)
 from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
 
 
@@ -100,6 +104,9 @@ class GenerationContextService:
         self.manifests = manifests
         self.builder = builder or ContextBuilder()
         self.memory_context = GenerationMemoryContextProvider(project)
+        self.project_guidance = ProjectGuidanceService(
+            ProjectGuidanceRepository(project)
+        )
 
     def prepare(self, request: GenerationPreparationRequest) -> PreparedGeneration:
         requirement = self.requirements.get(request.chapter_id)
@@ -196,13 +203,30 @@ class GenerationContextService:
         brief: ChapterBrief | None,
     ) -> tuple[ContextBlock, ...]:
         blocks: list[ContextBlock] = list(system_prompt_blocks())
+        guidance = self.project_guidance.load()
+        if guidance.highest_system_prompt.strip():
+            blocks.append(
+                ContextBlock(
+                    "project-guidance",
+                    "PROJECT_GUIDANCE",
+                    guidance.highest_system_prompt,
+                    2,
+                    True,
+                    "PROJECT_GUIDANCE",
+                    guidance.project_id,
+                    None,
+                    guidance.revision,
+                    _hash(guidance.highest_system_prompt),
+                    "作者人工维护的全书最高创作指令",
+                )
+            )
         blocks.extend(
             (
                 ContextBlock(
                     "target-words",
                     "TARGET",
                     str(request.target_words),
-                    2,
+                    3,
                     True,
                     "GENERATION_REQUEST",
                     request.chapter_id,
@@ -215,7 +239,7 @@ class GenerationContextService:
                     "chapter-requirement",
                     "REQUIREMENT",
                     requirement.content,
-                    3,
+                    4,
                     True,
                     "CHAPTER_REQUIREMENT",
                     requirement.id,
@@ -232,7 +256,7 @@ class GenerationContextService:
                     "frozen-brief",
                     "BRIEF",
                     _brief_constraints(brief),
-                    4,
+                    5,
                     True,
                     "CHAPTER_BRIEF",
                     brief.id,

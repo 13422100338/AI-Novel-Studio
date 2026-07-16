@@ -4,6 +4,7 @@ from ai_novel_studio.application.agent_task_service import (
     AgentTaskService,
 )
 from ai_novel_studio.domain.agent import AgentPurpose, AgentRunStatus
+from ai_novel_studio.infrastructure.llm import LLMMessage
 
 
 class CapturingLoop:
@@ -27,6 +28,7 @@ def test_plot_agent_prompt_order_and_boundaries() -> None:
         model_provider_id="provider",
         model_id="model",
         output_token_limit=900,
+        conversation_context=(LLMMessage("system", "已注入前文记忆"),),
     )
 
     assert loop.request is not None
@@ -36,14 +38,20 @@ def test_plot_agent_prompt_order_and_boundaries() -> None:
     assert messages[0].role == "system"
     assert "只读" in messages[0].content
     assert "不要声称读过" in messages[0].content
-    assert "这一章要不要回收旧信" in messages[1].content
-    assert "旧信被发现" in messages[2].content
-    assert "本章要求" in messages[3].content
-    assert "READ_CHAPTER_EXCERPT" in messages[4].content
-    assert "character_name" in messages[4].content
-    assert "不要臆造 character_id" in messages[4].content
-    assert "JSON" in messages[5].content
+    assert any("已注入前文记忆" in message.content for message in messages)
+    assert "这一章要不要回收旧信" in messages[-1].content
+    assert any("旧信被发现" in message.content for message in messages)
+    assert any("本章要求" in message.content for message in messages)
+    catalog = next(
+        message.content
+        for message in messages
+        if "READ_CHAPTER_EXCERPT" in message.content
+    )
+    assert "character_name" in catalog
+    assert "不要臆造 character_id" in catalog
+    assert any("JSON" in message.content for message in messages)
     assert loop.request.output_token_limit == 900
+    assert loop.request.require_tool_before_final is True
 
 
 def test_revision_agent_uses_revision_purpose() -> None:

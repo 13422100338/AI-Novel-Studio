@@ -71,6 +71,8 @@ _EN: dict[str, str] = {
     "当前目标": "Current goal",
     "人物关系": "Relationships",
     "最近活动": "Recent activity",
+    "过往心路历程": "Character journey",
+    "性格、语言与动作特点": "Personality, voice, and mannerisms",
     "记忆库": "Memory library",
     "整理记忆": "Build memory",
     "取消整理": "Cancel build",
@@ -287,11 +289,13 @@ _EN: dict[str, str] = {
     "默认输出 Token 上限": "Default output token limit",
     "记忆库 · AI Novel Studio": "Memory Library · AI Novel Studio",
     "长篇记忆库": "Long-form memory library",
-    "这里展示 AI 生成前可检索的压缩前文、人物与读者知识边界、正典和叙事线索。"
+    "压缩前文只记录已发生剧情、人物成长、连续性与原文细节摘录；"
+    "伏笔和未决问题独立存放在叙事线索。"
     "模型提取内容只会成为待审查候选；只有用户明确晋升后才可成为当前记忆。": (
-        "This library contains searchable compressed history, character and reader knowledge, "
-        "canon, and narrative clues. Model extractions remain review candidates until the "
-        "author explicitly approves them."
+        "Compressed history contains only completed plot events, character growth, continuity, "
+        "and verbatim detail excerpts. Foreshadowing and unresolved questions stay in the "
+        "narrative-clue ledger. Model extractions remain review candidates until the author "
+        "explicitly approves them."
     ),
     "离线演示数据：尚未绑定项目记忆服务。": (
         "Offline demonstration data · No project memory service is connected."

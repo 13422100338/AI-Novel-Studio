@@ -7,7 +7,6 @@ from typing import Protocol
 from ai_novel_studio.application.memory_analysis_service import (
     CharacterStateCandidate,
     MemoryCandidateBundle,
-    StyleCandidate,
 )
 from ai_novel_studio.domain.memory import (
     Authority,
@@ -15,7 +14,6 @@ from ai_novel_studio.domain.memory import (
     KnowledgeSubject,
     ReviewStatus,
     SourceType,
-    StyleScope,
     SummaryLevel,
     SummaryNode,
 )
@@ -28,8 +26,10 @@ from ai_novel_studio.infrastructure.storage.narrative_memory_repository import (
 )
 from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
 from ai_novel_studio.infrastructure.storage.search_repository import SearchRepository
-from ai_novel_studio.infrastructure.storage.style_repository import StyleRepository
-from ai_novel_studio.infrastructure.storage.summary_repository import SummaryRepository
+from ai_novel_studio.infrastructure.storage.summary_repository import (
+    MODEL_RETRY_PROFILE_ID,
+    SummaryRepository,
+)
 
 
 class MemoryAnalyzer(Protocol):
@@ -243,7 +243,6 @@ class ManuscriptMemoryBuildService:
     ) -> tuple[int, int, int, int]:
         narrative = NarrativeMemoryRepository(project)
         characters = CharacterMemoryRepository(project)
-        styles = StyleRepository(project)
         canon_count = 0
         clue_count = 0
         knowledge_count = 0
@@ -306,12 +305,9 @@ class ManuscriptMemoryBuildService:
                     )
 
             for knowledge_candidate in bundle.knowledge:
-                if knowledge_candidate.subject_type == KnowledgeSubject.READER:
-                    subject_id = project.project.id
-                else:
-                    subject_id = _find_or_create_character(
-                        characters, knowledge_candidate.subject_id
-                    ).id
+                if knowledge_candidate.subject_type != KnowledgeSubject.READER:
+                    continue
+                subject_id = project.project.id
                 item_row = connection.execute(
                     "SELECT id FROM knowledge_items WHERE title = ? AND detail = ? "
                     "AND authority = 'MODEL_EXTRACTED' AND review_status = 'REVIEW' "
@@ -353,30 +349,6 @@ class ManuscriptMemoryBuildService:
                         ReviewStatus.REVIEW,
                     )
 
-            for style_candidate in bundle.style:
-                scope_id = _style_scope_id(
-                    project, chapter_id, characters, style_candidate
-                )
-                exists = connection.execute(
-                    "SELECT 1 FROM style_rules WHERE scope_type = ? AND scope_id = ? "
-                    "AND rule_type = ? AND rule_text = ? AND review_status = 'REVIEW'",
-                    (
-                        style_candidate.scope_type.value,
-                        scope_id,
-                        style_candidate.rule_type,
-                        style_candidate.rule_text,
-                    ),
-                ).fetchone()
-                if exists is None:
-                    styles.add_rule(
-                        style_candidate.scope_type,
-                        scope_id,
-                        style_candidate.rule_type,
-                        style_candidate.rule_text,
-                        Authority.MODEL_EXTRACTED,
-                        ReviewStatus.REVIEW,
-                    )
-                    style_count += 1
         return canon_count, clue_count, knowledge_count, style_count
 
     @staticmethod
@@ -396,10 +368,15 @@ class ManuscriptMemoryBuildService:
             return None
         summary = summaries[0]
         if (
-            summary.model_profile_id == self.fallback_model_profile_id
+            (
+                summary.model_profile_id == MODEL_RETRY_PROFILE_ID
+                or (
+                    summary.model_profile_id == self.fallback_model_profile_id
+                    and summary.revision == 0
+                )
+            )
             and summary.authority == Authority.MODEL_EXTRACTED
             and summary.review_status == ReviewStatus.REVIEW
-            and summary.revision == 0
         ):
             return summary
         return None
@@ -409,11 +386,16 @@ class ManuscriptMemoryBuildService:
         normalized = " ".join(line.strip() for line in content.splitlines() if line.strip())
         opening = normalized[:240]
         ending = normalized[-240:] if len(normalized) > 240 else normalized
+        details = f"- 原文：{opening}"
+        if ending != opening:
+            details += f"\n- 原文：{ending}"
         return (
             "【待模型整理：当前仅保存原文定位，不作为有效剧情摘要】\n"
-            f"## 章节\n{title}\n\n"
-            f"## 开头定位\n{opening}\n\n"
-            f"## 结尾定位\n{ending}"
+            f"## 剧情概况\n《{title}》尚未完成模型整理。\n\n"
+            "## 关键情节点\n- 待模型整理\n\n"
+            "## 人物成长\n- 待模型整理\n\n"
+            "## 连续性要点\n- 待模型整理\n\n"
+            f"## 细节摘录\n{details}"
         )
 
 
@@ -456,18 +438,3 @@ def _character_state_exists(
             ),
         ).fetchone()
     return row is not None
-
-
-def _style_scope_id(
-    project: ProjectRepository,
-    chapter_id: str,
-    characters: CharacterMemoryRepository,
-    candidate: StyleCandidate,
-) -> str:
-    if candidate.scope_type == StyleScope.CHAPTER:
-        return chapter_id
-    if candidate.scope_type == StyleScope.BOOK:
-        return project.project.id
-    if candidate.scope_type == StyleScope.CHARACTER:
-        return _find_or_create_character(characters, candidate.scope_id).id
-    return candidate.scope_id

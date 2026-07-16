@@ -89,6 +89,11 @@ def test_build_all_creates_review_summaries_and_search_documents(
     assert {summary.level for summary in summaries} == {SummaryLevel.CHAPTER}
     assert {summary.review_status for summary in summaries} == {ReviewStatus.REVIEW}
     assert {summary.status for summary in summaries} == {MemoryStatus.REVIEW}
+    for summary in summaries:
+        assert "## 剧情概况" in summary.content
+        assert "## 细节摘录" in summary.content
+        assert "## 伏笔与未决问题" not in summary.content
+        assert summary.content.count("- 原文：") == 1
     with project.database.connect() as connection:
         rows = connection.execute(
             "SELECT source_id, document_type FROM memory_documents ORDER BY source_id"
@@ -184,6 +189,30 @@ def test_rerun_does_not_call_model_for_current_model_summary(tmp_path: Path) -> 
     assert second.skipped_current_summaries == 1
 
 
+def test_requested_retry_reprocesses_only_the_target_model_summary(tmp_path: Path) -> None:
+    project = ProjectRepository.create(tmp_path / "novel", "Imported Novel")
+    volume = project.list_volumes()[0]
+    chapters = ChapterRepository(project)
+    first = chapters.create_chapter(volume.id, "First", "1", "First chapter body")
+    chapters.create_chapter(volume.id, "Second", "2", "Second chapter body")
+    analyzer = FakeMemoryAnalyzer()
+    service = ManuscriptMemoryBuildService(analyzer)
+
+    first_run = service.build_all(project)
+    repository = SummaryRepository(project)
+    summary = repository.list_scope(SummaryLevel.CHAPTER, first.id)[0]
+    promoted = repository.promote(summary.id, expected_revision=summary.revision)
+    repository.request_model_retry(summary.id, expected_revision=promoted.revision)
+    second_run = service.build_all(project)
+
+    assert first_run.created_summaries == 2
+    assert analyzer.calls.count(first.id) == 2
+    assert len(analyzer.calls) == 3
+    assert second_run.upgraded_summaries == 1
+    assert second_run.skipped_current_summaries == 1
+    assert repository.get(summary.id).review_status == ReviewStatus.REVIEW
+
+
 class FailingAnalyzer:
     def extract_candidates(self, chapter_id: str, revision: int, text: str):  # type: ignore[no-untyped-def]
         raise ValueError("invalid structured memory")
@@ -240,6 +269,13 @@ class FullMemoryAnalyzer(FakeMemoryAnalyzer):
                     "林默认出暗号属于兄长。",
                     KnowledgeState.KNOWN,
                 ),
+                KnowledgeCandidate(
+                    KnowledgeSubject.READER,
+                    "reader",
+                    "来信者身份",
+                    "读者已经知道来信者来自旧港。",
+                    KnowledgeState.KNOWN,
+                ),
             ),
             style=(
                 StyleCandidate(
@@ -267,9 +303,13 @@ def test_build_persists_all_structured_memory_candidate_categories(
     assert report.created_canon == 1
     assert report.created_clues == 1
     assert report.created_knowledge == 1
-    assert report.created_style_rules == 1
+    assert report.created_style_rules == 0
     with project.database.connect() as connection:
         assert connection.execute("SELECT COUNT(*) FROM canon_entries").fetchone()[0] == 1
         assert connection.execute("SELECT COUNT(*) FROM narrative_clues").fetchone()[0] == 1
         assert connection.execute("SELECT COUNT(*) FROM knowledge_items").fetchone()[0] == 1
-        assert connection.execute("SELECT COUNT(*) FROM style_rules").fetchone()[0] == 1
+        subjects = connection.execute(
+            "SELECT DISTINCT subject_type FROM knowledge_state_events"
+        ).fetchall()
+        assert [row["subject_type"] for row in subjects] == ["READER"]
+        assert connection.execute("SELECT COUNT(*) FROM style_rules").fetchone()[0] == 0

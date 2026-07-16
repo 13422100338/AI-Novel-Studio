@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from ai_novel_studio.application.character_status_service import CharacterStatusService
 from ai_novel_studio.core.memory.character_timeline import CharacterTimeline
 from ai_novel_studio.domain.memory import (
     Authority,
@@ -105,6 +106,126 @@ def test_character_states_can_be_loaded_in_one_batch(tmp_path: Path) -> None:
     histories = repository.state_histories((first.id, second.id))
     assert histories[first.id][0].current_goal == "检查来信"
     assert histories[second.id][0].current_goal == "守住码头"
+
+
+def test_character_status_cards_aggregate_reviewed_history_without_future_leak(
+    tmp_path: Path,
+) -> None:
+    project, chapters = _project_with_three_chapters(tmp_path)
+    repository = CharacterMemoryRepository(project)
+    character = repository.create_character(
+        "Eric Windermere",
+        ("Eric", "the protagonist"),
+        "A restrained investigator.",
+    )
+    for chapter, goal, psychology, review_status in (
+        (chapters[0], "Find the letter", "Guarded", ReviewStatus.APPROVED),
+        (chapters[1], "Enter the tower", "Shaken", ReviewStatus.LOCKED),
+        (chapters[1], "Ignore the warning", "Uncertain", ReviewStatus.REVIEW),
+        (chapters[2], "Confront the sender", "Angry", ReviewStatus.APPROVED),
+    ):
+        repository.append_state(
+            character.id,
+            chapter.id,
+            motivation="Protect the town",
+            psychology=psychology,
+            current_goal=goal,
+            relationships="Trusts Alice cautiously",
+            recent_activity=f"Activity for {goal}",
+            confidence=1,
+            source_type=SourceType.HUMAN,
+            review_status=review_status,
+        )
+
+    cards = CharacterStatusService(repository).list_cards_for_chapter(chapters[2].id)
+
+    assert len(cards) == 1
+    card = cards[0]
+    assert card.id == character.id
+    assert card.aliases == ("Eric", "the protagonist")
+    assert card.profile == "A restrained investigator."
+    assert card.goal == "Enter the tower"
+    assert card.psychology == "Shaken"
+    assert [entry.goal for entry in card.journey] == [
+        "Find the letter",
+        "Enter the tower",
+    ]
+    assert [entry.chapter_id for entry in card.journey] == [
+        chapters[0].id,
+        chapters[1].id,
+    ]
+
+
+def test_character_status_save_without_profile_preserves_existing_profile(
+    tmp_path: Path,
+) -> None:
+    project, chapters = _project_with_three_chapters(tmp_path)
+    repository = CharacterMemoryRepository(project)
+    character = repository.create_character(
+        "Eric Windermere",
+        profile="Restrained voice and deliberate movements.",
+    )
+
+    CharacterStatusService(repository).save(
+        chapters[0].id,
+        character_id=character.id,
+        name=character.canonical_name,
+        motivation="Protect the town",
+        psychology="Guarded",
+        goal="Find the letter",
+        relationships="Trusts Alice cautiously",
+        recent="Returned to the old harbor",
+    )
+
+    assert repository.get_character(character.id).profile == (
+        "Restrained voice and deliberate movements."
+    )
+
+
+def test_deleted_chapter_states_are_preserved_but_excluded_from_runtime_views(
+    tmp_path: Path,
+) -> None:
+    project, chapters = _project_with_three_chapters(tmp_path)
+    chapter_repository = ChapterRepository(project)
+    repository = CharacterMemoryRepository(project)
+    character = repository.create_character("林岚")
+    for chapter, goal in (
+        (chapters[0], "检查来信"),
+        (chapters[1], "进入钟楼"),
+    ):
+        repository.append_state(
+            character.id,
+            chapter.id,
+            motivation="推进调查",
+            psychology="警惕",
+            current_goal=goal,
+            relationships="仍在观察",
+            recent_activity="返回旧港",
+            confidence=1,
+            source_type=SourceType.HUMAN,
+            review_status=ReviewStatus.APPROVED,
+        )
+
+    chapter_repository.delete_chapter(chapters[1].id)
+
+    current = repository.state_before(character.id, chapters[2].id)
+    batched = repository.state_candidates_before_many(
+        (character.id,), chapters[2].id
+    )
+    history = repository.state_history(character.id)
+    histories = repository.state_histories((character.id,))
+    with project.database.connect() as connection:
+        stored_count = connection.execute(
+            "SELECT COUNT(*) FROM character_state_events WHERE character_id = ?",
+            (character.id,),
+        ).fetchone()[0]
+
+    assert current is not None
+    assert current.current_goal == "检查来信"
+    assert batched[character.id][0].current_goal == "检查来信"
+    assert [item.current_goal for item in history] == ["检查来信"]
+    assert [item.current_goal for item in histories[character.id]] == ["检查来信"]
+    assert stored_count == 2
 
 
 def test_character_and_reader_knowledge_are_separate_and_time_bounded(tmp_path: Path) -> None:

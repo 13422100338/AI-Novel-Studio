@@ -38,6 +38,7 @@ from ai_novel_studio.ui.appearance import (
     ThemePreference,
     appearance_manager,
 )
+from ai_novel_studio.ui.feature_flags import AGENT_TOOLS_ENABLED
 from ai_novel_studio.ui.i18n import Language, language_manager
 
 
@@ -225,6 +226,7 @@ class SettingsDialog(QDialog):
         route_form.addRow("正文创作（默认）", self.prose_model_combo)
         route_form.addRow("Brief 整理（可覆盖）", self.brief_model_combo)
         route_form.addRow("工具检索（可覆盖）", self.agent_model_combo)
+        route_form.setRowVisible(self.agent_model_combo, AGENT_TOOLS_ENABLED)
         route_form.addRow("文风审校（可覆盖）", self.audit_model_combo)
         hint = QLabel(
             "默认模型负责同类基础任务；“可覆盖”可为某项高级任务指定专用模型，未指定时继承对应默认模型。程序不会在失败后自动改用其他付费模型。",
@@ -713,23 +715,13 @@ class SettingsDialog(QDialog):
         try:
             self._store_current_model_options(validate=True)
             self._store_current_profile()
-            overrides: list[tuple[TaskPurpose, ModelRoute]] = []
-            brief = self.brief_model_combo.currentData()
-            agent = self.agent_model_combo.currentData()
-            audit = self.audit_model_combo.currentData()
-            if isinstance(brief, ModelRoute):
-                overrides.append((TaskPurpose.BRIEF_NORMALIZATION, brief))
-            if isinstance(agent, ModelRoute):
-                overrides.append((TaskPurpose.AGENT_ASSISTANT, agent))
-            if isinstance(audit, ModelRoute):
-                overrides.append((TaskPurpose.STYLE_AUDIT, audit))
             configuration = ModelConfiguration(
                 providers=tuple(self._providers.values()),
                 models=tuple(self._models.values()),
                 routes=TaskRoutes(
                     plot=self._selected_route(self.plot_model_combo),
                     prose=self._selected_route(self.prose_model_combo),
-                    overrides=tuple(overrides),
+                    overrides=self._merged_route_overrides(),
                 ),
             )
             profile = self._providers.get(self._current_provider_id)
@@ -741,6 +733,31 @@ class SettingsDialog(QDialog):
             self.controller.save(configuration, keys)
         except ValueError as error:
             self._show_error(str(error))
+
+    def _merged_route_overrides(self) -> tuple[tuple[TaskPurpose, ModelRoute], ...]:
+        editable: dict[TaskPurpose, ModelRoute | None] = {
+            TaskPurpose.BRIEF_NORMALIZATION: self._selected_route(self.brief_model_combo),
+            TaskPurpose.STYLE_AUDIT: self._selected_route(self.audit_model_combo),
+        }
+        if AGENT_TOOLS_ENABLED:
+            editable[TaskPurpose.AGENT_ASSISTANT] = self._selected_route(
+                self.agent_model_combo
+            )
+
+        merged: list[tuple[TaskPurpose, ModelRoute]] = []
+        replaced: set[TaskPurpose] = set()
+        for purpose, route in self.configuration.routes.overrides:
+            if purpose not in editable:
+                merged.append((purpose, route))
+                continue
+            replacement = editable[purpose]
+            if replacement is not None:
+                merged.append((purpose, replacement))
+            replaced.add(purpose)
+        for purpose, selected_route in editable.items():
+            if purpose not in replaced and selected_route is not None:
+                merged.append((purpose, selected_route))
+        return tuple(merged)
 
     @staticmethod
     def _selected_route(combo: QComboBox) -> ModelRoute | None:

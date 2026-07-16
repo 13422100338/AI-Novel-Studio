@@ -44,6 +44,7 @@ from ai_novel_studio.application.plot_memory_context_service import (
     PlotMemoryContextService,
 )
 from ai_novel_studio.application.project_generation_runtime import recovered_draft_text
+from ai_novel_studio.application.project_guidance_service import ProjectGuidanceService
 from ai_novel_studio.application.project_memory_workspace_gateway import (
     ProjectMemoryWorkspaceGateway,
 )
@@ -70,6 +71,9 @@ from ai_novel_studio.infrastructure.storage.chapter_context_pin_repository impor
 )
 from ai_novel_studio.infrastructure.storage.character_memory_repository import (
     CharacterMemoryRepository,
+)
+from ai_novel_studio.infrastructure.storage.project_guidance_repository import (
+    ProjectGuidanceRepository,
 )
 from ai_novel_studio.ui.appearance import appearance_manager
 from ai_novel_studio.ui.demo_data import DemoMessage, WorkspaceDemoData
@@ -156,6 +160,7 @@ class MainWindow(QMainWindow):
         self.generation_process_dialog: GenerationProcessDialog | None = None
         self.last_agent_result: Any | None = None
         self._pending_model_audit: Any | None = None
+        self._model_audit_pending = False
         self._brief_normalization_pending = False
         self.settings_dialog: SettingsDialog | None = None
         self._bound_generation_runtime: Any | None = None
@@ -310,7 +315,7 @@ class MainWindow(QMainWindow):
             return
         try:
             self.project_runtime.workspace.create_volume(title)
-        except (KeyError, RuntimeError, ValueError) as error:
+        except (LookupError, RuntimeError, ValueError) as error:
             self.manuscript_panel.pipeline_status_label.setText(f"新增卷失败：{error}")
             return
         self.refresh_project_tree()
@@ -331,7 +336,7 @@ class MainWindow(QMainWindow):
                 title,
                 declared_number,
             )
-        except (KeyError, RuntimeError, ValueError) as error:
+        except (LookupError, RuntimeError, ValueError) as error:
             self.manuscript_panel.pipeline_status_label.setText(f"新增章节失败：{error}")
             return
         self.refresh_project_tree()
@@ -444,7 +449,7 @@ class MainWindow(QMainWindow):
             return
         records = CharacterStatusService(
             CharacterMemoryRepository(self.project_runtime.project)
-        ).list_for_chapter(self.current_chapter_id)
+        ).list_cards_for_chapter(self.current_chapter_id, inclusive=True)
         self.chapter_sidebar.apply_character_records(records)
 
     def save_sidebar_character_state(self, payload: object) -> None:
@@ -457,6 +462,7 @@ class MainWindow(QMainWindow):
                 self.current_chapter_id,
                 character_id=str(payload.get("id") or ""),
                 name=str(payload.get("name") or ""),
+                profile=str(payload.get("profile") or ""),
                 motivation=str(payload.get("motivation") or ""),
                 psychology=str(payload.get("psychology") or ""),
                 goal=str(payload.get("goal") or ""),
@@ -642,56 +648,75 @@ class MainWindow(QMainWindow):
 
     def request_model_audit(self) -> None:
         if self.audit_window is not None:
+            self.audit_window.error_label.clear()
             self.audit_window.run_model_audit_button.setEnabled(False)
             self.audit_window.run_model_audit_button.setText("审校中…")
-        rules: tuple[str, ...] = (
-            "保持人物声音和叙述视角一致",
-            "避免直接解释人物情绪",
-        )
-        if self.project_runtime is not None and self.current_chapter_id is not None:
-            rules = self.project_runtime.audit_service.model_context_rules(self.current_chapter_id)
-            gateway = getattr(self.model_runtime, "gateway", None)
-            if gateway is not None:
-                route = gateway.configuration.routes.resolve(TaskPurpose.STYLE_AUDIT)
-                self._pending_model_audit = self.project_runtime.audit_service.model_snapshot(
-                    chapter_id=self.current_chapter_id,
-                    text=self.manuscript_panel.editor.toPlainText(),
-                    revision=self.manuscript_panel.current_chapter_revision,
-                    mode=self.manuscript_panel.current_creation_mode(),
-                    model_provider_id=route.provider_id,
-                    model_id=route.model_id,
+        self._model_audit_pending = True
+        try:
+            rules: tuple[str, ...] = (
+                "保持人物声音和叙述视角一致",
+                "避免直接解释人物情绪",
+            )
+            if self.project_runtime is not None and self.current_chapter_id is not None:
+                rules = self.project_runtime.audit_service.model_context_rules(
+                    self.current_chapter_id
                 )
-        self.model_runtime.coordinator.start_audit(
-            self.manuscript_panel.editor.toPlainText(),
-            rules,
-            self.manuscript_panel.output_token_limit.value(),
-        )
+                gateway = getattr(self.model_runtime, "gateway", None)
+                if gateway is not None:
+                    route = gateway.configuration.routes.resolve(TaskPurpose.STYLE_AUDIT)
+                    self._pending_model_audit = (
+                        self.project_runtime.audit_service.model_snapshot(
+                            chapter_id=self.current_chapter_id,
+                            text=self.manuscript_panel.editor.toPlainText(),
+                            revision=self.manuscript_panel.current_chapter_revision,
+                            mode=self.manuscript_panel.current_creation_mode(),
+                            model_provider_id=route.provider_id,
+                            model_id=route.model_id,
+                        )
+                    )
+            self.model_runtime.coordinator.start_audit(
+                self.manuscript_panel.editor.toPlainText(),
+                rules,
+                self.manuscript_panel.output_token_limit.value(),
+            )
+        except (KeyError, RuntimeError, ValueError) as error:
+            self._pending_model_audit = None
+            self._model_audit_pending = False
+            if self.audit_window is not None:
+                self.audit_window.show_error(str(error))
 
     def request_deterministic_audit(self) -> None:
         if self.audit_window is not None:
+            self.audit_window.error_label.clear()
             self.audit_window.run_deterministic_audit_button.setEnabled(False)
             self.audit_window.run_deterministic_audit_button.setText("检查中…")
-        findings: tuple[Any, ...]
-        if self.project_runtime is not None and self.current_chapter_id is not None:
-            findings = self.project_runtime.audit_service.run_deterministic(
-                chapter_id=self.current_chapter_id,
-                text=self.manuscript_panel.editor.toPlainText(),
-                revision=self.manuscript_panel.current_chapter_revision,
-                requirement=self.manuscript_panel.chapter_requirement.toPlainText(),
-                mode=self.manuscript_panel.current_creation_mode(),
-            )
-        else:
-            findings = self.deterministic_audit_service.run(
-                DeterministicAuditRequest(
-                    chapter_id="ui-current-chapter",
-                    target_text=self.manuscript_panel.editor.toPlainText(),
-                    target_revision=0,
-                    target_hash="ui-preview",
-                    requirement_content=self.manuscript_panel.chapter_requirement.toPlainText(),
+        try:
+            findings: tuple[Any, ...]
+            if self.project_runtime is not None and self.current_chapter_id is not None:
+                findings = self.project_runtime.audit_service.run_deterministic(
+                    chapter_id=self.current_chapter_id,
+                    text=self.manuscript_panel.editor.toPlainText(),
+                    revision=self.manuscript_panel.current_chapter_revision,
+                    requirement=self.manuscript_panel.chapter_requirement.toPlainText(),
+                    mode=self.manuscript_panel.current_creation_mode(),
                 )
-            )
-        if self.audit_window is not None:
-            self.audit_window.apply_deterministic_findings(findings)
+            else:
+                findings = self.deterministic_audit_service.run(
+                    DeterministicAuditRequest(
+                        chapter_id="ui-current-chapter",
+                        target_text=self.manuscript_panel.editor.toPlainText(),
+                        target_revision=0,
+                        target_hash="ui-preview",
+                        requirement_content=(
+                            self.manuscript_panel.chapter_requirement.toPlainText()
+                        ),
+                    )
+                )
+            if self.audit_window is not None:
+                self.audit_window.apply_deterministic_findings(findings)
+        except (KeyError, RuntimeError, ValueError) as error:
+            if self.audit_window is not None:
+                self.audit_window.show_deterministic_error(str(error))
 
     def request_prose_generation(
         self,
@@ -763,7 +788,9 @@ class MainWindow(QMainWindow):
             self.generation_runtime.recover()
 
     def apply_model_audit(self, value: object) -> None:
+        self._model_audit_pending = False
         if self.audit_window is not None and isinstance(value, StyleAuditResult):
+            self.audit_window.error_label.clear()
             if self.project_runtime is not None and self._pending_model_audit is not None:
                 try:
                     findings = self.project_runtime.audit_service.record_model_result(
@@ -985,13 +1012,17 @@ class MainWindow(QMainWindow):
             self.show_plot_chat_error("Agent 运行时尚未连接")
             return
         try:
+            route = self.model_runtime.gateway.configuration.routes.resolve(
+                TaskPurpose.AGENT_ASSISTANT
+            )
             result = self.agent_runtime.discuss_plot_with_tools(
                 user_message=message,
                 current_manuscript=self.manuscript_panel.editor.toPlainText(),
                 chapter_requirement=self.manuscript_panel.chapter_requirement.toPlainText(),
+                conversation_context=self._agent_conversation_context(message),
                 chapter_id=self.current_chapter_id or "ui-current-chapter",
-                model_provider_id="ui-agent",
-                model_id="ui-agent",
+                model_provider_id=route.provider_id,
+                model_id=route.model_id,
                 output_token_limit=self.manuscript_panel.output_token_limit.value(),
             )
         except Exception as exc:  # pragma: no cover - UI safety net
@@ -1006,6 +1037,18 @@ class MainWindow(QMainWindow):
         else:
             self.show_plot_chat_error(getattr(result, "failure_message", None) or "Agent 调用失败")
 
+    def _agent_conversation_context(
+        self, current_user_message: str
+    ) -> tuple[LLMMessage, ...]:
+        messages = list(self._conversation_messages())
+        if (
+            messages
+            and messages[-1].role == "user"
+            and messages[-1].content.strip() == current_user_message.strip()
+        ):
+            messages.pop()
+        return tuple(messages)
+
     def show_model_error(self, message: str) -> None:
         self.show_plot_chat_error(message)
         for panel in self._chat_panels():
@@ -1019,6 +1062,11 @@ class MainWindow(QMainWindow):
         if self.audit_window is not None:
             self.audit_window.run_model_audit_button.setEnabled(True)
             self.audit_window.run_model_audit_button.setText("运行模型审校")
+            if self._model_audit_pending:
+                self.audit_window.show_error(message)
+        if self._model_audit_pending:
+            self._pending_model_audit = None
+        self._model_audit_pending = False
 
     def open_detached_chat(self) -> None:
         if self.detached_chat_window is None:
@@ -1093,6 +1141,7 @@ class MainWindow(QMainWindow):
                 else None
             ),
             target_chapter_id=chapter_id,
+            guidance_service=ProjectGuidanceService(ProjectGuidanceRepository(project)),
         )
 
     def save_setting_document(
@@ -1144,8 +1193,7 @@ class MainWindow(QMainWindow):
         if self.memory_window is not None:
             self.memory_window.setting_saved(
                 result.source_id,
-                f"整理完成：正典/人物/伏笔候选 {result.created_canon} 条，"
-                f"文风候选 {result.created_style} 条",
+                f"整理完成：正典/人物/伏笔候选 {result.created_canon} 条",
             )
             self._bind_memory_window()
 
@@ -1183,7 +1231,6 @@ class MainWindow(QMainWindow):
             f"正典 {report.created_canon} 条，"
             f"线索 {report.created_clues} 条，"
             f"知识 {report.created_knowledge} 条，"
-            f"文风候选 {report.created_style_rules} 条，"
             f"跳过未变化摘要 {report.skipped_current_summaries} 条，"
             f"保底摘要 {report.fallback_summaries} 条，"
             f"索引 {report.indexed_documents} 章{failure_text}。"

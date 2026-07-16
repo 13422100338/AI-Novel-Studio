@@ -242,11 +242,18 @@ class ChapterSidebar(QFrame):
             self.character_combo.addItem(record["name"], character_id)
         layout.addWidget(self.character_combo)
 
+        self.profile_edit = self._labeled_editor(
+            layout, container, "性格、语言与动作特点"
+        )
+        self.profile_edit.setFixedHeight(82)
         self.psychology_edit = self._labeled_editor(layout, container, "心理状态")
         self.motivation_edit = self._labeled_editor(layout, container, "当前动机")
         self.goal_edit = self._labeled_editor(layout, container, "当前目标")
         self.relationships_edit = self._labeled_editor(layout, container, "人物关系")
         self.recent_edit = self._labeled_editor(layout, container, "最近活动")
+        self.journey_edit = self._labeled_editor(layout, container, "过往心路历程")
+        self.journey_edit.setReadOnly(True)
+        self.journey_edit.setFixedHeight(104)
 
         action_layout = QGridLayout()
         new_button = QPushButton("新增人物", container)
@@ -341,29 +348,53 @@ class ChapterSidebar(QFrame):
             return
         record = self._characters[character_id]
         self.character_combo.setCurrentText(record["name"])
+        self.profile_edit.setPlainText(record.get("profile", ""))
         self.psychology_edit.setPlainText(record["psychology"])
         self.motivation_edit.setPlainText(record["motivation"])
         self.goal_edit.setPlainText(record["goal"])
         self.relationships_edit.setPlainText(record.get("relationships", ""))
         self.recent_edit.setPlainText(record["recent"])
+        self.journey_edit.setPlainText(record.get("journey", ""))
 
     def _clear_character_fields(self) -> None:
+        self.profile_edit.clear()
         self.psychology_edit.clear()
         self.motivation_edit.clear()
         self.goal_edit.clear()
         self.relationships_edit.clear()
         self.recent_edit.clear()
+        self.journey_edit.clear()
+
+    @staticmethod
+    def _format_character_journey(entries: Iterable[Any]) -> str:
+        lines: list[str] = []
+        for index, entry in enumerate(entries, start=1):
+            details = [
+                f"心理：{entry.psychology}" if entry.psychology else "",
+                f"目标：{entry.goal}" if entry.goal else "",
+                f"动机：{entry.motivation}" if entry.motivation else "",
+                f"关系：{entry.relationships}" if entry.relationships else "",
+                f"活动：{entry.recent_activity}" if entry.recent_activity else "",
+            ]
+            content = "；".join(value for value in details if value)
+            if content:
+                lines.append(f"{index}. {content}")
+        return "\n".join(lines)
 
     def apply_character_records(self, records: Iterable[Any]) -> None:
         current_id = self.character_combo.currentData()
         self._characters = {
             str(record.id): {
                 "name": str(record.name),
+                "profile": str(getattr(record, "profile", "")),
                 "psychology": str(record.psychology),
                 "motivation": str(record.motivation),
                 "goal": str(record.goal),
                 "relationships": str(getattr(record, "relationships", "")),
                 "recent": str(record.recent),
+                "journey": self._format_character_journey(
+                    getattr(record, "journey", ())
+                ),
             }
             for record in records
         }
@@ -415,14 +446,17 @@ class ChapterSidebar(QFrame):
                 self.character_combo.setItemData(current_index, character_id)
             self._characters[character_id] = {
                 "name": name,
+                "profile": "",
                 "psychology": "",
                 "motivation": "",
                 "goal": "",
                 "relationships": "",
                 "recent": "",
+                "journey": "",
             }
         self._characters[character_id].update(
             name=name,
+            profile=self.profile_edit.toPlainText(),
             psychology=self.psychology_edit.toPlainText(),
             motivation=self.motivation_edit.toPlainText(),
             goal=self.goal_edit.toPlainText(),
@@ -434,6 +468,7 @@ class ChapterSidebar(QFrame):
             {
                 "id": character_id,
                 "name": name,
+                "profile": self.profile_edit.toPlainText(),
                 "psychology": self.psychology_edit.toPlainText(),
                 "motivation": self.motivation_edit.toPlainText(),
                 "goal": self.goal_edit.toPlainText(),

@@ -10,6 +10,7 @@ from ai_novel_studio.application.generation_context_service import (
     StandardModeBriefError,
     UnknownContextWindowError,
 )
+from ai_novel_studio.application.project_guidance_service import ProjectGuidanceService
 from ai_novel_studio.core.brief.source_fingerprint import BriefSourceSnapshot
 from ai_novel_studio.core.context.context_builder import RequiredContextOverflowError
 from ai_novel_studio.core.context.context_manifest import ContextManifestRepository
@@ -25,6 +26,9 @@ from ai_novel_studio.infrastructure.storage.chapter_requirement_repository impor
     ChapterRequirementRepository,
 )
 from ai_novel_studio.infrastructure.storage.generation_repository import GenerationRepository
+from ai_novel_studio.infrastructure.storage.project_guidance_repository import (
+    ProjectGuidanceRepository,
+)
 from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
 
 
@@ -252,6 +256,62 @@ def test_recent_full_chapter_is_selected_before_older_full_chapter(
     assert workspace["old"].id not in selected_ids
 
 
+def test_with_enough_budget_exactly_the_latest_three_full_chapters_are_candidates(
+    tmp_path: Path,
+) -> None:
+    project = ProjectRepository.create(tmp_path / "recent-three", "Novel")
+    volume = project.list_volumes()[0]
+    chapters = ChapterRepository(project)
+    previous = [
+        chapters.create_chapter(volume.id, f"Chapter {index}", str(index), f"Body {index}")
+        for index in range(1, 5)
+    ]
+    current = chapters.create_chapter(volume.id, "Current", "5")
+    requirements = ChapterRequirementRepository(project)
+    empty = requirements.get_or_create(current.id)
+    requirements.update(
+        current.id,
+        "Continue from the previous chapter.",
+        is_locked=True,
+        expected_revision=empty.revision,
+    )
+    service = GenerationContextService(
+        project,
+        chapters,
+        requirements,
+        ChapterBriefRepository(project),
+        GenerationRepository(project),
+        ContextManifestRepository(project),
+    )
+
+    prepared = service.prepare(
+        GenerationPreparationRequest(
+            chapter_id=current.id,
+            mode=CreationMode.BASIC,
+            brief_id=None,
+            output_token_limit=8_000,
+            model_capabilities=ModelCapabilities(
+                context_window=128_000,
+                max_output_tokens=16_000,
+            ),
+            target_words=3_500,
+            model_provider_id="provider",
+            model_id="writer",
+        )
+    )
+
+    recent_blocks = tuple(
+        block for block in prepared.selected_blocks if block.category == "RECENT_FULL"
+    )
+    assert [block.source_id for block in recent_blocks] == [
+        previous[3].id,
+        previous[2].id,
+        previous[1].id,
+    ]
+    assert all(block.required is False for block in recent_blocks)
+    assert previous[0].id not in {block.source_id for block in recent_blocks}
+
+
 def test_standard_prompt_has_stable_order_and_prose_only_final_task(
     tmp_path: Path,
 ) -> None:
@@ -281,3 +341,32 @@ def test_standard_prompt_has_stable_order_and_prose_only_final_task(
     assert "人物、知识、线索、正典和文风" in prepared.messages[5].content
     assert "历史摘要与检索证据" in prepared.messages[6].content
     assert prepared.messages[-1].content.endswith("只输出本章正文。")
+
+
+def test_project_guidance_is_required_system_context_and_manifest_records_revision(
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    guidance = ProjectGuidanceService(
+        ProjectGuidanceRepository(workspace["project"])
+    ).save_manual(
+        "主题是人在失去记忆后仍然选择承担责任。\n使用近距离第三人称。",
+        expected_revision=0,
+    )
+
+    prepared = workspace["service"].prepare(_request(workspace))
+
+    selected = next(
+        item
+        for item in prepared.manifest.selected
+        if item.source_type == "PROJECT_GUIDANCE"
+    )
+    assert selected.category == "PROJECT_GUIDANCE"
+    assert selected.source_id == workspace["project"].project.id
+    assert selected.source_revision == guidance.revision
+    assert not any(
+        item.source_type == "PROJECT_GUIDANCE" for item in prepared.manifest.omitted
+    )
+    assert prepared.messages[2].role == "system"
+    assert "小说最高系统提示" in prepared.messages[2].content
+    assert guidance.highest_system_prompt in prepared.messages[2].content

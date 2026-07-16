@@ -22,6 +22,7 @@ class MemoryWorkspaceField:
     value: str
     choices: tuple[str, ...] = ()
     multiline: bool = False
+    editable: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,6 +42,7 @@ class MemoryWorkspaceRecord:
     editable: bool
     promotable: bool
     fields: tuple[MemoryWorkspaceField, ...] = ()
+    group_key: str = ""
 
     def __post_init__(self) -> None:
         for field_name, value in (
@@ -88,6 +90,10 @@ class MemoryWorkspaceGateway(Protocol):
     ) -> MemoryWorkspaceRecord: ...
 
     def promote(self, record_id: str, expected_revision: int) -> MemoryWorkspaceRecord: ...
+
+    def request_model_retry(
+        self, record_id: str, expected_revision: int
+    ) -> MemoryWorkspaceRecord: ...
 
     def update_fields(
         self,
@@ -141,6 +147,19 @@ class MemoryWorkspaceService:
         promoted = self._gateway.promote(record.id, expected_revision)
         self._records[promoted.id] = promoted
         return promoted
+
+    def request_model_retry(
+        self, record_id: str, *, expected_revision: int
+    ) -> MemoryWorkspaceRecord:
+        record = self._record(record_id)
+        self._assert_revision(record, expected_revision)
+        if record.review_status == ReviewStatus.LOCKED:
+            raise LockedMemoryRecordError("锁定的人工记忆记录不能撤销晋升")
+        if record.source_type != "SUMMARY":
+            raise PermissionError("只有已晋升的模型章节摘要可以标记为重新整理")
+        retried = self._gateway.request_model_retry(record.id, expected_revision)
+        self._records[retried.id] = retried
+        return retried
 
     def pending_promotion_count(self) -> int:
         return len(self._promotion_candidates())

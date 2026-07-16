@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import cast
 
 from ai_novel_studio.domain.identifiers import new_id
-from ai_novel_studio.domain.memory import Authority, MemoryStatus, ReviewStatus, StyleScope
+from ai_novel_studio.domain.memory import Authority, MemoryStatus, ReviewStatus
 from ai_novel_studio.infrastructure.llm.contract_runner import (
     JsonField,
     JsonObjectContract,
@@ -17,7 +17,6 @@ from ai_novel_studio.infrastructure.storage.narrative_memory_repository import (
 )
 from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
 from ai_novel_studio.infrastructure.storage.search_repository import SearchRepository
-from ai_novel_studio.infrastructure.storage.style_repository import StyleRepository
 
 _CONTRACT = JsonObjectContract(
     (
@@ -25,7 +24,6 @@ _CONTRACT = JsonObjectContract(
         JsonField("characters", list),
         JsonField("canon", list),
         JsonField("clues", list),
-        JsonField("style", list),
         JsonField("uncertain", list),
     )
 )
@@ -38,7 +36,6 @@ _SYSTEM_PROMPT = """你是小说设定资料整理器。输入不是小说正文
 - characters: 数组；每项包含 name、aliases、profile。aliases 必须是文本数组；没有别名时返回空数组。
 - canon: 数组；每项包含 title、detail。只放明确成立的世界规则或背景事实。
 - clues: 数组；每项包含 title、detail。放作者计划中的伏笔、承诺和未决线索。
-- style: 数组；每项包含 rule_type、rule_text。只放明确的写作或叙事风格要求。
 - uncertain: 数组；每项是字符串。放备选方案、互相冲突、已废弃或无法确认的信息。
 严格区分“已经确定”“未来计划”“备选或不确定”。不要把人物设定伪造成某一章节已经发生的状态。"""
 
@@ -101,13 +98,8 @@ class SettingDocumentAnalysisService:
                 _pair(item, index, "clues")
                 for index, item in enumerate(_objects(payload, "clues"))
             ),
-            style=tuple(
-                (
-                    _required_text(item, "rule_type", path=f"style[{index}]"),
-                    _required_text(item, "rule_text", path=f"style[{index}]"),
-                )
-                for index, item in enumerate(_objects(payload, "style"))
-            ),
+            # 自动文风候选已经退役；文风只由用户在人工样章中维护。
+            style=(),
             uncertain=tuple(_string_items(payload, "uncertain")),
         )
 
@@ -160,7 +152,6 @@ class SettingDocumentMemoryService:
         source_id = self.save_source(project, title, document_type, text, source_id=source_id)
         analysis = self._analyzer.analyze(title, document_type, text)
         narrative = NarrativeMemoryRepository(project)
-        styles = StyleRepository(project)
         marker = f"SETTING:{source_id}"
         canon_items: list[tuple[str, str]] = [(f"设定概览：{title}", analysis.summary)]
         canon_items.extend(
@@ -193,15 +184,6 @@ class SettingDocumentMemoryService:
                     (marker,),
                 ).fetchall()
             }
-            existing_style = {
-                (row["rule_type"], row["rule_text"])
-                for row in connection.execute(
-                    "SELECT rule_type, rule_text FROM style_rules "
-                    "WHERE scope_type = 'BOOK' AND scope_id = 'BOOK' "
-                    "AND authority = 'MODEL_EXTRACTED' AND review_status = 'REVIEW' "
-                    "AND status = 'CURRENT'"
-                ).fetchall()
-            }
         created_canon = 0
         for item_title, detail in canon_items:
             if (item_title, detail) in existing_canon:
@@ -217,18 +199,6 @@ class SettingDocumentMemoryService:
             )
             created_canon += 1
         created_style = 0
-        for rule_type, rule_text in analysis.style:
-            if (rule_type, rule_text) in existing_style:
-                continue
-            styles.add_rule(
-                StyleScope.BOOK,
-                "BOOK",
-                rule_type,
-                rule_text,
-                Authority.MODEL_EXTRACTED,
-                ReviewStatus.REVIEW,
-            )
-            created_style += 1
         return SettingImportReport(
             source_id, created_canon, created_style, len(analysis.uncertain)
         )
