@@ -1,15 +1,10 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
-from typing import Protocol
 
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal, Slot
 
-from ai_novel_studio.application.model_tasks import (
-    ChatSummaryResult,
-    NormalizedBrief,
-    StyleAuditResult,
-)
+from ai_novel_studio.application.model_task_port import ModelTaskPort
 from ai_novel_studio.infrastructure.llm import (
     ContractValidationError,
     LLMMessage,
@@ -19,35 +14,6 @@ from ai_novel_studio.infrastructure.llm import (
     ProviderError,
     StreamEventKind,
 )
-
-
-class ModelTaskPort(Protocol):
-    def stream_chat(
-        self,
-        conversation: tuple[LLMMessage, ...],
-        manuscript_excerpt: str,
-        output_token_limit: int,
-    ) -> Iterator[LLMStreamEvent]: ...
-
-    def draft_chapter_requirement(
-        self,
-        conversation: tuple[LLMMessage, ...],
-        manuscript_excerpt: str,
-        output_token_limit: int,
-    ) -> str: ...
-
-    def normalize_brief(self, source: str, output_token_limit: int) -> NormalizedBrief: ...
-
-    def audit_style(
-        self,
-        manuscript: str,
-        rules: tuple[str, ...],
-        output_token_limit: int,
-    ) -> StyleAuditResult: ...
-
-    def summarize_chat(
-        self, existing_summary: str, transcript: str, output_token_limit: int
-    ) -> ChatSummaryResult: ...
 
 
 class _ResultJob(QRunnable):

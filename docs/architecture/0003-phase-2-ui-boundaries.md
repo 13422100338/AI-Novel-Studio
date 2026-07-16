@@ -89,6 +89,8 @@ memory building, memory promotion, setting-document import, and project-generati
 adapters call framework-neutral application services and translate their results into Qt signals;
 they do not own persistence or business rules.
 
-The `application` package must not import `ui` or `ui/qt`. The remaining temporary PySide6
-exceptions are `ModelTaskCoordinator` and `ModelSettingsController`, which stay beside the current
-combined `ModelRuntime` until the model backend and Qt bindings are split in a later change.
+The `application` package must not import `ui`, `ui/qt`, or PySide6. Model configuration, gateway,
+usage tracking, and task services are composed by the framework-neutral `ModelBackend`.
+`ModelRuntime`, `ModelTaskCoordinator`, and `ModelSettingsController` live under `ui/qt` and only
+adapt that backend to Qt signals and background jobs. A future frontend can therefore reuse the
+same backend without importing or hosting a Qt event loop.

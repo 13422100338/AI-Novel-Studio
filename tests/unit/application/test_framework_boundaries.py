@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 
-def test_application_pyside_dependencies_are_limited_to_model_runtime() -> None:
+def test_application_has_no_pyside_dependencies() -> None:
     application_root = (
         Path(__file__).resolve().parents[3]
         / "src"
@@ -16,7 +16,4 @@ def test_application_pyside_dependencies_are_limited_to_model_runtime() -> None:
         if "PySide6" in path.read_text(encoding="utf-8")
     )
 
-    assert pyside_modules == [
-        "model_settings_controller.py",
-        "model_task_coordinator.py",
-    ]
+    assert pyside_modules == []

@@ -32,8 +32,6 @@ from ai_novel_studio.application.manuscript_memory_build_service import (
 )
 from ai_novel_studio.application.memory_analysis_service import MemoryAnalysisService
 from ai_novel_studio.application.memory_workspace_service import MemoryWorkspaceService
-from ai_novel_studio.application.model_runtime import ModelRuntime
-from ai_novel_studio.application.model_task_coordinator import ModelTaskCoordinator
 from ai_novel_studio.application.model_tasks import (
     ChatSummaryResult,
     NormalizedBrief,
@@ -87,6 +85,8 @@ from ai_novel_studio.ui.panels.manuscript_panel import ManuscriptPanel
 from ai_novel_studio.ui.panels.plot_chat_panel import PlotChatPanel
 from ai_novel_studio.ui.panels.top_bar import TopBar
 from ai_novel_studio.ui.qt.memory_build_coordinator import MemoryBuildCoordinator
+from ai_novel_studio.ui.qt.model_runtime import ModelRuntime
+from ai_novel_studio.ui.qt.model_task_coordinator import ModelTaskCoordinator
 from ai_novel_studio.ui.qt.project_generation_runtime import (
     QtProjectGenerationRuntime,
     recovered_draft_text,

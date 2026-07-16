@@ -3,11 +3,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from ai_novel_studio.application.model_settings_controller import ModelSettingsController
-from ai_novel_studio.application.model_task_coordinator import (
-    ModelTaskCoordinator,
-    ModelTaskPort,
-)
+from ai_novel_studio.application.model_task_port import ModelTaskPort
 from ai_novel_studio.application.model_tasks import ModelTaskService
 from ai_novel_studio.infrastructure.llm import (
     CredentialStore,
@@ -20,7 +16,9 @@ from ai_novel_studio.infrastructure.llm import (
 )
 
 
-class ModelRuntime:
+class ModelBackend:
+    """Framework-neutral composition root for model access."""
+
     def __init__(
         self,
         repository: ModelConfigRepository,
@@ -36,13 +34,9 @@ class ModelRuntime:
         self.usage_tracker = usage_tracker
         self.gateway = gateway
         self.service = service
-        self.coordinator = ModelTaskCoordinator(service)
-        self.settings_controller = ModelSettingsController(
-            repository, credentials, adapters, gateway
-        )
 
     @classmethod
-    def create_default(cls) -> ModelRuntime:
+    def create_default(cls) -> ModelBackend:
         config_root = Path(
             os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming")
         ) / "AI Novel Studio"
@@ -62,7 +56,7 @@ class ModelRuntime:
         repository: ModelConfigRepository,
         credentials: CredentialStore,
         service: ModelTaskPort,
-    ) -> ModelRuntime:
+    ) -> ModelBackend:
         configuration = repository.load()
         adapter = OpenAICompatibleAdapter()
         adapters: dict[str, ProviderAdapter] = {"openai_compatible": adapter}

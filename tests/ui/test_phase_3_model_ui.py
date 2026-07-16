@@ -4,7 +4,6 @@ from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtWidgets import QLineEdit
 from pytestqt.qtbot import QtBot
 
-from ai_novel_studio.application.model_runtime import ModelRuntime
 from ai_novel_studio.infrastructure.llm import (
     CapabilityProbeResult,
     MemoryCredentialStore,
@@ -20,6 +19,7 @@ from ai_novel_studio.infrastructure.llm import (
 )
 from ai_novel_studio.ui.main_window import MainWindow
 from ai_novel_studio.ui.pages.settings_dialog import SettingsDialog
+from ai_novel_studio.ui.qt.model_runtime import ModelRuntime
 
 
 class FakeSettingsController(QObject):

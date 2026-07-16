@@ -2,13 +2,13 @@ from collections.abc import Iterator
 
 from pytestqt.qtbot import QtBot
 
-from ai_novel_studio.application.model_task_coordinator import ModelTaskCoordinator
 from ai_novel_studio.application.model_tasks import (
     ChatSummaryResult,
     NormalizedBrief,
     StyleAuditResult,
 )
 from ai_novel_studio.infrastructure.llm import LLMMessage, LLMStreamEvent, StreamEventKind
+from ai_novel_studio.ui.qt.model_task_coordinator import ModelTaskCoordinator
 
 
 class FakeTaskService:

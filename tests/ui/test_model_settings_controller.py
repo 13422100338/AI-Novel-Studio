@@ -1,4 +1,5 @@
-from ai_novel_studio.application.model_settings_controller import ModelSettingsController
+from pathlib import Path
+
 from ai_novel_studio.infrastructure.llm import (
     CredentialStoreError,
     ModelConfigRepository,
@@ -6,6 +7,7 @@ from ai_novel_studio.infrastructure.llm import (
     ProviderProfile,
     TaskRoutes,
 )
+from ai_novel_studio.ui.qt.model_settings_controller import ModelSettingsController
 
 
 class FailingCredentialStore:
@@ -19,7 +21,7 @@ class FailingCredentialStore:
         raise CredentialStoreError("credential backend failed")
 
 
-def test_settings_controller_turns_credential_failure_into_ui_error(tmp_path) -> None:  # type: ignore[no-untyped-def]
+def test_settings_controller_turns_credential_failure_into_ui_error(tmp_path: Path) -> None:
     credentials = FailingCredentialStore()
     repository = ModelConfigRepository(tmp_path / "models.json", credentials)
     controller = ModelSettingsController(repository, credentials, {}, None)
@@ -42,4 +44,3 @@ def test_settings_controller_turns_credential_failure_into_ui_error(tmp_path) ->
     assert messages
     assert "credential backend failed" not in messages[0]
     assert "系统凭据" in messages[0]
-

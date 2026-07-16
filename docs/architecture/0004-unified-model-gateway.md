@@ -9,8 +9,8 @@ Accepted and implemented on 2026-07-03.
 All model requests cross the same application and infrastructure boundary:
 
 ```text
-PySide6 UI intent
-    -> ModelTaskCoordinator (background QRunnable)
+Frontend intent
+    -> frontend adapter (Qt currently uses ModelTaskCoordinator and QRunnable)
     -> ModelTaskService (prompt order and task contract)
     -> LLMContractRunner when structured output is required
     -> LLMGateway (route, credential, retry, usage)
@@ -21,6 +21,11 @@ PySide6 UI intent
 UI classes do not construct HTTP requests. Provider adapters do not read or write project storage.
 `MainWindow` only connects Qt signals and moves validated results into reviewable, non-persistent
 Phase 2 surfaces.
+
+`ModelBackend` is the framework-neutral composition root for configuration, credentials, adapters,
+usage tracking, the gateway, and task services. The Qt-only `ModelRuntime` wraps it with
+`ModelTaskCoordinator` and `ModelSettingsController`. Other frontends should compose or receive a
+`ModelBackend` directly and provide their own scheduling and event adapter.
 
 ## Configuration and secrets
 
@@ -97,4 +102,3 @@ zero-cost cache result.
 Phase 4 can supply retrieved memory and Context Manifests without changing provider code. Phase 5
 can add the prose state machine on top of the existing prose route and stream events. Phase 7 can
 add tool calls behind new adapter contracts without allowing an Agent to bypass repositories.
-

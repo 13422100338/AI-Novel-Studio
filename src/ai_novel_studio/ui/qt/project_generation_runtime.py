@@ -5,7 +5,6 @@ from PySide6.QtCore import QObject, Signal
 from ai_novel_studio.application.generation_recovery_service import (
     RecoverableGeneration,
 )
-from ai_novel_studio.application.model_task_coordinator import ModelTaskCoordinator
 from ai_novel_studio.application.model_tasks import ModelTaskService
 from ai_novel_studio.application.project_audit_service import ModelAuditSnapshot
 from ai_novel_studio.application.project_generation_session import (
@@ -17,6 +16,7 @@ from ai_novel_studio.domain.generation import (
     CreationMode,
     GenerationStatus,
 )
+from ai_novel_studio.ui.qt.model_task_coordinator import ModelTaskCoordinator
 from ai_novel_studio.ui.qt.prose_generation_coordinator import (
     ProseGenerationCoordinator,
 )

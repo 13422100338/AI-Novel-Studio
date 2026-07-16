@@ -22,7 +22,6 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ai_novel_studio.application.model_settings_controller import ModelSettingsController
 from ai_novel_studio.infrastructure.llm import (
     CapabilityProbeResult,
     ModelConfiguration,
@@ -40,6 +39,7 @@ from ai_novel_studio.ui.appearance import (
 )
 from ai_novel_studio.ui.feature_flags import AGENT_TOOLS_ENABLED
 from ai_novel_studio.ui.i18n import Language, language_manager
+from ai_novel_studio.ui.qt.model_settings_controller import ModelSettingsController
 
 
 class SettingsDialog(QDialog):
