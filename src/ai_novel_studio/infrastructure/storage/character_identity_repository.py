@@ -182,6 +182,17 @@ class CharacterIdentityRepository:
             raise KeyError(f"不存在人物归并记录：{merge_id}")
         return self._merge(row)
 
+    def list_recent_applied(self, *, limit: int = 20) -> tuple[CharacterIdentityMerge, ...]:
+        if limit < 1:
+            return ()
+        with self.project.database.connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM character_identity_merges "
+                "WHERE status = 'APPLIED' ORDER BY created_at DESC, id DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return tuple(self._merge(row) for row in rows)
+
     @staticmethod
     def _character(connection: sqlite3.Connection, character_id: str) -> sqlite3.Row:
         row = cast(
