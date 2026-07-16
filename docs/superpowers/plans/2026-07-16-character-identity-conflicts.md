@@ -26,3 +26,8 @@ Distinguish chapter scanning from actual model calls in progress reporting. Mark
 ## Ticket 3: Review queue and Agent proposals
 
 Add an identity-conflict queue with evidence comparison and explicit decisions. Agent mode may create a reviewable proposal, but only the deterministic application service may apply a confirmed merge.
+
+Status: completed. The queue shows deterministic and Agent-origin candidates with evidence,
+requires explicit canonical-card selection and confirmation, and supports guarded undo. Agent
+tool retrieval is optional and defaults off; an executed identity proposal opens the review UI
+without modifying project memory.

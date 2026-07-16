@@ -105,7 +105,7 @@ def test_settings_exposes_independent_plot_prose_and_advanced_routes(qtbot: QtBo
     assert saved.routes.prose == ModelRoute(profile.id, "prose-model")
 
 
-def test_settings_does_not_create_agent_override_while_feature_is_hidden(
+def test_settings_saves_agent_override_when_feature_is_enabled(
     qtbot: QtBot,
 ) -> None:
     controller = FakeSettingsController()
@@ -134,7 +134,9 @@ def test_settings_does_not_create_agent_override_while_feature_is_hidden(
     dialog.save_button.click()
 
     overrides = dict(controller.save_calls[0][0].routes.overrides)
-    assert TaskPurpose.AGENT_ASSISTANT not in overrides
+    assert overrides[TaskPurpose.AGENT_ASSISTANT] == ModelRoute(
+        profile.id, "agent-model"
+    )
 
 
 def test_settings_can_probe_selected_model_capabilities(qtbot: QtBot) -> None:
@@ -295,7 +297,7 @@ def test_settings_restores_all_saved_task_routes(qtbot: QtBot) -> None:
         assert combo.currentData() == route
 
 
-def test_settings_preserves_hidden_and_unrepresented_routes_across_restart(
+def test_settings_preserves_optional_and_unrepresented_routes_across_restart(
     qtbot: QtBot,
     tmp_path: Path,
 ) -> None:
@@ -319,8 +321,8 @@ def test_settings_preserves_hidden_and_unrepresented_routes_across_restart(
     dialog = SettingsDialog(controller=controller)
     qtbot.addWidget(dialog)
 
-    assert dialog.agent_model_combo.isHidden()
-    dialog.agent_model_combo.setCurrentIndex(0)
+    assert not dialog.agent_model_combo.isHidden()
+    assert dialog.agent_model_combo.currentData() == route
     dialog.save_button.click()
 
     saved = controller.save_calls[0][0]

@@ -143,7 +143,7 @@ class MemoryWindow(QMainWindow):
             "按名称和别名列出疑似重复卡；只有人工确认后才会归并。"
         )
         self.identity_review_button.setEnabled(False)
-        self.identity_review_button.clicked.connect(self._open_identity_review)
+        self.identity_review_button.clicked.connect(self.open_identity_review)
         actions.addWidget(self.save_button)
         actions.addWidget(self.promote_button)
         actions.addWidget(self.promote_all_button)
@@ -247,7 +247,7 @@ class MemoryWindow(QMainWindow):
         self.tabs.setCurrentIndex(1)
         self._refresh_current_record()
 
-    def _open_identity_review(self) -> None:
+    def open_identity_review(self) -> None:
         if self._identity_service is None:
             return
         if self.identity_dialog is not None and self.identity_dialog.isVisible():

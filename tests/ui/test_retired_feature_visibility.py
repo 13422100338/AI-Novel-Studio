@@ -5,13 +5,13 @@ from ai_novel_studio.ui.pages.settings_dialog import SettingsDialog
 from ai_novel_studio.ui.pages.style_rules_window import StyleRulesWindow
 
 
-def test_settings_hide_retired_agent_route_without_removing_its_control(
+def test_settings_expose_restored_agent_route(
     qtbot: QtBot,
 ) -> None:
     dialog = SettingsDialog()
     qtbot.addWidget(dialog)
 
-    assert dialog.agent_model_combo.isHidden()
+    assert not dialog.agent_model_combo.isHidden()
     assert dialog.agent_model_combo.count() >= 1
 
 

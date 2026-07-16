@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 )
 
 from ai_novel_studio.application.character_identity_service import (
+    CharacterIdentityCandidateOrigin,
     CharacterIdentityCardSnapshot,
     CharacterIdentityReviewCandidate,
     RecentCharacterIdentityMerge,
@@ -130,8 +131,13 @@ class CharacterIdentityConflictDialog(QDialog):
         self.candidate_selector.blockSignals(True)
         self.candidate_selector.clear()
         for candidate in self._candidates:
+            origin = (
+                "Agent 提案"
+                if candidate.origin == CharacterIdentityCandidateOrigin.AGENT_PROPOSAL
+                else "规则候选"
+            )
             self.candidate_selector.addItem(
-                f"{candidate.left.character.canonical_name}  ↔  "
+                f"{origin} · {candidate.left.character.canonical_name}  ↔  "
                 f"{candidate.right.character.canonical_name}"
             )
         self.candidate_selector.blockSignals(False)
@@ -169,7 +175,12 @@ class CharacterIdentityConflictDialog(QDialog):
             self.merge_button.setEnabled(False)
             return
         candidate = self._candidates[index]
-        self.reason_label.setText(f"候选原因：{candidate.reason}")
+        origin = (
+            "Agent 提案（尚未修改记忆库）"
+            if candidate.origin == CharacterIdentityCandidateOrigin.AGENT_PROPOSAL
+            else "程序规则候选"
+        )
+        self.reason_label.setText(f"来源：{origin}\n候选原因：{candidate.reason}")
         self.left_details.setPlainText(self._card_text(candidate.left))
         self.right_details.setPlainText(self._card_text(candidate.right))
         keep_left = candidate.recommended_character_id == candidate.left.character.id

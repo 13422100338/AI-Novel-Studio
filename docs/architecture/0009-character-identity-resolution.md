@@ -18,3 +18,11 @@ Every merge records the exact event IDs and post-merge Brief revisions and hashe
 - The first ticket does not perform fuzzy matching or automatic conflict detection.
 - The first ticket rejects merge chains that would make undo ambiguous.
 - Conflict review UI and Agent proposal tools can be added later without granting model output direct database write access.
+
+## Agent proposal integration
+
+The optional plot-discussion Agent may call `PROPOSE_CHARACTER_IDENTITY_MERGE`.
+This tool validates two active character names and a non-empty reason, then records only the
+normal Agent tool trace. It does not update character cards or memory references. Executed
+proposals appear in the same conflict-review queue as deterministic name matches and are labeled
+as Agent proposals. The existing confirmed application service remains the only merge path.

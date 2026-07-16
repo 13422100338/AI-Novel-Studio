@@ -1,6 +1,9 @@
 from pathlib import Path
 
+import pytest
+
 from ai_novel_studio.application.agent_tool_providers import build_project_agent_registry
+from ai_novel_studio.application.agent_tools import AgentToolValidationError
 from ai_novel_studio.domain.agent import AgentToolName
 from ai_novel_studio.domain.memory import (
     Authority,
@@ -197,3 +200,16 @@ def test_project_agent_tools_return_bounded_source_referenced_content(tmp_path: 
         character.id,
         duplicate.id,
     ]
+
+    with pytest.raises(AgentToolValidationError, match="同一张人物卡"):
+        registry.execute(
+            AgentToolName.PROPOSE_CHARACTER_IDENTITY_MERGE,
+            {
+                "source_character_name": character.canonical_name,
+                "target_character_name": character.canonical_name,
+                "reason": "错误的自身归并提案",
+            },
+            run_id="run",
+            chapter_id=chapter_2.id,
+            max_result_chars=500,
+        )

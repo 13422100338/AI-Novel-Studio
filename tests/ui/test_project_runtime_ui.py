@@ -2,6 +2,7 @@ from pathlib import Path
 
 from pytestqt.qtbot import QtBot
 
+from ai_novel_studio.application.agent_loop_service import AgentLoopResult
 from ai_novel_studio.application.manuscript_memory_build_service import (
     ManuscriptMemoryBuildFailure,
     ManuscriptMemoryBuildReport,
@@ -17,6 +18,12 @@ from ai_novel_studio.core.context.context_manifest import (
     SelectedManifestItem,
     create_manifest_id,
     utc_now,
+)
+from ai_novel_studio.domain.agent import (
+    AgentPurpose,
+    AgentRunStatus,
+    AgentToolCallStatus,
+    AgentToolName,
 )
 from ai_novel_studio.domain.audit import AuditFindingStatus, AuditTargetKind
 from ai_novel_studio.domain.generation import BriefStatus, CreationMode, GenerationStatus
@@ -350,7 +357,7 @@ def test_generation_synchronizes_visible_requirement_before_preparing(
     assert started
 
 
-def test_retired_agent_mode_stays_disabled_for_open_project(
+def test_agent_mode_is_available_for_open_project_but_does_not_run_until_sent(
     qtbot: QtBot, tmp_path: Path
 ) -> None:
     runtime, chapter_id = _project_with_chapter(tmp_path / "novel", tmp_path)
@@ -359,7 +366,7 @@ def test_retired_agent_mode_stays_disabled_for_open_project(
     window.load_project_chapter(chapter_id)
     window.plot_chat_panel.agent_mode_toggle.setChecked(True)
 
-    assert not window.plot_chat_panel.agent_mode_enabled()
+    assert window.plot_chat_panel.agent_mode_enabled()
     assert window.last_agent_result is None
     assert runtime.agent_repository.latest_run() is None
 
@@ -409,6 +416,58 @@ def test_memory_window_opens_character_identity_review_for_project(
     assert dialog is not None
     assert dialog.isVisible()
     assert dialog.candidate_selector.count() == 1
+
+
+def test_agent_character_merge_proposal_opens_review_instead_of_mutating_memory(
+    qtbot: QtBot, tmp_path: Path
+) -> None:
+    runtime, chapter_id = _project_with_chapter(tmp_path / "novel", tmp_path)
+    memory = CharacterMemoryRepository(runtime.project)
+    source = memory.create_character("小艾")
+    target = memory.create_character("北境继承人")
+    agents = runtime.agent_repository
+    run = agents.create_run(
+        chapter_id=chapter_id,
+        purpose=AgentPurpose.PLOT_DISCUSSION,
+        status=AgentRunStatus.RUNNING,
+        model_provider_id="provider",
+        model_id="model",
+        prompt_version="agent-assistant-v2",
+        max_iterations=4,
+        max_tool_calls=8,
+        max_tool_result_chars=4_000,
+    )
+    call = agents.add_tool_call(
+        run.id,
+        AgentToolName.PROPOSE_CHARACTER_IDENTITY_MERGE,
+        '{"reason":"两张卡在小说中指向同一人物",'
+        '"source_character_name":"小艾",'
+        '"target_character_name":"北境继承人"}',
+    )
+    agents.complete_tool_call(
+        call.id,
+        AgentToolCallStatus.EXECUTED,
+        '{"content":"proposal validated"}',
+        18,
+        "[]",
+    )
+
+    class ProposalAgentRuntime:
+        def discuss_plot_with_tools(self, **_kwargs):  # type: ignore[no-untyped-def]
+            return AgentLoopResult(run.id, AgentRunStatus.COMPLETED, "已创建待审查提案")
+
+    window = MainWindow(model_runtime=UiModelRuntime(tmp_path), project_runtime=runtime)
+    qtbot.addWidget(window)
+    window.agent_runtime = ProposalAgentRuntime()
+    window.plot_chat_panel.agent_mode_toggle.setChecked(True)
+
+    window.request_plot_reply("把小艾和北境继承人的人物卡整合")
+
+    assert [item.id for item in memory.list_characters()] == [source.id, target.id]
+    assert window.memory_window is not None
+    assert window.memory_window.identity_dialog is not None
+    assert window.memory_window.identity_dialog.isVisible()
+    assert "Agent 提案" in window.memory_window.identity_dialog.candidate_selector.currentText()
 
 
 def test_main_window_displays_one_time_bounded_card_per_character(

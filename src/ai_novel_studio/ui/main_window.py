@@ -58,6 +58,7 @@ from ai_novel_studio.application.setting_document_service import (
     SettingImportReport,
 )
 from ai_novel_studio.application.style_workspace_service import StyleWorkspaceService
+from ai_novel_studio.domain.agent import AgentToolCallStatus, AgentToolName
 from ai_novel_studio.domain.audit import AuditFindingStatus
 from ai_novel_studio.infrastructure.llm import LLMMessage, TaskPurpose, UsageSnapshot
 from ai_novel_studio.infrastructure.llm.contract_runner import LLMContractRunner
@@ -1068,8 +1069,24 @@ class MainWindow(QMainWindow):
         if status_value == "COMPLETED":
             self.append_plot_chat_chunk(result.final_answer)
             self.finish_plot_chat_response()
+            self._open_agent_character_identity_proposal(result.run_id)
         else:
             self.show_plot_chat_error(getattr(result, "failure_message", None) or "Agent 调用失败")
+
+    def _open_agent_character_identity_proposal(self, run_id: str) -> None:
+        if self.project_runtime is None:
+            return
+        calls = self.project_runtime.agent_repository.list_tool_calls(run_id)
+        has_proposal = any(
+            call.tool_name == AgentToolName.PROPOSE_CHARACTER_IDENTITY_MERGE
+            and call.status == AgentToolCallStatus.EXECUTED
+            for call in calls
+        )
+        if not has_proposal:
+            return
+        self.open_memory_window()
+        if self.memory_window is not None:
+            self.memory_window.open_identity_review()
 
     def _agent_conversation_context(
         self, current_user_message: str
