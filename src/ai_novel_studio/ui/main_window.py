@@ -31,7 +31,6 @@ from ai_novel_studio.application.manuscript_memory_build_service import (
     ManuscriptMemoryBuildService,
 )
 from ai_novel_studio.application.memory_analysis_service import MemoryAnalysisService
-from ai_novel_studio.application.memory_build_coordinator import MemoryBuildCoordinator
 from ai_novel_studio.application.memory_workspace_service import MemoryWorkspaceService
 from ai_novel_studio.application.model_runtime import ModelRuntime
 from ai_novel_studio.application.model_task_coordinator import ModelTaskCoordinator
@@ -49,9 +48,6 @@ from ai_novel_studio.application.project_memory_workspace_gateway import (
 )
 from ai_novel_studio.application.project_runtime import ProjectRuntime
 from ai_novel_studio.application.repair_application_service import RepairApplicationError
-from ai_novel_studio.application.setting_document_coordinator import (
-    SettingDocumentCoordinator,
-)
 from ai_novel_studio.application.setting_document_service import (
     SettingDocumentAnalysisService,
     SettingDocumentMemoryService,
@@ -90,9 +86,13 @@ from ai_novel_studio.ui.panels.chapter_sidebar import ChapterSidebar
 from ai_novel_studio.ui.panels.manuscript_panel import ManuscriptPanel
 from ai_novel_studio.ui.panels.plot_chat_panel import PlotChatPanel
 from ai_novel_studio.ui.panels.top_bar import TopBar
+from ai_novel_studio.ui.qt.memory_build_coordinator import MemoryBuildCoordinator
 from ai_novel_studio.ui.qt.project_generation_runtime import (
     QtProjectGenerationRuntime,
     recovered_draft_text,
+)
+from ai_novel_studio.ui.qt.setting_document_coordinator import (
+    SettingDocumentCoordinator,
 )
 
 

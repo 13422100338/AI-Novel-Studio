@@ -81,3 +81,14 @@ No disabled control may fail silently: it must explain the phase that enables it
 Phase 3 can replace mock metrics and disabled model controls without restructuring the window.
 Phase 4 can bind memory and knowledge pages to repositories. Phase 5 can bind Brief and generation
 signals to application controllers. The UI remains testable without network access or API keys.
+
+## V3 framework adapter boundary
+
+PySide6-specific background jobs and signals live under `ui/qt`. This includes prose generation,
+memory building, memory promotion, setting-document import, and project-generation adapters. These
+adapters call framework-neutral application services and translate their results into Qt signals;
+they do not own persistence or business rules.
+
+The `application` package must not import `ui` or `ui/qt`. The remaining temporary PySide6
+exceptions are `ModelTaskCoordinator` and `ModelSettingsController`, which stay beside the current
+combined `ModelRuntime` until the model backend and Qt bindings are split in a later change.

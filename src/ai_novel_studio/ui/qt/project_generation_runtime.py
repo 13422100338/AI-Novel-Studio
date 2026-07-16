@@ -12,13 +12,13 @@ from ai_novel_studio.application.project_generation_session import (
     PreAcceptModelAuditRequest,
     ProjectGenerationSession,
 )
-from ai_novel_studio.application.prose_generation_coordinator import (
-    ProseGenerationCoordinator,
-)
 from ai_novel_studio.core.context.context_manifest import ContextManifest
 from ai_novel_studio.domain.generation import (
     CreationMode,
     GenerationStatus,
+)
+from ai_novel_studio.ui.qt.prose_generation_coordinator import (
+    ProseGenerationCoordinator,
 )
 
 

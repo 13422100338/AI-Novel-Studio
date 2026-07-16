@@ -1,14 +1,14 @@
 from collections.abc import Iterator
 
-from ai_novel_studio.application.prose_generation_coordinator import (
-    ProseGenerationCoordinator,
-)
 from ai_novel_studio.application.prose_generation_service import (
     ProseEventKind,
     ProseGenerationEvent,
 )
 from ai_novel_studio.domain.generation import GenerationStatus
 from ai_novel_studio.infrastructure.llm import LLMUsage
+from ai_novel_studio.ui.qt.prose_generation_coordinator import (
+    ProseGenerationCoordinator,
+)
 
 
 class FakeProseService:

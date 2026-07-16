@@ -5,8 +5,8 @@ from pytestqt.qtbot import QtBot
 from ai_novel_studio.application.manuscript_memory_build_service import (
     ManuscriptMemoryBuildReport,
 )
-from ai_novel_studio.application.memory_build_coordinator import MemoryBuildCoordinator
 from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
+from ai_novel_studio.ui.qt.memory_build_coordinator import MemoryBuildCoordinator
 
 
 class FakeBuildService:

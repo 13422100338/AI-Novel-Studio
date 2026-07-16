@@ -22,9 +22,6 @@ from PySide6.QtWidgets import (
 from ai_novel_studio.application.chapter_context_pin_service import (
     ChapterContextPinService,
 )
-from ai_novel_studio.application.memory_promotion_coordinator import (
-    MemoryPromotionCoordinator,
-)
 from ai_novel_studio.application.memory_workspace_service import (
     MemoryBulkPromotionResult,
     MemoryWorkspaceRecord,
@@ -34,6 +31,9 @@ from ai_novel_studio.application.project_guidance_service import ProjectGuidance
 from ai_novel_studio.domain.memory import Authority, MemoryStatus, ReviewStatus
 from ai_novel_studio.ui.demo_data import WorkspaceDemoData
 from ai_novel_studio.ui.i18n import language_manager
+from ai_novel_studio.ui.qt.memory_promotion_coordinator import (
+    MemoryPromotionCoordinator,
+)
 
 CANON_GROUPS = (
     ("WORLD", "世界观"),
