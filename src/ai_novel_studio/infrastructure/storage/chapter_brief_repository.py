@@ -71,7 +71,7 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
-def _content_hash(data: BriefDraftData) -> str:
+def compute_brief_content_hash(data: BriefDraftData) -> str:
     payload = {
         "chapter_id": data.chapter_id,
         "mode": data.mode.value,
@@ -107,7 +107,7 @@ class ChapterBriefRepository:
         now = _now()
         brief_id = new_id()
         fingerprint = compute_source_fingerprint(sources)
-        content_hash = _content_hash(data)
+        content_hash = compute_brief_content_hash(data)
         with self.project.database.connect() as connection, connection:
             chapter = connection.execute(
                 "SELECT id FROM chapters WHERE id = ? AND is_deleted = 0", (data.chapter_id,)
@@ -159,7 +159,7 @@ class ChapterBriefRepository:
                     revision = revision + 1, updated_at = ?
                 WHERE id = ? AND status = 'DRAFT' AND revision = ?
                 """,
-                (*values, _content_hash(data), now, brief_id, expected_revision),
+                (*values, compute_brief_content_hash(data), now, brief_id, expected_revision),
             )
             if cursor.rowcount != 1:
                 raise StaleBriefError(

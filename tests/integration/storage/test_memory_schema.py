@@ -23,6 +23,7 @@ EXPECTED_TABLES = {
     "context_manifests",
     "chapter_context_pins",
     "project_guidance",
+    "character_identity_merges",
     "memory_fts",
 }
 

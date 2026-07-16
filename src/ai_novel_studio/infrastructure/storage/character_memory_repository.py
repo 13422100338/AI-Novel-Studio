@@ -78,7 +78,11 @@ class CharacterMemoryRepository:
     def list_characters(self) -> tuple[Character, ...]:
         with self.project.database.connect() as connection:
             rows = connection.execute(
-                "SELECT * FROM characters ORDER BY created_at, id"
+                "SELECT c.* FROM characters c "
+                "WHERE NOT EXISTS ("
+                "SELECT 1 FROM character_identity_merges m "
+                "WHERE m.source_character_id = c.id AND m.status = 'APPLIED'"
+                ") ORDER BY c.created_at, c.id"
             ).fetchall()
         return tuple(
             Character(

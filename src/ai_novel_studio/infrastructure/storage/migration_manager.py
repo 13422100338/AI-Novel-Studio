@@ -1,7 +1,7 @@
 import sqlite3
 from collections.abc import Callable
 
-LATEST_SCHEMA_VERSION = 9
+LATEST_SCHEMA_VERSION = 10
 
 
 def _migration_1(connection: sqlite3.Connection) -> None:
@@ -639,6 +639,47 @@ def _migration_9(connection: sqlite3.Connection) -> None:
     )
 
 
+def _migration_10(connection: sqlite3.Connection) -> None:
+    statements = (
+        """
+        CREATE TABLE character_identity_merges (
+            id TEXT PRIMARY KEY,
+            source_character_id TEXT NOT NULL REFERENCES characters(id),
+            target_character_id TEXT NOT NULL REFERENCES characters(id),
+            source_canonical_name TEXT NOT NULL,
+            source_aliases_json TEXT NOT NULL,
+            target_aliases_before_json TEXT NOT NULL,
+            target_aliases_after_json TEXT NOT NULL,
+            moved_state_event_ids_json TEXT NOT NULL,
+            moved_knowledge_event_ids_json TEXT NOT NULL,
+            moved_briefs_json TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            status TEXT NOT NULL CHECK(status IN ('APPLIED', 'REVERSED')),
+            created_at TEXT NOT NULL,
+            reversed_at TEXT,
+            CHECK(source_character_id != target_character_id),
+            CHECK(length(trim(source_canonical_name)) > 0),
+            CHECK(length(trim(reason)) > 0),
+            CHECK(
+                (status = 'APPLIED' AND reversed_at IS NULL) OR
+                (status = 'REVERSED' AND reversed_at IS NOT NULL)
+            )
+        )
+        """,
+        """
+        CREATE UNIQUE INDEX character_identity_one_active_source
+        ON character_identity_merges(source_character_id)
+        WHERE status = 'APPLIED'
+        """,
+        """
+        CREATE INDEX character_identity_active_target
+        ON character_identity_merges(target_character_id, status)
+        """,
+    )
+    for statement in statements:
+        connection.execute(statement)
+
+
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     1: _migration_1,
     2: _migration_2,
@@ -649,6 +690,7 @@ MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     7: _migration_7,
     8: _migration_8,
     9: _migration_9,
+    10: _migration_10,
 }
 
 
