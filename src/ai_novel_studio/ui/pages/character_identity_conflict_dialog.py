@@ -22,9 +22,14 @@ from ai_novel_studio.application.character_identity_service import (
     CharacterIdentityCandidateOrigin,
     CharacterIdentityCardSnapshot,
     CharacterIdentityReviewCandidate,
+    ExcludedCharacterIdentityCandidate,
     RecentCharacterIdentityMerge,
 )
-from ai_novel_studio.domain.character_identity import CharacterIdentityMerge
+from ai_novel_studio.domain.character_identity import (
+    CharacterIdentityMerge,
+    CharacterIdentityReviewDecision,
+    CharacterIdentityReviewDecisionType,
+)
 
 
 class CharacterIdentityReviewService(Protocol):
@@ -33,6 +38,28 @@ class CharacterIdentityReviewService(Protocol):
     def list_recent_applied_merges(
         self, *, limit: int = 20
     ) -> tuple[RecentCharacterIdentityMerge, ...]: ...
+
+    def list_excluded_review_candidates(
+        self,
+    ) -> tuple[ExcludedCharacterIdentityCandidate, ...]: ...
+
+    def decide_review_candidate(
+        self,
+        first_character_id: str,
+        second_character_id: str,
+        decision: CharacterIdentityReviewDecisionType,
+        *,
+        confirmed_by_user: bool,
+        reason: str = "",
+    ) -> CharacterIdentityReviewDecision: ...
+
+    def reopen_review_candidate(
+        self,
+        first_character_id: str,
+        second_character_id: str,
+        *,
+        confirmed_by_user: bool,
+    ) -> CharacterIdentityReviewDecision: ...
 
     def merge(
         self,
@@ -60,6 +87,7 @@ class CharacterIdentityConflictDialog(QDialog):
         self.service = service
         self._candidates: tuple[CharacterIdentityReviewCandidate, ...] = ()
         self._recent_merges: tuple[RecentCharacterIdentityMerge, ...] = ()
+        self._excluded: tuple[ExcludedCharacterIdentityCandidate, ...] = ()
 
         self.setWindowTitle("人物身份冲突")
         self.setMinimumSize(760, 560)
@@ -99,11 +127,35 @@ class CharacterIdentityConflictDialog(QDialog):
         layout.addLayout(comparison, 1)
 
         actions = QHBoxLayout()
+        self.distinct_button = QPushButton("不是同一人物", self)
+        self.distinct_button.clicked.connect(
+            lambda: self._decide_selected(CharacterIdentityReviewDecisionType.DISTINCT)
+        )
+        self.defer_button = QPushButton("暂缓处理", self)
+        self.defer_button.clicked.connect(
+            lambda: self._decide_selected(CharacterIdentityReviewDecisionType.DEFERRED)
+        )
         self.merge_button = QPushButton("确认归并", self)
         self.merge_button.clicked.connect(self._merge_selected)
+        actions.addWidget(self.distinct_button)
+        actions.addWidget(self.defer_button)
         actions.addStretch(1)
         actions.addWidget(self.merge_button)
         layout.addLayout(actions)
+
+        excluded = QFrame(self)
+        excluded.setObjectName("cardSurface")
+        excluded_layout = QVBoxLayout(excluded)
+        excluded_layout.addWidget(QLabel("已排除或暂缓的候选", excluded))
+        excluded_actions = QHBoxLayout()
+        self.excluded_selector = QComboBox(excluded)
+        self.excluded_selector.setAccessibleName("已排除或暂缓的人物冲突候选")
+        self.reopen_button = QPushButton("重新加入审查", excluded)
+        self.reopen_button.clicked.connect(self._reopen_selected)
+        excluded_actions.addWidget(self.excluded_selector, 1)
+        excluded_actions.addWidget(self.reopen_button)
+        excluded_layout.addLayout(excluded_actions)
+        layout.addWidget(excluded)
 
         recent = QFrame(self)
         recent.setObjectName("cardSurface")
@@ -143,6 +195,21 @@ class CharacterIdentityConflictDialog(QDialog):
         self.candidate_selector.blockSignals(False)
         self._render_candidate(self.candidate_selector.currentIndex())
 
+        self._excluded = self.service.list_excluded_review_candidates()
+        self.excluded_selector.clear()
+        for excluded_candidate in self._excluded:
+            label = (
+                "不是同一人物"
+                if excluded_candidate.decision.decision
+                == CharacterIdentityReviewDecisionType.DISTINCT
+                else "暂缓"
+            )
+            self.excluded_selector.addItem(
+                f"{label} · {excluded_candidate.left_name} ↔ "
+                f"{excluded_candidate.right_name}"
+            )
+        self.reopen_button.setEnabled(bool(self._excluded))
+
         self._recent_merges = self.service.list_recent_applied_merges()
         self.recent_selector.clear()
         for recent in self._recent_merges:
@@ -173,6 +240,8 @@ class CharacterIdentityConflictDialog(QDialog):
             self.left_radio.setChecked(False)
             self.right_radio.setChecked(False)
             self.merge_button.setEnabled(False)
+            self.distinct_button.setEnabled(False)
+            self.defer_button.setEnabled(False)
             return
         candidate = self._candidates[index]
         origin = (
@@ -187,6 +256,69 @@ class CharacterIdentityConflictDialog(QDialog):
         self.left_radio.setChecked(keep_left)
         self.right_radio.setChecked(not keep_left)
         self.merge_button.setEnabled(True)
+        self.distinct_button.setEnabled(True)
+        self.defer_button.setEnabled(True)
+
+    def _decide_selected(self, decision: CharacterIdentityReviewDecisionType) -> None:
+        index = self.candidate_selector.currentIndex()
+        if index < 0 or index >= len(self._candidates):
+            return
+        candidate = self._candidates[index]
+        decision_text = (
+            "不是同一人物"
+            if decision == CharacterIdentityReviewDecisionType.DISTINCT
+            else "暂缓处理"
+        )
+        answer = QMessageBox.question(
+            self,
+            "确认冲突审查决定",
+            f"将“{candidate.left.character.canonical_name} ↔ "
+            f"{candidate.right.character.canonical_name}”标记为“{decision_text}”？\n\n"
+            "该候选将从当前列表隐藏，但可以随时重新加入审查。",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            self.service.decide_review_candidate(
+                candidate.left.character.id,
+                candidate.right.character.id,
+                decision,
+                reason=f"用户在冲突审查中选择：{decision_text}",
+                confirmed_by_user=True,
+            )
+        except (KeyError, PermissionError, RuntimeError, ValueError) as error:
+            QMessageBox.warning(self, "保存冲突审查决定失败", str(error))
+            return
+        self.refresh()
+        self.status_label.setText(f"已{decision_text}；可在下方重新加入审查。")
+
+    def _reopen_selected(self) -> None:
+        index = self.excluded_selector.currentIndex()
+        if index < 0 or index >= len(self._excluded):
+            return
+        excluded = self._excluded[index]
+        answer = QMessageBox.question(
+            self,
+            "重新加入审查",
+            f"将“{excluded.left_name} ↔ {excluded.right_name}”重新加入冲突审查？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            self.service.reopen_review_candidate(
+                excluded.decision.first_character_id,
+                excluded.decision.second_character_id,
+                confirmed_by_user=True,
+            )
+        except (KeyError, PermissionError, RuntimeError, ValueError) as error:
+            QMessageBox.warning(self, "重新加入审查失败", str(error))
+            return
+        self.refresh()
+        self.status_label.setText("该人物对已重新加入审查。")
 
     @staticmethod
     def _card_text(snapshot: CharacterIdentityCardSnapshot) -> str:

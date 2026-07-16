@@ -26,3 +26,11 @@ This tool validates two active character names and a non-empty reason, then reco
 normal Agent tool trace. It does not update character cards or memory references. Executed
 proposals appear in the same conflict-review queue as deterministic name matches and are labeled
 as Agent proposals. The existing confirmed application service remains the only merge path.
+
+## Persistent review decisions
+
+Schema v11 stores one current review decision for each stably ordered character pair. `DISTINCT`
+and `DEFERRED` remove that pair from deterministic and Agent-origin candidate queues. `REOPENED`
+returns it to normal detection. Reopening updates the existing row instead of deleting it, so the
+original creation timestamp remains auditable. Deferred candidates do not automatically expire;
+the user decides when to reopen them.

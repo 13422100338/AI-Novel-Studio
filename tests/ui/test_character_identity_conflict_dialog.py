@@ -61,3 +61,28 @@ def test_dialog_requires_confirmation_then_exposes_merge_undo(
     assert dialog.recent_selector.count() == 0
     assert "已撤销" in dialog.status_label.text()
     assert len(service.memory_repository.list_characters()) == 2
+
+
+def test_dialog_can_defer_and_reopen_review_candidate(
+    qtbot: QtBot, tmp_path: Path, monkeypatch  # type: ignore[no-untyped-def]
+) -> None:
+    service = _service_with_duplicate_cards(tmp_path)
+    dialog = CharacterIdentityConflictDialog(service)
+    qtbot.addWidget(dialog)
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
+    )
+
+    qtbot.mouseClick(dialog.defer_button, Qt.MouseButton.LeftButton)
+
+    assert dialog.candidate_selector.count() == 0
+    assert dialog.excluded_selector.count() == 1
+    assert "已暂缓" in dialog.status_label.text()
+
+    qtbot.mouseClick(dialog.reopen_button, Qt.MouseButton.LeftButton)
+
+    assert dialog.candidate_selector.count() == 1
+    assert dialog.excluded_selector.count() == 0
+    assert "重新加入审查" in dialog.status_label.text()

@@ -31,3 +31,9 @@ Status: completed. The queue shows deterministic and Agent-origin candidates wit
 requires explicit canonical-card selection and confirmation, and supports guarded undo. Agent
 tool retrieval is optional and defaults off; an executed identity proposal opens the review UI
 without modifying project memory.
+
+## Ticket 4: Persistent non-match and deferred decisions
+
+Status: completed. Schema v11 records `DISTINCT`, `DEFERRED`, and `REOPENED` decisions for stable
+character pairs. Excluded pairs remain out of both deterministic and Agent proposal queues until
+the user explicitly returns them to review; records are updated rather than deleted.
