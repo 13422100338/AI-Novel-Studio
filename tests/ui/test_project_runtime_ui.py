@@ -2,6 +2,10 @@ from pathlib import Path
 
 from pytestqt.qtbot import QtBot
 
+from ai_novel_studio.application.manuscript_memory_build_service import (
+    ManuscriptMemoryBuildFailure,
+    ManuscriptMemoryBuildReport,
+)
 from ai_novel_studio.application.model_tasks import StyleAuditFinding, StyleAuditResult
 from ai_novel_studio.application.project_runtime import ProjectRuntime
 from ai_novel_studio.core.context.context_manifest import (
@@ -151,6 +155,30 @@ def test_main_window_starts_blank_until_project_is_opened(qtbot: QtBot) -> None:
     assert window.chapter_sidebar.chapter_tree.topLevelItemCount() == 0
     assert window.manuscript_panel.editor.toPlainText() == ""
     assert window.manuscript_panel.chapter_requirement.toPlainText() == ""
+
+
+def test_memory_build_failure_status_names_the_retryable_chapter(qtbot: QtBot) -> None:
+    window = MainWindow(model_runtime=UiModelRuntime(Path.cwd()))
+    qtbot.addWidget(window)
+    report = ManuscriptMemoryBuildReport(
+        processed_chapters=1,
+        created_summaries=0,
+        skipped_current_summaries=0,
+        indexed_documents=1,
+        failures=(
+            ManuscriptMemoryBuildFailure(
+                "chapter-1",
+                "Problem Chapter",
+                "摘要缺少固定小节：人物成长",
+            ),
+        ),
+    )
+
+    window.finish_project_memory(report)
+
+    status = window.manuscript_panel.pipeline_status_label.text()
+    assert "Problem Chapter" in status
+    assert "人物成长" in status
 
 
 def test_main_window_opens_real_project_and_loads_chapter(qtbot: QtBot, tmp_path: Path) -> None:

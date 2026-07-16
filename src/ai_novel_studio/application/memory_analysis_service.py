@@ -16,6 +16,7 @@ from ai_novel_studio.domain.memory import (
     StyleScope,
 )
 from ai_novel_studio.infrastructure.llm.contract_runner import (
+    ContractValidationError,
     JsonField,
     JsonObjectContract,
     LLMContractRunner,
@@ -185,6 +186,7 @@ class MemoryAnalysisService:
             messages,
             self._output_limit_for(text),
             _CONTRACT,
+            lambda candidate: _validate_candidate_payload(candidate, text),
         )
         knowledge = tuple(
             _knowledge(value, index)
@@ -231,6 +233,25 @@ def _required_list(payload: dict[str, object], field: str) -> list[object]:
     if not isinstance(value, list):
         raise MemoryCandidateValidationError(f"字段 {field} 必须是数组")
     return cast(list[object], value)
+
+
+def _validate_candidate_payload(
+    payload: dict[str, object], source_text: str
+) -> dict[str, object]:
+    """Run every memory-specific safety check inside the correction loop."""
+    try:
+        _validated_summary(payload, source_text)
+        for index, value in enumerate(_required_list(payload, "character_states")):
+            _character_state(value, index)
+        for index, value in enumerate(_required_list(payload, "canon")):
+            _canon(value, index)
+        for index, value in enumerate(_required_list(payload, "clues")):
+            _clue(value, index)
+        for index, value in enumerate(_required_list(payload, "knowledge")):
+            _knowledge(value, index)
+    except MemoryCandidateValidationError as error:
+        raise ContractValidationError(str(error)) from error
+    return payload
 
 
 def _validated_summary(payload: dict[str, object], source_text: str) -> str:

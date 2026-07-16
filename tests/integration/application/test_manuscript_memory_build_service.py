@@ -218,6 +218,27 @@ class FailingAnalyzer:
         raise ValueError("invalid structured memory")
 
 
+def test_failed_fallback_retry_is_not_counted_as_unchanged_summary(
+    tmp_path: Path,
+) -> None:
+    project = ProjectRepository.create(tmp_path / "novel", "Imported Novel")
+    volume = project.list_volumes()[0]
+    chapter = ChapterRepository(project).create_chapter(
+        volume.id, "Problem Chapter", "1", "Chapter body"
+    )
+    repository = SummaryRepository(project)
+
+    ManuscriptMemoryBuildService().build_all(project)
+    before = repository.list_scope(SummaryLevel.CHAPTER, chapter.id)[0]
+    report = ManuscriptMemoryBuildService(FailingAnalyzer()).build_all(project)
+    after = repository.get(before.id)
+
+    assert len(report.failures) == 1
+    assert report.skipped_current_summaries == 0
+    assert report.upgraded_summaries == 0
+    assert after.content == before.content
+
+
 def test_build_reports_model_failures_and_supports_progress_and_cancel(
     tmp_path: Path,
 ) -> None:

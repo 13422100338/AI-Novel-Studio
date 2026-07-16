@@ -129,9 +129,7 @@ class ManuscriptMemoryBuildService:
                             )
                         )
                     if fallback is not None:
-                        if bundle is None:
-                            skipped += 1
-                        else:
+                        if bundle is not None:
                             summaries.replace_model_candidate(
                                 fallback.id,
                                 bundle.summary.content,
@@ -149,6 +147,8 @@ class ManuscriptMemoryBuildService:
                             created_clues += ledger_counts[1]
                             created_knowledge += ledger_counts[2]
                             created_style_rules += ledger_counts[3]
+                        elif error is None:
+                            skipped += 1
                     else:
                         summary_content = (
                             bundle.summary.content

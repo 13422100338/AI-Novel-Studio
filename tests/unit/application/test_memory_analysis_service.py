@@ -4,10 +4,12 @@ import pytest
 
 from ai_novel_studio.application.memory_analysis_service import (
     MemoryAnalysisService,
-    MemoryCandidateValidationError,
 )
 from ai_novel_studio.domain.memory import Authority, ReviewStatus
-from ai_novel_studio.infrastructure.llm.contract_runner import LLMContractRunner
+from ai_novel_studio.infrastructure.llm.contract_runner import (
+    ContractValidationError,
+    LLMContractRunner,
+)
 from ai_novel_studio.infrastructure.llm.schemas import LLMResponse, TaskPurpose
 
 
@@ -115,13 +117,14 @@ def test_extracts_review_candidates_with_source_provenance_and_ordered_prompt() 
 def test_rejects_invalid_nested_model_output_without_saving_or_guessing() -> None:
     payload = json.loads(_valid_payload())
     payload["clues"][0]["clue_type"] = "UNSUPPORTED"
-    gateway = RecordingGateway([json.dumps(payload, ensure_ascii=False)])
+    invalid = json.dumps(payload, ensure_ascii=False)
+    gateway = RecordingGateway([invalid, invalid])
     service = MemoryAnalysisService(LLMContractRunner(gateway))  # type: ignore[arg-type]
 
-    with pytest.raises(MemoryCandidateValidationError, match="clue_type"):
+    with pytest.raises(ContractValidationError, match="clue_type"):
         service.extract_candidates("chapter-1", 0, "原稿正文")
 
-    assert len(gateway.calls) == 1
+    assert len(gateway.calls) == 2
 
 
 def test_empty_source_is_rejected_before_calling_the_model() -> None:
@@ -165,11 +168,30 @@ def test_memory_prompt_declares_nested_enum_values_and_structured_summary() -> N
 def test_rejects_summary_missing_required_section() -> None:
     payload = json.loads(_valid_payload())
     payload["summary"] = _valid_summary().replace("## 人物成长\n- 主角由迟疑转为主动调查\n", "")
-    gateway = RecordingGateway([json.dumps(payload, ensure_ascii=False)])
+    invalid = json.dumps(payload, ensure_ascii=False)
+    gateway = RecordingGateway([invalid, invalid])
     service = MemoryAnalysisService(LLMContractRunner(gateway))  # type: ignore[arg-type]
 
-    with pytest.raises(MemoryCandidateValidationError, match="人物成长"):
+    with pytest.raises(ContractValidationError, match="人物成长"):
         service.extract_candidates("chapter-1", 0, "原稿正文")
+
+
+def test_semantic_summary_error_is_sent_back_for_one_correction() -> None:
+    invalid = json.loads(_valid_payload())
+    invalid["summary"] = _valid_summary().replace(
+        "## 人物成长\n- 主角由迟疑转为主动调查\n", ""
+    )
+    gateway = RecordingGateway(
+        [json.dumps(invalid, ensure_ascii=False), _valid_payload()]
+    )
+    service = MemoryAnalysisService(LLMContractRunner(gateway))  # type: ignore[arg-type]
+
+    result = service.extract_candidates("chapter-1", 0, "原稿正文")
+
+    assert result.summary.content == _valid_summary()
+    assert len(gateway.calls) == 2
+    correction = gateway.calls[1][1][-1].content  # type: ignore[attr-defined]
+    assert "人物成长" in correction
 
 
 def test_rejects_legacy_foreshadow_section_in_summary() -> None:
@@ -177,10 +199,11 @@ def test_rejects_legacy_foreshadow_section_in_summary() -> None:
     payload["summary"] = _valid_summary().replace(
         "## 连续性要点", "## 伏笔与未决问题\n- 一封信仍待解释\n## 连续性要点"
     )
-    gateway = RecordingGateway([json.dumps(payload, ensure_ascii=False)])
+    invalid = json.dumps(payload, ensure_ascii=False)
+    gateway = RecordingGateway([invalid, invalid])
     service = MemoryAnalysisService(LLMContractRunner(gateway))  # type: ignore[arg-type]
 
-    with pytest.raises(MemoryCandidateValidationError, match="伏笔"):
+    with pytest.raises(ContractValidationError, match="伏笔"):
         service.extract_candidates("chapter-1", 0, "原稿正文")
 
 
@@ -189,20 +212,22 @@ def test_rejects_plot_overview_longer_than_one_thousand_characters() -> None:
     payload["summary"] = _valid_summary().replace(
         "主角收到一封来源不明的信，并决定核对信上的旧暗号。", "情" * 1001
     )
-    gateway = RecordingGateway([json.dumps(payload, ensure_ascii=False)])
+    invalid = json.dumps(payload, ensure_ascii=False)
+    gateway = RecordingGateway([invalid, invalid])
     service = MemoryAnalysisService(LLMContractRunner(gateway))  # type: ignore[arg-type]
 
-    with pytest.raises(MemoryCandidateValidationError, match="1000"):
+    with pytest.raises(ContractValidationError, match="1000"):
         service.extract_candidates("chapter-1", 0, "原稿正文")
 
 
 def test_rejects_detail_excerpt_not_found_in_source_text() -> None:
     payload = json.loads(_valid_payload())
     payload["summary"] = _valid_summary().replace("- 无", "- 原文：模型虚构的原句")
-    gateway = RecordingGateway([json.dumps(payload, ensure_ascii=False)])
+    invalid = json.dumps(payload, ensure_ascii=False)
+    gateway = RecordingGateway([invalid, invalid])
     service = MemoryAnalysisService(LLMContractRunner(gateway))  # type: ignore[arg-type]
 
-    with pytest.raises(MemoryCandidateValidationError, match="原文"):
+    with pytest.raises(ContractValidationError, match="原文"):
         service.extract_candidates("chapter-1", 0, "原稿正文")
 
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol, cast
 
@@ -121,6 +122,7 @@ class LLMContractRunner:
         messages: tuple[LLMMessage, ...],
         output_token_limit: int,
         contract: JsonObjectContract,
+        validator: Callable[[dict[str, object]], dict[str, object]] | None = None,
     ) -> dict[str, object]:
         response = self.gateway.complete(
             purpose,
@@ -130,7 +132,7 @@ class LLMContractRunner:
             json_mode=True,
         )
         try:
-            return self._parse_and_validate(response.text, contract)
+            return self._parse_and_validate(response.text, contract, validator)
         except ContractValidationError as first_error:
             correction = LLMMessage(
                 "user",
@@ -152,7 +154,7 @@ class LLMContractRunner:
                 json_mode=True,
             )
             try:
-                return self._parse_and_validate(corrected.text, contract)
+                return self._parse_and_validate(corrected.text, contract, validator)
             except ContractValidationError as second_error:
                 raise ContractValidationError(
                     f"模型结构化输出连续两次不符合合同：{second_error}"
@@ -163,6 +165,7 @@ class LLMContractRunner:
         cls,
         text: str,
         contract: JsonObjectContract,
+        validator: Callable[[dict[str, object]], dict[str, object]] | None = None,
     ) -> dict[str, object]:
         candidate = text.strip()
         match = cls._FENCE.match(candidate)
@@ -172,4 +175,5 @@ class LLMContractRunner:
             value = json.loads(candidate)
         except json.JSONDecodeError as error:
             raise ContractValidationError("输出不是有效 JSON") from error
-        return contract.validate(value)
+        payload = contract.validate(value)
+        return validator(payload) if validator is not None else payload

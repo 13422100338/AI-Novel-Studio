@@ -27,6 +27,7 @@ from ai_novel_studio.application.deterministic_audit_service import (
 )
 from ai_novel_studio.application.manuscript_import_service import ManuscriptImportService
 from ai_novel_studio.application.manuscript_memory_build_service import (
+    ManuscriptMemoryBuildFailure,
     ManuscriptMemoryBuildReport,
     ManuscriptMemoryBuildService,
 )
@@ -94,6 +95,23 @@ from ai_novel_studio.ui.qt.project_generation_runtime import (
 from ai_novel_studio.ui.qt.setting_document_coordinator import (
     SettingDocumentCoordinator,
 )
+
+
+def _memory_build_failure_text(
+    failures: tuple[ManuscriptMemoryBuildFailure, ...],
+) -> str:
+    if not failures:
+        return ""
+    previews = "；".join(
+        f"{failure.chapter_title[:60]}（{failure.message[:120]}）"
+        for failure in failures[:3]
+    )
+    remainder = len(failures) - 3
+    remainder_text = f"；另有 {remainder} 章" if remainder > 0 else ""
+    return (
+        f"，模型失败 {len(failures)} 章（已保留可重试记录）："
+        f"{previews}{remainder_text}"
+    )
 
 
 class MainWindow(QMainWindow):
@@ -1232,9 +1250,7 @@ class MainWindow(QMainWindow):
     def finish_project_memory(self, report: ManuscriptMemoryBuildReport) -> None:
         self.chapter_sidebar.set_memory_build_running(False)
         prefix = "记忆整理已取消：" if report.cancelled else "记忆整理完成："
-        failure_text = (
-            f"，模型失败 {len(report.failures)} 章（已保留可重试记录）" if report.failures else ""
-        )
+        failure_text = _memory_build_failure_text(report.failures)
         self.manuscript_panel.pipeline_status_label.setText(
             prefix + f"处理 {report.processed_chapters} 章，"
             f"新增摘要 {report.created_summaries} 条，"
