@@ -43,7 +43,6 @@ from ai_novel_studio.application.model_tasks import (
 from ai_novel_studio.application.plot_memory_context_service import (
     PlotMemoryContextService,
 )
-from ai_novel_studio.application.project_generation_runtime import recovered_draft_text
 from ai_novel_studio.application.project_guidance_service import ProjectGuidanceService
 from ai_novel_studio.application.project_memory_workspace_gateway import (
     ProjectMemoryWorkspaceGateway,
@@ -91,6 +90,10 @@ from ai_novel_studio.ui.panels.chapter_sidebar import ChapterSidebar
 from ai_novel_studio.ui.panels.manuscript_panel import ManuscriptPanel
 from ai_novel_studio.ui.panels.plot_chat_panel import PlotChatPanel
 from ai_novel_studio.ui.panels.top_bar import TopBar
+from ai_novel_studio.ui.qt.project_generation_runtime import (
+    QtProjectGenerationRuntime,
+    recovered_draft_text,
+)
 
 
 class MainWindow(QMainWindow):
@@ -288,7 +291,7 @@ class MainWindow(QMainWindow):
             self.style_rules_window = None
         self.project_runtime = runtime
         self.agent_runtime = runtime.agent_runtime
-        self.generation_runtime = runtime.generation_runtime
+        self.generation_runtime = QtProjectGenerationRuntime(runtime.generation_session)
         self._bind_generation_runtime()
         summary = runtime.workspace.summary()
         self.top_bar.update_project(summary.title, str(summary.root))
@@ -436,8 +439,10 @@ class MainWindow(QMainWindow):
         workspace = self.project_runtime.workspace.load_chapter(chapter_id)
         self.current_chapter_id = workspace.id
         self.manuscript_panel.apply_chapter_workspace(workspace)
-        frozen_brief = self.project_runtime.generation_runtime.select_chapter(
-            workspace.id, workspace.revision
+        frozen_brief = (
+            self.generation_runtime.select_chapter(workspace.id, workspace.revision)
+            if self.generation_runtime is not None
+            else False
         )
         self.manuscript_panel.set_phase5_generation_enabled(
             True, frozen_brief_available=frozen_brief
@@ -837,9 +842,15 @@ class MainWindow(QMainWindow):
         )
         if generation_usage is not None:
             generation_usage.connect(self.update_generation_usage)
-        strict_audit_changed = getattr(self.generation_runtime, "strict_audit_changed", None)
-        if strict_audit_changed is not None:
-            strict_audit_changed.connect(self.manuscript_panel.set_strict_audit_result)
+        pre_accept_audit_changed = getattr(
+            self.generation_runtime,
+            "pre_accept_audit_changed",
+            None,
+        )
+        if pre_accept_audit_changed is not None:
+            pre_accept_audit_changed.connect(
+                self.manuscript_panel.set_pre_accept_audit_result
+            )
 
     def apply_accepted_generation(self, text: str) -> None:
         self.manuscript_panel.apply_accepted_generation(text)

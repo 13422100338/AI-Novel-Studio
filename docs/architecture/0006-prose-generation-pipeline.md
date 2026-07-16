@@ -36,10 +36,17 @@ The prose model never writes formal manuscript content directly. It can only str
 ## Ownership boundaries
 
 - UI widgets emit intents and display state only.
+- `ProjectGenerationSession` owns framework-neutral generation state and synchronous use cases.
+- `QtProjectGenerationRuntime` lives under `ui/qt` and translates that session into Qt signals and background jobs.
+- `ProjectRuntime` composes a project with `ProjectGenerationSession`; it does not import PySide6 or UI modules.
 - Application services own pipeline state transitions.
 - Repositories own SQLite and filesystem persistence.
 - The model gateway owns provider calls and cannot mutate project storage.
 - Memory extraction, audit, repair, and Agent tools remain separate phases.
+
+The UI exposes only `BASIC` (快速) and `STANDARD` (普通) as creation modes. The
+persisted `STRICT` value is retained as a compatibility encoding for the optional
+pre-accept audit gate; it is not a third user-facing mode.
 
 ## Legal generation states
 

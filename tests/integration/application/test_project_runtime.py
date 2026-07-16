@@ -116,12 +116,10 @@ def test_project_runtime_creates_workspace_and_agent_runtime(tmp_path: Path) -> 
     )
 
     assert runtime.workspace.summary().title == "Runtime Novel"
-    assert runtime.generation_runtime.project is runtime.project
-    assert callable(runtime.generation_runtime.recover)
-    recovery_errors: list[str] = []
-    runtime.generation_runtime.failed.connect(recovery_errors.append)
-    runtime.generation_runtime.recover()
-    assert recovery_errors == ["当前章节没有可恢复的正文草稿"]
+    assert runtime.generation_session.project is runtime.project
+    assert callable(runtime.generation_session.recover_current)
+    assert callable(runtime.generation_session.prepare_pre_accept_audit)
+    assert runtime.generation_session.recover_current() is None
     assert result.status == AgentRunStatus.COMPLETED
     assert runtime.agent_repository.list_turns(result.run_id)
     runtime.close()

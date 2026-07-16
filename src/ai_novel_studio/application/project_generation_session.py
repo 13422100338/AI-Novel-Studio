@@ -14,7 +14,11 @@ from ai_novel_studio.application.generation_recovery_service import (
     GenerationRecoveryService,
     RecoverableGeneration,
 )
-from ai_novel_studio.application.project_audit_service import ProjectAuditService
+from ai_novel_studio.application.model_tasks import StyleAuditResult
+from ai_novel_studio.application.project_audit_service import (
+    ModelAuditSnapshot,
+    ProjectAuditService,
+)
 from ai_novel_studio.application.prose_generation_service import ProseGenerationService
 from ai_novel_studio.core.context.context_manifest import (
     ContextManifest,
@@ -55,6 +59,20 @@ class PreparedMessageStore:
 class AcceptedGeneration:
     text: str
     chapter_revision: int
+
+
+@dataclass(frozen=True, slots=True)
+class PreAcceptModelAuditRequest:
+    snapshot: ModelAuditSnapshot
+    draft_text: str
+    rules: tuple[str, ...]
+    output_token_limit: int
+
+
+@dataclass(frozen=True, slots=True)
+class PreAcceptAuditPlan:
+    deterministic_blocker_count: int
+    model_request: PreAcceptModelAuditRequest | None
 
 
 class ProjectGenerationSession:
@@ -194,3 +212,64 @@ class ProjectGenerationSession:
         selected = candidates[-1]
         self.current_run_id = selected.run.id
         return selected
+
+    def prepare_pre_accept_audit(self) -> PreAcceptAuditPlan | None:
+        if self.current_run_id is None:
+            raise RuntimeError("采用前审校缺少生成任务")
+        run = self.runs.get(self.current_run_id)
+        # STRICT is retained only as the persisted encoding for pre-accept audit.
+        if run.mode != CreationMode.STRICT:
+            return None
+        checkpoint = self.checkpoints.latest(run.id)
+        if checkpoint is None or self.current_chapter_revision is None:
+            raise RuntimeError("草稿缺少可审校的检查点或章节修订")
+        draft_text = self.checkpoints.read(checkpoint.id)
+        result = self.audit_workflow.run_deterministic_for_draft(
+            chapter_id=run.chapter_id,
+            generation_run_id=run.id,
+            draft_text=draft_text,
+            base_chapter_revision=self.current_chapter_revision,
+            mode=CreationMode.STRICT,
+        )
+        blockers = tuple(
+            finding
+            for finding in result.findings
+            if finding.status.value == "OPEN"
+            and finding.severity.value in {"ERROR", "BLOCKER"}
+        )
+        if blockers:
+            return PreAcceptAuditPlan(len(blockers), None)
+
+        route = self.gateway.configuration.routes.resolve(TaskPurpose.STYLE_AUDIT)
+        snapshot = self.project_audits.generated_model_snapshot(
+            chapter_id=run.chapter_id,
+            generation_run_id=run.id,
+            draft_text=draft_text,
+            revision=self.current_chapter_revision,
+            model_provider_id=route.provider_id,
+            model_id=route.model_id,
+        )
+        return PreAcceptAuditPlan(
+            0,
+            PreAcceptModelAuditRequest(
+                snapshot=snapshot,
+                draft_text=draft_text,
+                rules=self.project_audits.model_context_rules(run.chapter_id),
+                output_token_limit=run.output_token_limit,
+            ),
+        )
+
+    def record_pre_accept_model_audit(
+        self,
+        snapshot: ModelAuditSnapshot,
+        value: object,
+    ) -> int:
+        if not isinstance(value, StyleAuditResult):
+            raise ValueError("模型审校返回了无效结果")
+        findings = self.project_audits.record_model_result(snapshot, value)
+        return sum(
+            1
+            for finding in findings
+            if finding.status.value == "OPEN"
+            and finding.severity.value in {"ERROR", "BLOCKER"}
+        )

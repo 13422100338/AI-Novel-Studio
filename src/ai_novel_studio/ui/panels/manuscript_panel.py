@@ -330,8 +330,8 @@ class ManuscriptPanel(QFrame):
         if not self._draft_preview_active:
             self._formal_text_before_draft = self.editor.toPlainText()
         self._draft_preview_active = True
-        self._strict_adoption_allowed = False
-        self._strict_audit_message = ""
+        self._pre_accept_audit_allowed = False
+        self._pre_accept_audit_message = ""
         self._discard_pending_draft_chunks()
         self.editor.clear()
         self.editor.setReadOnly(True)
@@ -372,7 +372,8 @@ class ManuscriptPanel(QFrame):
             self.pipeline_status_label.setText("正文生成：流式接收中")
         elif status == GenerationStatus.COMPLETED:
             self.pipeline_status_label.setText(
-                getattr(self, "_strict_audit_message", "") or "正文生成：完成，等待采用或放弃"
+                getattr(self, "_pre_accept_audit_message", "")
+                or "正文生成：完成，等待采用或放弃"
             )
             self.draft_status_label.setText("完整草稿已生成；请人工审查后采用")
             self.cancel_generation_button.setEnabled(False)
@@ -439,15 +440,15 @@ class ManuscriptPanel(QFrame):
     def _enable_draft_decision_buttons(self) -> None:
         self._flush_draft_chunks()
         has_draft = bool(self.editor.toPlainText())
-        strict_blocked = self.current_creation_mode() == CreationMode.STRICT and not getattr(
-            self, "_strict_adoption_allowed", False
+        audit_blocked = self.current_creation_mode() == CreationMode.STRICT and not getattr(
+            self, "_pre_accept_audit_allowed", False
         )
-        self.adopt_draft_button.setEnabled(has_draft and not strict_blocked)
+        self.adopt_draft_button.setEnabled(has_draft and not audit_blocked)
         self.discard_draft_button.setEnabled(has_draft)
 
-    def set_strict_audit_result(self, allowed: bool, message: str) -> None:
-        self._strict_adoption_allowed = allowed
-        self._strict_audit_message = message
+    def set_pre_accept_audit_result(self, allowed: bool, message: str) -> None:
+        self._pre_accept_audit_allowed = allowed
+        self._pre_accept_audit_message = message
         self.pipeline_status_label.setText(message)
         self._enable_draft_decision_buttons()
 

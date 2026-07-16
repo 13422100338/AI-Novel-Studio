@@ -10,7 +10,9 @@ from ai_novel_studio.application.agent_task_service import AgentTaskService
 from ai_novel_studio.application.agent_tool_providers import build_project_agent_registry
 from ai_novel_studio.application.project_audit_service import ProjectAuditService
 from ai_novel_studio.application.project_brief_service import ProjectBriefService
-from ai_novel_studio.application.project_generation_runtime import ProjectGenerationRuntime
+from ai_novel_studio.application.project_generation_session import (
+    ProjectGenerationSession,
+)
 from ai_novel_studio.application.project_workspace_service import ProjectWorkspaceService
 from ai_novel_studio.infrastructure.llm import LLMGateway, LLMMessage, TaskPurpose
 from ai_novel_studio.infrastructure.storage.agent_repository import AgentRepository
@@ -52,7 +54,7 @@ class ProjectRuntime:
     workspace: ProjectWorkspaceService
     agent_repository: AgentRepository
     agent_runtime: AgentTaskService
-    generation_runtime: ProjectGenerationRuntime
+    generation_session: ProjectGenerationSession
     brief_service: ProjectBriefService
     audit_service: ProjectAuditService
     chat_repository: ChatHistoryRepository
@@ -94,7 +96,7 @@ class ProjectRuntime:
             workspace=workspace,
             agent_repository=agent_repository,
             agent_runtime=AgentTaskService(agent_loop),
-            generation_runtime=ProjectGenerationRuntime(project, model_runtime.gateway),
+            generation_session=ProjectGenerationSession(project, model_runtime.gateway),
             brief_service=ProjectBriefService(project),
             audit_service=ProjectAuditService(project),
             chat_repository=ChatHistoryRepository(project),

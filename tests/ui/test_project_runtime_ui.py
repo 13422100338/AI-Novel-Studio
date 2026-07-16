@@ -286,7 +286,7 @@ def test_generation_synchronizes_visible_requirement_before_preparing(
     window.manuscript_panel.chapter_requirement.setPlainText("生成前的新要求")
     window.manuscript_panel.toggle_requirement_lock()
     started: list[str] = []
-    runtime.generation_runtime.coordinator.start = started.append  # type: ignore[method-assign]
+    window.generation_runtime.coordinator.start = started.append  # type: ignore[union-attr,method-assign]
 
     window.request_prose_generation(CreationMode.BASIC, 8000, 3500)
 
@@ -457,7 +457,7 @@ def test_open_project_generates_and_accepts_prose_for_selected_chapter(
     assert window.manuscript_panel.current_chapter_revision == chapter.revision
 
 
-def test_strict_generation_runs_draft_audit_before_adoption(qtbot: QtBot, tmp_path: Path) -> None:
+def test_pre_accept_audit_runs_before_adoption(qtbot: QtBot, tmp_path: Path) -> None:
     runtime, chapter_id = _project_with_chapter(tmp_path / "novel", tmp_path)
     window = MainWindow(model_runtime=UiModelRuntime(tmp_path), project_runtime=runtime)
     qtbot.addWidget(window)
@@ -465,7 +465,8 @@ def test_strict_generation_runs_draft_audit_before_adoption(qtbot: QtBot, tmp_pa
     window.open_brief_dialog()
     assert window.brief_dialog is not None
     window.brief_dialog.freeze_button.click()
-    window.manuscript_panel.set_creation_mode(CreationMode.STRICT)
+    window.manuscript_panel.set_creation_mode(CreationMode.STANDARD)
+    window.manuscript_panel.pre_accept_audit.setChecked(True)
 
     window.manuscript_panel.generate_button.click()
 
@@ -495,7 +496,7 @@ def test_strict_generation_runs_draft_audit_before_adoption(qtbot: QtBot, tmp_pa
     assert ChapterRepository(runtime.project).read_content(chapter_id) == "模型生成正文"
 
 
-def test_strict_generation_stays_locked_when_model_audit_reports_error(
+def test_pre_accept_audit_stays_locked_when_model_audit_reports_error(
     qtbot: QtBot, tmp_path: Path
 ) -> None:
     runtime, chapter_id = _project_with_chapter(tmp_path / "novel", tmp_path)
@@ -505,7 +506,8 @@ def test_strict_generation_stays_locked_when_model_audit_reports_error(
     window.open_brief_dialog()
     assert window.brief_dialog is not None
     window.brief_dialog.freeze_button.click()
-    window.manuscript_panel.set_creation_mode(CreationMode.STRICT)
+    window.manuscript_panel.set_creation_mode(CreationMode.STANDARD)
+    window.manuscript_panel.pre_accept_audit.setChecked(True)
 
     class BlockingAuditService:
         def audit_style(self, manuscript, rules, output_token_limit):  # type: ignore[no-untyped-def]
@@ -521,7 +523,7 @@ def test_strict_generation_stays_locked_when_model_audit_reports_error(
                 ),
             )
 
-    runtime.generation_runtime.audit_coordinator.service = BlockingAuditService()
+    window.generation_runtime.audit_coordinator.service = BlockingAuditService()
     window.manuscript_panel.generate_button.click()
 
     qtbot.waitUntil(
