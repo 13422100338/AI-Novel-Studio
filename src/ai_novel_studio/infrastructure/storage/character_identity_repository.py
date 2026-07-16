@@ -7,6 +7,8 @@ from typing import cast
 
 from ai_novel_studio.domain.character_identity import (
     CharacterIdentityMerge,
+    CharacterIdentityReviewDecision,
+    CharacterIdentityReviewDecisionType,
     CharacterMergeStatus,
     MovedBriefReference,
 )
@@ -192,6 +194,79 @@ class CharacterIdentityRepository:
                 (limit,),
             ).fetchall()
         return tuple(self._merge(row) for row in rows)
+
+    def set_review_decision(
+        self,
+        first_character_id: str,
+        second_character_id: str,
+        decision: CharacterIdentityReviewDecisionType,
+        *,
+        reason: str = "",
+    ) -> CharacterIdentityReviewDecision:
+        first_id, second_id = self._ordered_pair(first_character_id, second_character_id)
+        now = datetime.now(UTC).isoformat()
+        with self.project.database.connect() as connection, connection:
+            self._character(connection, first_id)
+            self._character(connection, second_id)
+            connection.execute(
+                """
+                INSERT INTO character_identity_review_decisions (
+                    first_character_id, second_character_id, decision, reason,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(first_character_id, second_character_id) DO UPDATE SET
+                    decision = excluded.decision,
+                    reason = excluded.reason,
+                    updated_at = excluded.updated_at
+                """,
+                (first_id, second_id, decision.value, reason.strip(), now, now),
+            )
+        return self.get_review_decision(first_id, second_id)
+
+    def get_review_decision(
+        self, first_character_id: str, second_character_id: str
+    ) -> CharacterIdentityReviewDecision:
+        first_id, second_id = self._ordered_pair(first_character_id, second_character_id)
+        with self.project.database.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM character_identity_review_decisions "
+                "WHERE first_character_id = ? AND second_character_id = ?",
+                (first_id, second_id),
+            ).fetchone()
+        if row is None:
+            raise KeyError("不存在人物冲突审查决定")
+        return self._review_decision(row)
+
+    def list_active_review_decisions(
+        self,
+    ) -> tuple[CharacterIdentityReviewDecision, ...]:
+        with self.project.database.connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM character_identity_review_decisions "
+                "WHERE decision IN ('DISTINCT', 'DEFERRED') "
+                "ORDER BY updated_at DESC, first_character_id, second_character_id"
+            ).fetchall()
+        return tuple(self._review_decision(row) for row in rows)
+
+    @staticmethod
+    def _ordered_pair(first_character_id: str, second_character_id: str) -> tuple[str, str]:
+        values = first_character_id.strip(), second_character_id.strip()
+        if not values[0] or not values[1]:
+            raise CharacterIdentityRepositoryError("人物 ID 不能为空")
+        if values[0] == values[1]:
+            raise CharacterIdentityRepositoryError("不能对同一张人物卡创建冲突决定")
+        return (min(values), max(values))
+
+    @staticmethod
+    def _review_decision(row: sqlite3.Row) -> CharacterIdentityReviewDecision:
+        return CharacterIdentityReviewDecision(
+            first_character_id=row["first_character_id"],
+            second_character_id=row["second_character_id"],
+            decision=CharacterIdentityReviewDecisionType(row["decision"]),
+            reason=row["reason"],
+            created_at=datetime.fromisoformat(row["created_at"]),
+            updated_at=datetime.fromisoformat(row["updated_at"]),
+        )
 
     @staticmethod
     def _character(connection: sqlite3.Connection, character_id: str) -> sqlite3.Row:

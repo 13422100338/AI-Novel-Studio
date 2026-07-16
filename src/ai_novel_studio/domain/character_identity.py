@@ -10,6 +10,28 @@ class CharacterMergeStatus(StrEnum):
     REVERSED = "REVERSED"
 
 
+class CharacterIdentityReviewDecisionType(StrEnum):
+    DISTINCT = "DISTINCT"
+    DEFERRED = "DEFERRED"
+    REOPENED = "REOPENED"
+
+
+@dataclass(frozen=True, slots=True)
+class CharacterIdentityReviewDecision:
+    first_character_id: str
+    second_character_id: str
+    decision: CharacterIdentityReviewDecisionType
+    reason: str
+    created_at: datetime
+    updated_at: datetime
+
+    def __post_init__(self) -> None:
+        if not self.first_character_id.strip() or not self.second_character_id.strip():
+            raise ValueError("人物 ID 不能为空")
+        if self.first_character_id >= self.second_character_id:
+            raise ValueError("人物冲突决定必须使用稳定排序且不同的人物 ID")
+
+
 @dataclass(frozen=True, slots=True)
 class MovedBriefReference:
     id: str

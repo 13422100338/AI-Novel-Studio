@@ -6,7 +6,11 @@ from enum import StrEnum
 from itertools import combinations
 
 from ai_novel_studio.domain.agent import AgentToolName
-from ai_novel_studio.domain.character_identity import CharacterIdentityMerge
+from ai_novel_studio.domain.character_identity import (
+    CharacterIdentityMerge,
+    CharacterIdentityReviewDecision,
+    CharacterIdentityReviewDecisionType,
+)
 from ai_novel_studio.domain.memory import Character, CharacterStateEvent
 from ai_novel_studio.infrastructure.storage.agent_repository import AgentRepository
 from ai_novel_studio.infrastructure.storage.chapter_repository import ChapterRepository
@@ -58,6 +62,13 @@ class RecentCharacterIdentityMerge:
     merge: CharacterIdentityMerge
     source_name: str
     target_name: str
+
+
+@dataclass(frozen=True, slots=True)
+class ExcludedCharacterIdentityCandidate:
+    decision: CharacterIdentityReviewDecision
+    left_name: str
+    right_name: str
 
 
 class CharacterIdentityService:
@@ -118,14 +129,24 @@ class CharacterIdentityService:
             )
             for character in characters
         }
-        candidates = list(self._agent_review_candidates(characters, snapshots))
+        excluded_pairs = {
+            frozenset((decision.first_character_id, decision.second_character_id))
+            for decision in self.repository.list_active_review_decisions()
+        }
+        candidates = [
+            candidate
+            for candidate in self._agent_review_candidates(characters, snapshots)
+            if frozenset(
+                (candidate.left.character.id, candidate.right.character.id)
+            ) not in excluded_pairs
+        ]
         seen_pairs = {
             frozenset((candidate.left.character.id, candidate.right.character.id))
             for candidate in candidates
         }
         for left, right in combinations(characters, 2):
             pair = frozenset((left.id, right.id))
-            if pair in seen_pairs:
+            if pair in seen_pairs or pair in excluded_pairs:
                 continue
             reason = self._name_relation(left, right)
             if reason is None:
@@ -140,6 +161,71 @@ class CharacterIdentityService:
             )
             seen_pairs.add(pair)
         return tuple(candidates)
+
+    def decide_review_candidate(
+        self,
+        first_character_id: str,
+        second_character_id: str,
+        decision: CharacterIdentityReviewDecisionType,
+        *,
+        confirmed_by_user: bool,
+        reason: str = "",
+    ) -> CharacterIdentityReviewDecision:
+        if not confirmed_by_user:
+            raise PermissionError("人物冲突审查决定必须由用户明确确认")
+        if decision not in {
+            CharacterIdentityReviewDecisionType.DISTINCT,
+            CharacterIdentityReviewDecisionType.DEFERRED,
+        }:
+            raise CharacterIdentityError("只能选择不是同一人物或暂缓处理")
+        try:
+            return self.repository.set_review_decision(
+                first_character_id,
+                second_character_id,
+                decision,
+                reason=reason,
+            )
+        except (KeyError, CharacterIdentityRepositoryError) as error:
+            raise CharacterIdentityError(str(error)) from error
+
+    def reopen_review_candidate(
+        self,
+        first_character_id: str,
+        second_character_id: str,
+        *,
+        confirmed_by_user: bool,
+    ) -> CharacterIdentityReviewDecision:
+        if not confirmed_by_user:
+            raise PermissionError("重新加入人物冲突审查必须由用户明确确认")
+        try:
+            self.repository.get_review_decision(first_character_id, second_character_id)
+            return self.repository.set_review_decision(
+                first_character_id,
+                second_character_id,
+                CharacterIdentityReviewDecisionType.REOPENED,
+                reason="用户重新加入审查",
+            )
+        except (KeyError, CharacterIdentityRepositoryError) as error:
+            raise CharacterIdentityError(str(error)) from error
+
+    def list_excluded_review_candidates(
+        self,
+    ) -> tuple[ExcludedCharacterIdentityCandidate, ...]:
+        excluded: list[ExcludedCharacterIdentityCandidate] = []
+        for decision in self.repository.list_active_review_decisions():
+            try:
+                left = self.memory_repository.get_character(decision.first_character_id)
+                right = self.memory_repository.get_character(decision.second_character_id)
+            except KeyError:
+                continue
+            excluded.append(
+                ExcludedCharacterIdentityCandidate(
+                    decision=decision,
+                    left_name=left.canonical_name,
+                    right_name=right.canonical_name,
+                )
+            )
+        return tuple(excluded)
 
     def _agent_review_candidates(
         self,

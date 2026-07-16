@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from ai_novel_studio.application.character_identity_service import (
     CharacterIdentityCandidateOrigin,
     CharacterIdentityService,
@@ -10,6 +12,7 @@ from ai_novel_studio.domain.agent import (
     AgentToolCallStatus,
     AgentToolName,
 )
+from ai_novel_studio.domain.character_identity import CharacterIdentityReviewDecisionType
 from ai_novel_studio.domain.memory import ReviewStatus, SourceType
 from ai_novel_studio.infrastructure.storage.agent_repository import AgentRepository
 from ai_novel_studio.infrastructure.storage.chapter_repository import ChapterRepository
@@ -146,3 +149,46 @@ def test_agent_merge_proposal_enters_review_queue_without_mutating_cards(
     assert candidates[0].recommended_character_id == target.id
     assert candidates[0].reason == "小说证据表明两者是同一人"
     assert [item.id for item in memory.list_characters()] == [source.id, target.id]
+
+
+def test_review_decision_hides_candidate_and_reopen_restores_it(tmp_path: Path) -> None:
+    project, _chapter = _project_with_chapter(tmp_path)
+    memory = CharacterMemoryRepository(project)
+    source = memory.create_character("艾瑞克")
+    target = memory.create_character("艾瑞克·温德米尔")
+    service = CharacterIdentityService(project)
+
+    with pytest.raises(PermissionError):
+        service.decide_review_candidate(
+            source.id,
+            target.id,
+            CharacterIdentityReviewDecisionType.DISTINCT,
+            confirmed_by_user=False,
+        )
+
+    decision = service.decide_review_candidate(
+        source.id,
+        target.id,
+        CharacterIdentityReviewDecisionType.DISTINCT,
+        reason="用户确认只是名字相似",
+        confirmed_by_user=True,
+    )
+
+    assert decision.decision == CharacterIdentityReviewDecisionType.DISTINCT
+    assert service.list_review_candidates() == ()
+    excluded = service.list_excluded_review_candidates()
+    assert len(excluded) == 1
+    assert {excluded[0].left_name, excluded[0].right_name} == {
+        "艾瑞克",
+        "艾瑞克·温德米尔",
+    }
+
+    reopened = service.reopen_review_candidate(
+        source.id,
+        target.id,
+        confirmed_by_user=True,
+    )
+
+    assert reopened.decision == CharacterIdentityReviewDecisionType.REOPENED
+    assert len(service.list_review_candidates()) == 1
+    assert service.list_excluded_review_candidates() == ()

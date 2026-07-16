@@ -6,7 +6,7 @@ from ai_novel_studio.infrastructure.storage.migration_manager import LATEST_SCHE
 from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
 
 
-def test_schema_v10_adds_character_identity_merge_audit_table(tmp_path) -> None:  # type: ignore[no-untyped-def]
+def test_schema_v11_adds_character_identity_merge_and_review_tables(tmp_path) -> None:  # type: ignore[no-untyped-def]
     project = ProjectRepository.create(tmp_path / "project", "Identity Merge Test")
 
     with project.database.connect() as connection:
@@ -23,8 +23,14 @@ def test_schema_v10_adds_character_identity_merge_audit_table(tmp_path) -> None:
                 "PRAGMA index_list(character_identity_merges)"
             ).fetchall()
         }
+        decision_columns = {
+            str(row[1])
+            for row in connection.execute(
+                "PRAGMA table_info(character_identity_review_decisions)"
+            ).fetchall()
+        }
 
-    assert version == LATEST_SCHEMA_VERSION == 10
+    assert version == LATEST_SCHEMA_VERSION == 11
     assert {
         "id",
         "source_character_id",
@@ -42,6 +48,14 @@ def test_schema_v10_adds_character_identity_merge_audit_table(tmp_path) -> None:
         "reversed_at",
     } <= columns
     assert "character_identity_one_active_source" in indexes
+    assert {
+        "first_character_id",
+        "second_character_id",
+        "decision",
+        "reason",
+        "created_at",
+        "updated_at",
+    } == decision_columns
 
 
 def test_schema_v10_rejects_self_merge(tmp_path) -> None:  # type: ignore[no-untyped-def]

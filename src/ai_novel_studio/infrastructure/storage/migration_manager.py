@@ -1,7 +1,7 @@
 import sqlite3
 from collections.abc import Callable
 
-LATEST_SCHEMA_VERSION = 10
+LATEST_SCHEMA_VERSION = 11
 
 
 def _migration_1(connection: sqlite3.Connection) -> None:
@@ -680,6 +680,29 @@ def _migration_10(connection: sqlite3.Connection) -> None:
         connection.execute(statement)
 
 
+def _migration_11(connection: sqlite3.Connection) -> None:
+    statements = (
+        """
+        CREATE TABLE character_identity_review_decisions (
+            first_character_id TEXT NOT NULL REFERENCES characters(id),
+            second_character_id TEXT NOT NULL REFERENCES characters(id),
+            decision TEXT NOT NULL CHECK(decision IN ('DISTINCT', 'DEFERRED', 'REOPENED')),
+            reason TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY(first_character_id, second_character_id),
+            CHECK(first_character_id < second_character_id)
+        )
+        """,
+        """
+        CREATE INDEX character_identity_review_decision_status
+        ON character_identity_review_decisions(decision, updated_at)
+        """,
+    )
+    for statement in statements:
+        connection.execute(statement)
+
+
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     1: _migration_1,
     2: _migration_2,
@@ -691,6 +714,7 @@ MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     8: _migration_8,
     9: _migration_9,
     10: _migration_10,
+    11: _migration_11,
 }
 
 
