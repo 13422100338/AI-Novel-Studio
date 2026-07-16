@@ -264,6 +264,20 @@ class AgentRepository:
             ).fetchall()
         return tuple(self._tool_call_from_row(row) for row in rows)
 
+    def list_recent_executed_tool_calls(
+        self, tool_name: AgentToolName, *, limit: int = 50
+    ) -> tuple[AgentToolCall, ...]:
+        if limit < 1:
+            return ()
+        with self.project.database.connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM agent_tool_calls "
+                "WHERE tool_name = ? AND status = 'EXECUTED' "
+                "ORDER BY created_at DESC, id DESC LIMIT ?",
+                (tool_name.value, limit),
+            ).fetchall()
+        return tuple(self._tool_call_from_row(row) for row in rows)
+
     @staticmethod
     def _next_sequence(connection: sqlite3.Connection, table: str, run_id: str) -> int:
         row = connection.execute(

@@ -47,6 +47,7 @@ def test_project_agent_tools_return_bounded_source_referenced_content(tmp_path: 
     SearchRepository(project).index_chapter(chapter_1.id, "Opening", "旧信 井底 秘密")
     characters = CharacterMemoryRepository(project)
     character = characters.create_character("林澈", aliases=("阿澈",))
+    duplicate = characters.create_character("林澈·温德米尔")
     characters.append_state(
         character.id,
         chapter_1.id,
@@ -166,6 +167,17 @@ def test_project_agent_tools_return_bounded_source_referenced_content(tmp_path: 
         chapter_id=chapter_2.id,
         max_result_chars=120,
     )
+    identity_proposal = registry.execute(
+        AgentToolName.PROPOSE_CHARACTER_IDENTITY_MERGE,
+        {
+            "source_character_name": character.canonical_name,
+            "target_character_name": duplicate.canonical_name,
+            "reason": "简称与全称指向同一人物",
+        },
+        run_id="run",
+        chapter_id=chapter_2.id,
+        max_result_chars=500,
+    )
 
     for result in (excerpt, memory, state, knowledge_result, clues, canon, style):
         assert result.content
@@ -178,3 +190,10 @@ def test_project_agent_tools_return_bounded_source_referenced_content(tmp_path: 
     assert "井底旧信" in clues.content
     assert "旧信真实存在" in canon.content
     assert "冷静" in style.content
+    assert character.id in identity_proposal.content
+    assert duplicate.id in identity_proposal.content
+    assert "需要用户确认" in identity_proposal.content
+    assert [ref.source_id for ref in identity_proposal.source_refs] == [
+        character.id,
+        duplicate.id,
+    ]

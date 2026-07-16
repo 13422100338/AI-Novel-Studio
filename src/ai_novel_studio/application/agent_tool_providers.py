@@ -8,9 +8,10 @@ from ai_novel_studio.application.agent_tools import (
     AgentTool,
     AgentToolRegistry,
     AgentToolRequest,
+    AgentToolValidationError,
 )
 from ai_novel_studio.domain.agent import AgentSourceRef, AgentToolName, AgentToolResult
-from ai_novel_studio.domain.memory import KnowledgeSubject, StyleScope
+from ai_novel_studio.domain.memory import Character, KnowledgeSubject, StyleScope
 from ai_novel_studio.infrastructure.storage.chapter_repository import ChapterRepository
 from ai_novel_studio.infrastructure.storage.character_memory_repository import (
     CharacterMemoryRepository,
@@ -237,6 +238,63 @@ def _resolve_character_reference(
     return matches[0].id, ""
 
 
+class ProposeCharacterIdentityMergeTool:
+    name = AgentToolName.PROPOSE_CHARACTER_IDENTITY_MERGE
+    required_arguments = (
+        "source_character_name",
+        "target_character_name",
+        "reason",
+    )
+
+    def __init__(self, characters: CharacterMemoryRepository) -> None:
+        self._characters = characters
+
+    def execute(self, request: AgentToolRequest) -> AgentToolResult:
+        source_name = self._required_text(request, "source_character_name")
+        target_name = self._required_text(request, "target_character_name")
+        reason = self._required_text(request, "reason")
+        source_id, source_error = _resolve_character_reference(
+            self._characters, {"character_name": source_name}
+        )
+        target_id, target_error = _resolve_character_reference(
+            self._characters, {"character_name": target_name}
+        )
+        if source_error or target_error:
+            raise AgentToolValidationError(source_error or target_error)
+        if source_id == target_id:
+            raise AgentToolValidationError("不能提议把同一张人物卡归并到自身")
+        source = self._characters.get_character(source_id)
+        target = self._characters.get_character(target_id)
+        content = (
+            "人物身份归并提案已验证，但尚未修改记忆库。\n"
+            f"来源卡：{source.canonical_name}（character_id={source.id}）\n"
+            f"建议主卡：{target.canonical_name}（character_id={target.id}）\n"
+            f"理由：{reason}\n"
+            "状态：需要用户确认"
+        )
+        return _result(
+            self.name,
+            content,
+            (self._character_ref(source), self._character_ref(target)),
+        )
+
+    @staticmethod
+    def _required_text(request: AgentToolRequest, field: str) -> str:
+        value = request.arguments.get(field)
+        if not isinstance(value, str) or not value.strip():
+            raise AgentToolValidationError(f"{field} 必须是非空文本")
+        return value.strip()
+
+    @staticmethod
+    def _character_ref(character: Character) -> AgentSourceRef:
+        content = "\n".join(
+            (character.canonical_name, *character.aliases, character.profile)
+        )
+        return AgentSourceRef(
+            "character_identity_card", character.id, 0, _hash(content)
+        )
+
+
 class GetActiveCluesTool:
     name = AgentToolName.GET_ACTIVE_CLUES
     required_arguments = ()
@@ -372,6 +430,7 @@ def build_project_agent_registry(project: ProjectRepository) -> AgentToolRegistr
             GetCanonFactsTool(NarrativeMemoryRepository(project)),
             GetStyleGuideTool(StyleRepository(project)),
             GetAuditFindingsTool(project),
+            ProposeCharacterIdentityMergeTool(CharacterMemoryRepository(project)),
         ),
     )
     return AgentToolRegistry(

@@ -64,17 +64,17 @@ def test_coordinator_only_runtime_keeps_memory_build_available_offline(qtbot):  
     assert window.manuscript_memory_build_service.analyzer is None
 
 
-def test_agent_mode_is_retired_and_cannot_be_reenabled(qtbot):  # type: ignore[no-untyped-def]
+def test_agent_mode_is_available_but_defaults_off(qtbot):  # type: ignore[no-untyped-def]
     window = MainWindow(model_runtime=FakeRuntime())
     qtbot.addWidget(window)
 
     assert not window.plot_chat_panel.agent_mode_enabled()
-    assert window.plot_chat_panel.agent_mode_toggle.isHidden()
-    assert window.plot_chat_panel.agent_trace_button.isHidden()
+    assert not window.plot_chat_panel.agent_mode_toggle.isHidden()
+    assert not window.plot_chat_panel.agent_trace_button.isHidden()
 
     window.plot_chat_panel.agent_mode_toggle.setChecked(True)
 
-    assert not window.plot_chat_panel.agent_mode_enabled()
+    assert window.plot_chat_panel.agent_mode_enabled()
 
 
 def test_normal_plot_chat_still_uses_existing_coordinator(qtbot):  # type: ignore[no-untyped-def]
@@ -88,7 +88,7 @@ def test_normal_plot_chat_still_uses_existing_coordinator(qtbot):  # type: ignor
     assert runtime.coordinator.chat_calls
 
 
-def test_retired_agent_mode_always_uses_normal_plot_chat(qtbot):  # type: ignore[no-untyped-def]
+def test_enabled_agent_mode_routes_plot_chat_to_agent_runtime(qtbot):  # type: ignore[no-untyped-def]
     runtime = RoutedFakeRuntime()
     agent_runtime = FakeAgentRuntime()
     window = MainWindow(model_runtime=runtime, agent_runtime=agent_runtime)
@@ -100,8 +100,8 @@ def test_retired_agent_mode_always_uses_normal_plot_chat(qtbot):  # type: ignore
     window.plot_chat_panel.composer.setPlainText("Agent 讨论")
     window.plot_chat_panel.send_button.click()
 
-    assert runtime.coordinator.chat_calls
-    assert not agent_runtime.calls
+    assert not runtime.coordinator.chat_calls
+    assert agent_runtime.calls
 
 
 def test_trace_window_displays_turns_tool_calls_and_omissions(qtbot):  # type: ignore[no-untyped-def]

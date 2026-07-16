@@ -6,7 +6,7 @@ from ai_novel_studio.application.agent_loop_service import AgentLoopRequest, Age
 from ai_novel_studio.domain.agent import AgentPurpose
 from ai_novel_studio.infrastructure.llm import LLMMessage
 
-AGENT_ASSISTANT_PROMPT_VERSION = "agent-assistant-v1"
+AGENT_ASSISTANT_PROMPT_VERSION = "agent-assistant-v2"
 
 
 class AgentLoopRunner(Protocol):
@@ -140,7 +140,9 @@ class AgentTaskService:
             "GET_CHARACTER_KNOWLEDGE(character_name 或 character_id, before_chapter_id?)；"
             "GET_ACTIVE_CLUES(before_chapter_id?, limit?)；"
             "GET_CANON_FACTS(query?, limit?)；GET_STYLE_GUIDE(scope_id?)；"
-            "GET_AUDIT_FINDINGS(severity?, limit?)。"
+            "GET_AUDIT_FINDINGS(severity?, limit?)；"
+            "PROPOSE_CHARACTER_IDENTITY_MERGE(source_character_name, "
+            "target_character_name, reason) 只会创建待人工确认提案，不会修改记忆库。"
             "优先使用正文中出现的人物名作为 character_name；不要臆造 character_id。"
         )
 

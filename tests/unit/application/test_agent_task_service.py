@@ -49,6 +49,8 @@ def test_plot_agent_prompt_order_and_boundaries() -> None:
     )
     assert "character_name" in catalog
     assert "不要臆造 character_id" in catalog
+    assert "PROPOSE_CHARACTER_IDENTITY_MERGE" in catalog
+    assert "只会创建待人工确认提案" in catalog
     assert any("JSON" in message.content for message in messages)
     assert loop.request.output_token_limit == 900
     assert loop.request.require_tool_before_final is True

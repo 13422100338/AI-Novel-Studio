@@ -1,9 +1,17 @@
 from pathlib import Path
 
 from ai_novel_studio.application.character_identity_service import (
+    CharacterIdentityCandidateOrigin,
     CharacterIdentityService,
 )
+from ai_novel_studio.domain.agent import (
+    AgentPurpose,
+    AgentRunStatus,
+    AgentToolCallStatus,
+    AgentToolName,
+)
 from ai_novel_studio.domain.memory import ReviewStatus, SourceType
+from ai_novel_studio.infrastructure.storage.agent_repository import AgentRepository
 from ai_novel_studio.infrastructure.storage.chapter_repository import ChapterRepository
 from ai_novel_studio.infrastructure.storage.character_memory_repository import (
     CharacterMemoryRepository,
@@ -95,3 +103,46 @@ def test_recent_applied_merges_are_available_for_undo(tmp_path: Path) -> None:
     service.undo(merge.id, confirmed_by_user=True)
 
     assert service.list_recent_applied_merges() == ()
+
+
+def test_agent_merge_proposal_enters_review_queue_without_mutating_cards(
+    tmp_path: Path,
+) -> None:
+    project, chapter = _project_with_chapter(tmp_path)
+    memory = CharacterMemoryRepository(project)
+    source = memory.create_character("小艾")
+    target = memory.create_character("北境继承人")
+    agents = AgentRepository(project)
+    run = agents.create_run(
+        chapter_id=chapter.id,
+        purpose=AgentPurpose.PLOT_DISCUSSION,
+        status=AgentRunStatus.RUNNING,
+        model_provider_id="provider",
+        model_id="model",
+        prompt_version="agent-assistant-v2",
+        max_iterations=4,
+        max_tool_calls=8,
+        max_tool_result_chars=4_000,
+    )
+    call = agents.add_tool_call(
+        run.id,
+        AgentToolName.PROPOSE_CHARACTER_IDENTITY_MERGE,
+        '{"reason":"小说证据表明两者是同一人",'
+        '"source_character_name":"小艾",'
+        '"target_character_name":"北境继承人"}',
+    )
+    agents.complete_tool_call(
+        call.id,
+        AgentToolCallStatus.EXECUTED,
+        '{"content":"proposal validated"}',
+        18,
+        "[]",
+    )
+
+    candidates = CharacterIdentityService(project).list_review_candidates()
+
+    assert len(candidates) == 1
+    assert candidates[0].origin == CharacterIdentityCandidateOrigin.AGENT_PROPOSAL
+    assert candidates[0].recommended_character_id == target.id
+    assert candidates[0].reason == "小说证据表明两者是同一人"
+    assert [item.id for item in memory.list_characters()] == [source.id, target.id]

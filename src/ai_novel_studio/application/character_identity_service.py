@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
+from enum import StrEnum
 from itertools import combinations
 
+from ai_novel_studio.domain.agent import AgentToolName
 from ai_novel_studio.domain.character_identity import CharacterIdentityMerge
 from ai_novel_studio.domain.memory import Character, CharacterStateEvent
+from ai_novel_studio.infrastructure.storage.agent_repository import AgentRepository
 from ai_novel_studio.infrastructure.storage.chapter_repository import ChapterRepository
 from ai_novel_studio.infrastructure.storage.character_identity_repository import (
     CharacterIdentityRepository,
@@ -18,6 +22,11 @@ from ai_novel_studio.infrastructure.storage.project_repository import ProjectRep
 
 class CharacterIdentityError(RuntimeError):
     pass
+
+
+class CharacterIdentityCandidateOrigin(StrEnum):
+    DETERMINISTIC = "DETERMINISTIC"
+    AGENT_PROPOSAL = "AGENT_PROPOSAL"
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,6 +49,8 @@ class CharacterIdentityReviewCandidate:
     right: CharacterIdentityCardSnapshot
     reason: str
     recommended_character_id: str
+    origin: CharacterIdentityCandidateOrigin = CharacterIdentityCandidateOrigin.DETERMINISTIC
+    proposal_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,6 +67,7 @@ class CharacterIdentityService:
         self.project = project
         self.repository = CharacterIdentityRepository(project)
         self.memory_repository = CharacterMemoryRepository(project)
+        self.agent_repository = AgentRepository(project)
 
     def merge(
         self,
@@ -106,8 +118,15 @@ class CharacterIdentityService:
             )
             for character in characters
         }
-        candidates: list[CharacterIdentityReviewCandidate] = []
+        candidates = list(self._agent_review_candidates(characters, snapshots))
+        seen_pairs = {
+            frozenset((candidate.left.character.id, candidate.right.character.id))
+            for candidate in candidates
+        }
         for left, right in combinations(characters, 2):
+            pair = frozenset((left.id, right.id))
+            if pair in seen_pairs:
+                continue
             reason = self._name_relation(left, right)
             if reason is None:
                 continue
@@ -119,7 +138,63 @@ class CharacterIdentityService:
                     recommended_character_id=self._recommended_character_id(left, right),
                 )
             )
+            seen_pairs.add(pair)
         return tuple(candidates)
+
+    def _agent_review_candidates(
+        self,
+        characters: tuple[Character, ...],
+        snapshots: dict[str, CharacterIdentityCardSnapshot],
+    ) -> tuple[CharacterIdentityReviewCandidate, ...]:
+        candidates: list[CharacterIdentityReviewCandidate] = []
+        seen_pairs: set[frozenset[str]] = set()
+        calls = self.agent_repository.list_recent_executed_tool_calls(
+            AgentToolName.PROPOSE_CHARACTER_IDENTITY_MERGE
+        )
+        for call in calls:
+            try:
+                arguments = json.loads(call.arguments_json)
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(arguments, dict):
+                continue
+            source_name = arguments.get("source_character_name")
+            target_name = arguments.get("target_character_name")
+            reason = arguments.get("reason")
+            values = (source_name, target_name, reason)
+            if not all(isinstance(value, str) and value.strip() for value in values):
+                continue
+            source = self._character_by_name(characters, str(source_name))
+            target = self._character_by_name(characters, str(target_name))
+            if source is None or target is None or source.id == target.id:
+                continue
+            pair = frozenset((source.id, target.id))
+            if pair in seen_pairs:
+                continue
+            candidates.append(
+                CharacterIdentityReviewCandidate(
+                    left=snapshots[source.id],
+                    right=snapshots[target.id],
+                    reason=str(reason).strip(),
+                    recommended_character_id=target.id,
+                    origin=CharacterIdentityCandidateOrigin.AGENT_PROPOSAL,
+                    proposal_id=call.id,
+                )
+            )
+            seen_pairs.add(pair)
+        return tuple(candidates)
+
+    @staticmethod
+    def _character_by_name(
+        characters: tuple[Character, ...], name: str
+    ) -> Character | None:
+        normalized = name.strip()
+        matches = tuple(
+            character
+            for character in characters
+            if normalized in (character.canonical_name, *character.aliases)
+        )
+        return matches[0] if len(matches) == 1 else None
 
     def list_recent_applied_merges(
         self, *, limit: int = 20
