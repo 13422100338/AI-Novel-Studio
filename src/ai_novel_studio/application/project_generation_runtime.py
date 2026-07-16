@@ -2,67 +2,29 @@ from __future__ import annotations
 
 from PySide6.QtCore import QObject, Signal
 
-from ai_novel_studio.application.audit_workflow_service import AuditWorkflowService
-from ai_novel_studio.application.generation_acceptance_service import (
-    GenerationAcceptanceService,
-)
-from ai_novel_studio.application.generation_context_service import (
-    GenerationContextService,
-    GenerationPreparationRequest,
-)
 from ai_novel_studio.application.generation_recovery_service import (
-    GenerationRecoveryService,
     RecoverableGeneration,
 )
 from ai_novel_studio.application.model_task_coordinator import ModelTaskCoordinator
 from ai_novel_studio.application.model_tasks import ModelTaskService, StyleAuditResult
 from ai_novel_studio.application.project_audit_service import (
     ModelAuditSnapshot,
-    ProjectAuditService,
+)
+from ai_novel_studio.application.project_generation_session import (
+    ProjectGenerationSession,
 )
 from ai_novel_studio.application.prose_generation_coordinator import (
     ProseGenerationCoordinator,
 )
-from ai_novel_studio.application.prose_generation_service import ProseGenerationService
-from ai_novel_studio.core.context.context_manifest import (
-    ContextManifest,
-    ContextManifestRepository,
-)
+from ai_novel_studio.core.context.context_manifest import ContextManifest
 from ai_novel_studio.domain.generation import (
-    BriefStatus,
     CreationMode,
     GenerationCheckpoint,
     GenerationRun,
     GenerationStatus,
 )
-from ai_novel_studio.infrastructure.llm import LLMGateway, LLMMessage, TaskPurpose
-from ai_novel_studio.infrastructure.storage.audit_repository import AuditRepository
-from ai_novel_studio.infrastructure.storage.chapter_brief_repository import (
-    ChapterBriefRepository,
-)
-from ai_novel_studio.infrastructure.storage.chapter_repository import ChapterRepository
-from ai_novel_studio.infrastructure.storage.chapter_requirement_repository import (
-    ChapterRequirementRepository,
-)
-from ai_novel_studio.infrastructure.storage.checkpoint_repository import CheckpointRepository
-from ai_novel_studio.infrastructure.storage.generation_repository import GenerationRepository
+from ai_novel_studio.infrastructure.llm import LLMGateway, TaskPurpose
 from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
-
-
-class PreparedMessageStore:
-    def __init__(self) -> None:
-        self._messages: dict[str, tuple[LLMMessage, ...]] = {}
-
-    def put(self, run_id: str, messages: tuple[LLMMessage, ...]) -> None:
-        if not run_id.strip() or not messages:
-            raise ValueError("生成任务和提示消息不能为空")
-        self._messages[run_id] = messages
-
-    def messages_for(self, run_id: str) -> tuple[LLMMessage, ...]:
-        try:
-            return self._messages[run_id]
-        except KeyError as error:
-            raise KeyError("当前会话没有该生成任务的提示消息") from error
 
 
 class ProjectGenerationRuntime(QObject):
@@ -80,52 +42,20 @@ class ProjectGenerationRuntime(QObject):
 
     def __init__(self, project: ProjectRepository, gateway: LLMGateway) -> None:
         super().__init__()
-        self.project = project
-        self.gateway = gateway
-        self.chapters = ChapterRepository(project)
-        self.requirements = ChapterRequirementRepository(project)
-        self.briefs = ChapterBriefRepository(project)
-        self.runs = GenerationRepository(project)
-        self.checkpoints = CheckpointRepository(project, self.runs)
-        self.messages = PreparedMessageStore()
-        self.manifests = ContextManifestRepository(project)
-        self.context = GenerationContextService(
-            project,
-            self.chapters,
-            self.requirements,
-            self.briefs,
-            self.runs,
-            self.manifests,
-        )
-        self.prose = ProseGenerationService(
-            gateway,
-            self.messages,
-            self.runs,
-            self.checkpoints,
-        )
+        self.session = ProjectGenerationSession(project, gateway)
+        self.project = self.session.project
+        self.gateway = self.session.gateway
+        self.runs = self.session.runs
+        self.checkpoints = self.session.checkpoints
+        self.audit_workflow = self.session.audit_workflow
+        self.project_audits = self.session.project_audits
+        self.prose = self.session.prose
         self.coordinator = ProseGenerationCoordinator(self.prose)
-        self.acceptance = GenerationAcceptanceService(
-            project,
-            self.runs,
-            self.checkpoints,
-            self.chapters,
-        )
-        self.recovery = GenerationRecoveryService(self.runs, self.checkpoints)
-        self.audit_workflow = AuditWorkflowService(
-            self.chapters,
-            self.requirements,
-            AuditRepository(project),
-        )
-        self.project_audits = ProjectAuditService(project)
         self.audit_coordinator = ModelTaskCoordinator(ModelTaskService(gateway), self)
         self.audit_coordinator.audit_ready.connect(self._finish_strict_model_audit)
         self.audit_coordinator.task_failed.connect(self._fail_strict_model_audit)
         self.audit_coordinator.usage_changed.connect(self.usage_changed.emit)
         self._pending_strict_model_snapshot: ModelAuditSnapshot | None = None
-        self.current_chapter_id: str | None = None
-        self.current_chapter_revision: int | None = None
-        self.current_run_id: str | None = None
-        self.accepted_chapter_revision: int | None = None
 
         self.coordinator.draft_chunk.connect(self.draft_chunk.emit)
         self.coordinator.reasoning_chunk.connect(self.reasoning_chunk.emit)
@@ -135,14 +65,26 @@ class ProjectGenerationRuntime(QObject):
         self.coordinator.usage_changed.connect(self._emit_usage_snapshot)
 
     def latest_context_manifest(self, chapter_id: str) -> ContextManifest | None:
-        return self.manifests.latest_for_chapter(chapter_id)
+        return self.session.latest_context_manifest(chapter_id)
 
     def select_chapter(self, chapter_id: str, revision: int) -> bool:
-        self.current_chapter_id = chapter_id
-        self.current_chapter_revision = revision
-        self.current_run_id = None
-        self.accepted_chapter_revision = None
-        return bool(self.briefs.list_for_chapter(chapter_id, BriefStatus.FROZEN))
+        return self.session.select_chapter(chapter_id, revision)
+
+    @property
+    def current_chapter_id(self) -> str | None:
+        return self.session.current_chapter_id
+
+    @property
+    def current_chapter_revision(self) -> int | None:
+        return self.session.current_chapter_revision
+
+    @property
+    def current_run_id(self) -> str | None:
+        return self.session.current_run_id
+
+    @property
+    def accepted_chapter_revision(self) -> int | None:
+        return self.session.accepted_chapter_revision
 
     def prepare_and_start(
         self,
@@ -154,43 +96,19 @@ class ProjectGenerationRuntime(QObject):
         expected_requirement_revision: int,
         requirement_locked: bool,
     ) -> None:
-        if self.current_chapter_id is None or self.current_chapter_revision is None:
-            self.failed.emit("请先选择要生成的章节")
-            return
         try:
-            requirement = self.requirements.get_or_create(self.current_chapter_id)
-            if (
-                requirement.content != requirement_content
-                or requirement.is_locked != requirement_locked
-            ):
-                requirement = self.requirements.update(
-                    self.current_chapter_id,
-                    requirement_content,
-                    is_locked=requirement_locked,
-                    expected_revision=expected_requirement_revision,
-                )
-            self.requirement_saved.emit(requirement.revision)
-            route = self.gateway.configuration.routes.resolve(TaskPurpose.PROSE_GENERATION)
-            model = self.gateway.configuration.model(route)
-            frozen = self.briefs.list_for_chapter(
-                self.current_chapter_id, BriefStatus.FROZEN
+            requirement_revision = self.session.synchronize_requirement(
+                requirement_content,
+                expected_revision=expected_requirement_revision,
+                locked=requirement_locked,
             )
-            brief_id = frozen[-1].id if mode != CreationMode.BASIC and frozen else None
-            prepared = self.context.prepare(
-                GenerationPreparationRequest(
-                    chapter_id=self.current_chapter_id,
-                    mode=mode,
-                    brief_id=brief_id,
-                    output_token_limit=output_token_limit,
-                    model_capabilities=model.capabilities,
-                    target_words=target_words,
-                    model_provider_id=route.provider_id,
-                    model_id=route.model_id,
-                )
+            self.requirement_saved.emit(requirement_revision)
+            run_id = self.session.prepare_generation(
+                mode,
+                output_token_limit,
+                target_words,
             )
-            self.messages.put(prepared.run.id, prepared.messages)
-            self.current_run_id = prepared.run.id
-            self.coordinator.start(prepared.run.id)
+            self.coordinator.start(run_id)
         except (KeyError, LookupError, RuntimeError, ValueError) as error:
             self.failed.emit(str(error))
 
@@ -203,41 +121,26 @@ class ProjectGenerationRuntime(QObject):
             self.failed.emit("当前没有可采用的正文草稿")
             return
         try:
-            run = self.runs.get(self.current_run_id)
-            accepted = self.acceptance.accept(
-                run.id,
-                self.current_chapter_revision,
-                allow_partial=run.status == GenerationStatus.PARTIAL,
-            )
-            text = self.checkpoints.read(accepted.checkpoint.id)
+            accepted = self.session.accept_current()
         except (KeyError, RuntimeError, ValueError) as error:
             self.failed.emit(str(error))
             return
-        self.current_chapter_revision = accepted.chapter.revision
-        self.accepted_chapter_revision = accepted.chapter.revision
-        self.accepted.emit(text)
+        self.accepted.emit(accepted.text)
 
     def discard_current(self) -> None:
-        if self.current_run_id is None:
-            return
         try:
-            self.acceptance.discard(self.current_run_id)
+            discarded = self.session.discard_current()
         except (KeyError, RuntimeError, ValueError) as error:
             self.failed.emit(str(error))
             return
-        self.discarded.emit()
+        if discarded:
+            self.discarded.emit()
 
     def recover(self) -> None:
-        candidates = tuple(
-            item
-            for item in self.recovery.scan()
-            if self.current_chapter_id is None or item.run.chapter_id == self.current_chapter_id
-        )
-        if not candidates:
+        selected = self.session.recover_current()
+        if selected is None:
             self.failed.emit("当前章节没有可恢复的正文草稿")
             return
-        selected = candidates[-1]
-        self.current_run_id = selected.run.id
         self.recovered.emit(selected)
 
     def _emit_usage_snapshot(self, _usage: object) -> None:
