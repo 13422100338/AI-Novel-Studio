@@ -1,0 +1,168 @@
+{
+  "version": 5,
+  "scenarios": [
+    {
+      "id": "quick-recent-continuity",
+      "profile": "QUICK",
+      "task_type": "CONTINUE_CHAPTER",
+      "input_token_limit": 40,
+      "output_token_limit": 16,
+      "candidates": [
+        {"source_id": "quick-1-task", "category": "REQUIREMENT", "priority": 1, "required": true, "token_cost": 6, "relevance": "RELEVANT"},
+        {"source_id": "quick-1-recent", "category": "RECENT_PROSE", "priority": 10, "required": false, "token_cost": 10, "relevance": "RELEVANT"},
+        {"source_id": "quick-1-future", "category": "FUTURE_PROSE", "priority": 90, "required": false, "token_cost": 60, "relevance": "FORBIDDEN", "eligibility": {"time_visible": false}}
+      ],
+      "expected_selected": [
+        {"source_id": "quick-1-task", "used_fallback": false},
+        {"source_id": "quick-1-recent", "used_fallback": false}
+      ]
+    },
+    {
+      "id": "quick-manual-pin",
+      "profile": "QUICK",
+      "task_type": "CONTINUE_CHAPTER",
+      "input_token_limit": 40,
+      "output_token_limit": 16,
+      "candidates": [
+        {"source_id": "quick-2-task", "category": "REQUIREMENT", "priority": 1, "required": true, "token_cost": 6, "relevance": "RELEVANT"},
+        {"source_id": "quick-2-pin", "category": "MANUAL_PIN", "priority": 2, "required": true, "token_cost": 8, "relevance": "RELEVANT"},
+        {"source_id": "quick-2-noise", "category": "HISTORY", "priority": 80, "required": false, "token_cost": 60, "relevance": "IRRELEVANT"}
+      ],
+      "expected_selected": [
+        {"source_id": "quick-2-task", "used_fallback": false},
+        {"source_id": "quick-2-pin", "used_fallback": false}
+      ]
+    },
+    {
+      "id": "quick-character-alias",
+      "profile": "QUICK",
+      "task_type": "CONTINUE_CHAPTER",
+      "deduplicate": true,
+      "input_token_limit": 40,
+      "output_token_limit": 16,
+      "candidates": [
+        {"source_id": "quick-3-task", "category": "REQUIREMENT", "priority": 1, "required": true, "token_cost": 6, "relevance": "RELEVANT"},
+        {"source_id": "quick-3-canonical", "category": "CHARACTER", "priority": 10, "required": false, "token_cost": 8, "relevance": "RELEVANT"},
+        {"source_id": "quick-3-duplicate-alias", "category": "CHARACTER", "priority": 11, "required": false, "token_cost": 8, "relevance": "IRRELEVANT"}
+      ],
+      "expected_selected": [
+        {"source_id": "quick-3-task", "used_fallback": false},
+        {"source_id": "quick-3-canonical", "used_fallback": false}
+      ]
+    },
+    {
+      "id": "quick-pov-knowledge-boundary",
+      "profile": "QUICK",
+      "task_type": "CONTINUE_CHAPTER",
+      "input_token_limit": 40,
+      "output_token_limit": 16,
+      "candidates": [
+        {"source_id": "quick-4-task", "category": "REQUIREMENT", "priority": 1, "required": true, "token_cost": 6, "relevance": "RELEVANT"},
+        {"source_id": "quick-4-hidden-truth", "category": "WORLD_TRUTH", "priority": 5, "required": false, "token_cost": 8, "relevance": "FORBIDDEN", "eligibility": {"view_allowed": false}},
+        {"source_id": "quick-4-pov-known", "category": "CHARACTER_VIEW", "priority": 10, "required": false, "token_cost": 8, "relevance": "RELEVANT"}
+      ],
+      "expected_selected": [
+        {"source_id": "quick-4-task", "used_fallback": false},
+        {"source_id": "quick-4-pov-known", "used_fallback": false}
+      ]
+    },
+    {
+      "id": "quick-history-fallback",
+      "profile": "QUICK",
+      "task_type": "CONTINUE_CHAPTER",
+      "input_token_limit": 40,
+      "output_token_limit": 16,
+      "candidates": [
+        {"source_id": "quick-5-task", "category": "REQUIREMENT", "priority": 1, "required": true, "token_cost": 6, "relevance": "RELEVANT"},
+        {"source_id": "quick-5-history", "category": "HISTORY", "priority": 10, "required": false, "token_cost": 60, "fallback_token_cost": 8, "relevance": "RELEVANT"},
+        {"source_id": "quick-5-noise", "category": "HISTORY", "priority": 80, "required": false, "token_cost": 60, "relevance": "IRRELEVANT"}
+      ],
+      "expected_selected": [
+        {"source_id": "quick-5-task", "used_fallback": false},
+        {"source_id": "quick-5-history", "used_fallback": true}
+      ]
+    },
+    {
+      "id": "normal-frozen-brief",
+      "profile": "NORMAL",
+      "task_type": "CONTINUE_CHAPTER",
+      "input_token_limit": 40,
+      "output_token_limit": 16,
+      "candidates": [
+        {"source_id": "normal-1-task", "category": "REQUIREMENT", "priority": 1, "required": true, "token_cost": 6, "relevance": "RELEVANT"},
+        {"source_id": "normal-1-brief", "category": "BRIEF", "priority": 2, "required": true, "token_cost": 8, "relevance": "RELEVANT"},
+        {"source_id": "normal-1-canon", "category": "CANON", "priority": 10, "required": false, "token_cost": 8, "relevance": "RELEVANT"}
+      ],
+      "expected_selected": [
+        {"source_id": "normal-1-task", "used_fallback": false},
+        {"source_id": "normal-1-brief", "used_fallback": false},
+        {"source_id": "normal-1-canon", "used_fallback": false}
+      ]
+    },
+    {
+      "id": "normal-clue-reveal-boundary",
+      "profile": "NORMAL",
+      "task_type": "CONTINUE_CHAPTER",
+      "input_token_limit": 40,
+      "output_token_limit": 16,
+      "candidates": [
+        {"source_id": "normal-2-brief", "category": "BRIEF", "priority": 1, "required": true, "token_cost": 6, "relevance": "RELEVANT"},
+        {"source_id": "normal-2-future-reveal", "category": "CLUE", "priority": 5, "required": false, "token_cost": 8, "relevance": "FORBIDDEN", "eligibility": {"time_visible": false}},
+        {"source_id": "normal-2-active-clue", "category": "CLUE", "priority": 10, "required": false, "token_cost": 8, "relevance": "RELEVANT"}
+      ],
+      "expected_selected": [
+        {"source_id": "normal-2-brief", "used_fallback": false},
+        {"source_id": "normal-2-active-clue", "used_fallback": false}
+      ]
+    },
+    {
+      "id": "normal-current-character-state",
+      "profile": "NORMAL",
+      "task_type": "CONTINUE_CHAPTER",
+      "input_token_limit": 40,
+      "output_token_limit": 16,
+      "candidates": [
+        {"source_id": "normal-3-task", "category": "REQUIREMENT", "priority": 1, "required": true, "token_cost": 6, "relevance": "RELEVANT"},
+        {"source_id": "normal-3-stale-state", "category": "CHARACTER_STATE", "priority": 5, "required": false, "token_cost": 8, "relevance": "IRRELEVANT", "eligibility": {"stale": true}},
+        {"source_id": "normal-3-current-state", "category": "CHARACTER_STATE", "priority": 10, "required": false, "token_cost": 8, "relevance": "RELEVANT"}
+      ],
+      "expected_selected": [
+        {"source_id": "normal-3-task", "used_fallback": false},
+        {"source_id": "normal-3-current-state", "used_fallback": false}
+      ]
+    },
+    {
+      "id": "normal-style-exemplar",
+      "profile": "NORMAL",
+      "task_type": "CONTINUE_CHAPTER",
+      "input_token_limit": 40,
+      "output_token_limit": 16,
+      "candidates": [
+        {"source_id": "normal-4-brief", "category": "BRIEF", "priority": 1, "required": true, "token_cost": 6, "relevance": "RELEVANT"},
+        {"source_id": "normal-4-unrelated-style", "category": "STYLE", "priority": 5, "required": false, "token_cost": 8, "relevance": "IRRELEVANT", "eligibility": {"conflicted": true}},
+        {"source_id": "normal-4-pov-style", "category": "STYLE", "priority": 10, "required": false, "token_cost": 8, "relevance": "RELEVANT"}
+      ],
+      "expected_selected": [
+        {"source_id": "normal-4-brief", "used_fallback": false},
+        {"source_id": "normal-4-pov-style", "used_fallback": false}
+      ]
+    },
+    {
+      "id": "normal-priority-is-not-relevance",
+      "profile": "NORMAL",
+      "task_type": "CONTINUE_CHAPTER",
+      "query_text": "寻找旧信证据",
+      "input_token_limit": 40,
+      "output_token_limit": 16,
+      "candidates": [
+        {"source_id": "normal-5-task", "category": "REQUIREMENT", "priority": 1, "required": true, "token_cost": 6, "relevance": "RELEVANT"},
+        {"source_id": "normal-5-high-priority-noise", "category": "CANON", "priority": 5, "required": false, "token_cost": 30, "relevance": "IRRELEVANT", "ranking_text": "宫廷账本"},
+        {"source_id": "normal-5-relevant-evidence", "category": "CANON", "priority": 10, "required": false, "token_cost": 10, "relevance": "RELEVANT", "ranking_text": "旧信证据"}
+      ],
+      "expected_selected": [
+        {"source_id": "normal-5-task", "used_fallback": false},
+        {"source_id": "normal-5-relevant-evidence", "used_fallback": false}
+      ]
+    }
+  ]
+}

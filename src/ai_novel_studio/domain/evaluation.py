@@ -162,7 +162,7 @@ class ContextBaselineSuite:
     scenarios: tuple[ContextBaselineScenario, ...]
 
     def __post_init__(self) -> None:
-        if self.version not in {1, 2, 3, 4}:
+        if self.version not in {1, 2, 3, 4, 5}:
             raise ValueError(f"unsupported baseline suite version: {self.version}")
         if not 10 <= len(self.scenarios) <= 20:
             raise ValueError("baseline must contain 10 to 20 scenarios")

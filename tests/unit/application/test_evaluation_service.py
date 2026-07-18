@@ -18,6 +18,7 @@ RANKING_FIXTURE = Path(__file__).parents[2] / "fixtures" / "backend_baseline_v3.
 DEDUPLICATION_FIXTURE = (
     Path(__file__).parents[2] / "fixtures" / "backend_baseline_v4.json"
 )
+CONFLICT_FIXTURE = Path(__file__).parents[2] / "fixtures" / "backend_baseline_v5.json"
 
 
 def test_phase_0_context_baseline_runs_ten_fixed_quick_and_normal_tasks() -> None:
@@ -83,6 +84,20 @@ def test_phase_3_deduplication_improves_precision_without_reducing_recall() -> N
     assert deduplicated.forbidden_selection_count == 0
     assert deduplicated.average_recall == ranked.average_recall
     assert deduplicated.average_precision > ranked.average_precision
+
+
+def test_phase_3_conflict_filter_reaches_full_precision_without_reducing_recall() -> None:
+    deduplicated = run_context_baseline(
+        load_context_baseline_suite(DEDUPLICATION_FIXTURE)
+    )
+    conflict_safe = run_context_baseline(load_context_baseline_suite(CONFLICT_FIXTURE))
+
+    assert conflict_safe.suite_version == 5
+    assert conflict_safe.matched_scenarios == 10
+    assert conflict_safe.unexpected_error_count == 0
+    assert conflict_safe.forbidden_selection_count == 0
+    assert conflict_safe.average_recall == deduplicated.average_recall
+    assert conflict_safe.average_precision == 1
 
 
 def test_baseline_loader_rejects_suite_outside_the_phase_0_task_count(

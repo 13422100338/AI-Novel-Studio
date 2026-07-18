@@ -26,7 +26,12 @@ from ai_novel_studio.application.project_memory_workspace_gateway import (
 from ai_novel_studio.application.reader_knowledge_summary_service import (
     ReaderKnowledgeSummaryService,
 )
+from ai_novel_studio.core.context.context_builder import (
+    ContextBuilder,
+    ContextBuildRequest,
+)
 from ai_novel_studio.core.context.context_manifest import ContextManifestRepository
+from ai_novel_studio.core.context.token_budget import TokenBudget
 from ai_novel_studio.domain.generation import CreationMode
 from ai_novel_studio.domain.memory import (
     Authority,
@@ -291,14 +296,48 @@ def test_canon_card_reports_equal_authority_conflicts_instead_of_guessing(
             authority=Authority.USER_CONFIRMED,
             review_status=ReviewStatus.APPROVED,
         )
+    canon.add_canon(
+        "北境天气",
+        "北境终年积雪。",
+        first.id,
+        confidence=1,
+        authority=Authority.USER_CONFIRMED,
+        review_status=ReviewStatus.APPROVED,
+    )
 
     world_card = CanonCardContextService(project).cards_before(current.id)[0]
 
-    assert world_card.facts == ()
+    assert [fact.title for fact in world_card.facts] == ["北境天气"]
     assert len(world_card.conflicts) == 1
     assert "冲突待处理，不得作为确定正典" in world_card.content
     assert "钟楼已经封闭" in world_card.content
     assert "钟楼仍然开放" in world_card.content
+
+    blocks = GenerationMemoryContextProvider(project).blocks(
+        current.id,
+        "描写钟楼附近的行动。",
+        (),
+    )
+    built = ContextBuilder().build(
+        ContextBuildRequest(
+            chapter_id=current.id,
+            run_id="canon-conflict-filter",
+            budget=TokenBudget(20_000, 2_000, 0),
+            blocks=blocks,
+            deduplicate=True,
+        )
+    )
+
+    assert any(item.source_type == "CANON_CARD" for item in built.manifest.selected)
+    conflict = next(
+        item
+        for item in built.manifest.omitted
+        if item.source_type == "CANON_CONFLICT"
+    )
+    assert conflict.reason == "HARD_FILTER:CONFLICTED"
+    assert "北境终年积雪" in built.text
+    assert "钟楼已经封闭" not in built.text
+    assert "钟楼仍然开放" not in built.text
 
 
 def test_manual_canon_category_overrides_title_heuristic(tmp_path: Path) -> None:

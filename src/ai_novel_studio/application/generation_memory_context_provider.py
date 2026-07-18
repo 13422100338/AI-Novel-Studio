@@ -4,6 +4,7 @@ import hashlib
 
 from ai_novel_studio.application.canon_card_context_service import (
     CanonCardContextService,
+    CanonContextCard,
 )
 from ai_novel_studio.application.character_card_context_service import (
     CharacterCardContextService,
@@ -18,6 +19,7 @@ from ai_novel_studio.application.view_assertion_context_provider import (
     ViewAssertionContextProvider,
 )
 from ai_novel_studio.core.context.context_builder import ContextBlock
+from ai_novel_studio.core.context.context_filter import ContextEligibility
 from ai_novel_studio.core.context.history_retriever import HistoryRetriever
 from ai_novel_studio.core.context.style_retriever import StyleRetriever
 from ai_novel_studio.core.memory.narrative_clue_ledger import NarrativeClueLedger
@@ -208,23 +210,48 @@ class GenerationMemoryContextProvider:
         return tuple(blocks)
 
     def _canon_blocks(self, chapter_id: str) -> tuple[ContextBlock, ...]:
-        return tuple(
-            ContextBlock(
-                f"canon-card-{card.category.value.casefold()}",
-                "MEMORY",
-                card.content,
-                14 + index,
-                False,
-                "CANON_CARD",
-                card.category.value,
-                None,
-                0,
-                card.content_hash,
-                f"当前章之前已审查的聚合正典：{card.title}",
-            )
-            for index, card in enumerate(self.canon_cards.cards_before(chapter_id))
-            if card.content
-        )
+        blocks: list[ContextBlock] = []
+        for index, card in enumerate(self.canon_cards.cards_before(chapter_id)):
+            facts_content = _canon_facts_content(card)
+            if facts_content:
+                blocks.append(
+                    ContextBlock(
+                        f"canon-card-{card.category.value.casefold()}",
+                        "MEMORY",
+                        facts_content,
+                        14 + index,
+                        False,
+                        "CANON_CARD",
+                        card.category.value,
+                        None,
+                        0,
+                        _hash(facts_content),
+                        f"当前章之前已审查的聚合正典：{card.title}",
+                    )
+                )
+            for conflict_index, conflict in enumerate(card.conflicts):
+                conflict_content = (
+                    f"【正典冲突候选｜{card.title}】\n"
+                    f"- {conflict.title}：{'｜'.join(conflict.details)}"
+                )
+                blocks.append(
+                    ContextBlock(
+                        "canon-conflict-"
+                        f"{card.category.value.casefold()}-{conflict_index}",
+                        "MEMORY",
+                        conflict_content,
+                        14 + index,
+                        False,
+                        "CANON_CONFLICT",
+                        f"{card.category.value}:{conflict.title}",
+                        None,
+                        0,
+                        _hash(conflict_content),
+                        f"同标题同最高权威的正典冲突：{conflict.title}",
+                        eligibility=ContextEligibility(conflicted=True),
+                    )
+                )
+        return tuple(blocks)
 
     def _reader_summary_blocks(self, chapter_id: str) -> tuple[ContextBlock, ...]:
         summary = self.reader_summary.summary_before(chapter_id)
@@ -378,3 +405,11 @@ class GenerationMemoryContextProvider:
 
 def _hash(content: str) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
+def _canon_facts_content(card: CanonContextCard) -> str:
+    if not card.facts:
+        return ""
+    lines = [f"【正典卡｜{card.title}】"]
+    lines.extend(f"- {fact.title}：{fact.detail}" for fact in card.facts)
+    return "\n".join(lines)
