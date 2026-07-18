@@ -10,6 +10,7 @@ from ai_novel_studio.core.context.context_manifest import (
     create_manifest_id,
     utc_now,
 )
+from ai_novel_studio.core.context.context_ranking import ContextRanker, ContextTask
 from ai_novel_studio.core.context.token_budget import (
     ConservativeTokenEstimator,
     TokenBudget,
@@ -44,6 +45,7 @@ class ContextBuildRequest:
     run_id: str | None
     budget: TokenBudget
     blocks: tuple[ContextBlock, ...]
+    task: ContextTask | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,8 +55,13 @@ class BuiltContext:
 
 
 class ContextBuilder:
-    def __init__(self, estimator: TokenEstimator | None = None) -> None:
+    def __init__(
+        self,
+        estimator: TokenEstimator | None = None,
+        ranker: ContextRanker | None = None,
+    ) -> None:
         self._estimator = estimator or ConservativeTokenEstimator()
+        self._ranker = ranker or ContextRanker()
 
     def build(self, request: ContextBuildRequest) -> BuiltContext:
         ordered = sorted(request.blocks, key=lambda block: (block.priority, block.id))
@@ -69,6 +76,7 @@ class ContextBuilder:
 
         required = [block for block in eligible if block.required]
         optional = [block for block in eligible if not block.required]
+        ranked_optional = self._ranker.rank(optional, request.task)
         required_tokens = sum(self._estimator.estimate(block.content) for block in required)
         if required_tokens > request.budget.input_limit:
             identifiers = ", ".join(block.id for block in required)
@@ -86,23 +94,39 @@ class ContextBuilder:
             contents.append(block.content)
             used_tokens += tokens
 
-        for block in optional:
+        for ranked in ranked_optional:
+            block = ranked.block
             full_tokens = self._estimator.estimate(block.content)
             if used_tokens + full_tokens <= request.budget.input_limit:
-                selected.append(self._selected_item(block, full_tokens, used_fallback=False))
+                selected.append(
+                    self._selected_item(
+                        block,
+                        full_tokens,
+                        used_fallback=False,
+                        rationale=ranked.rationale,
+                    )
+                )
                 contents.append(block.content)
                 used_tokens += full_tokens
                 continue
             fallback = block.fallback_content
             fallback_tokens = self._estimator.estimate(fallback) if fallback is not None else 0
             if fallback is not None and used_tokens + fallback_tokens <= request.budget.input_limit:
-                selected.append(self._selected_item(block, fallback_tokens, used_fallback=True))
+                selected.append(
+                    self._selected_item(
+                        block,
+                        fallback_tokens,
+                        used_fallback=True,
+                        rationale=ranked.rationale,
+                    )
+                )
                 contents.append(fallback)
                 used_tokens += fallback_tokens
                 continue
             omitted.append(
                 self._omitted_item(
-                    block, "预算不足，未加入完整内容或摘要回退"
+                    block,
+                    self._budget_omission_reason(ranked.ranking_note),
                 )
             )
 
@@ -122,7 +146,11 @@ class ContextBuilder:
 
     @staticmethod
     def _selected_item(
-        block: ContextBlock, estimated_tokens: int, *, used_fallback: bool
+        block: ContextBlock,
+        estimated_tokens: int,
+        *,
+        used_fallback: bool,
+        rationale: str | None = None,
     ) -> SelectedManifestItem:
         return SelectedManifestItem(
             block_id=block.id,
@@ -132,7 +160,7 @@ class ContextBuilder:
             source_chapter_id=block.source_chapter_id,
             source_revision=block.source_revision,
             source_hash=block.source_hash,
-            rationale=block.rationale,
+            rationale=rationale or block.rationale,
             estimated_tokens=estimated_tokens,
             used_fallback=used_fallback,
         )
@@ -149,3 +177,8 @@ class ContextBuilder:
             source_hash=block.source_hash,
             reason=reason,
         )
+
+    @staticmethod
+    def _budget_omission_reason(ranking_note: str | None) -> str:
+        reason = "预算不足，未加入完整内容或摘要回退"
+        return reason if ranking_note is None else f"{reason}；{ranking_note}"

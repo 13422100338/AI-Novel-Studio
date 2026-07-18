@@ -5,6 +5,7 @@ from enum import StrEnum
 
 MAX_BASELINE_CANDIDATES = 100
 MAX_BASELINE_TOKEN_COST = 4_096
+MAX_BASELINE_QUERY_LENGTH = 20_000
 
 
 class BaselineProfile(StrEnum):
@@ -62,6 +63,7 @@ class BaselineCandidate:
     relevance: BaselineRelevance
     fallback_token_cost: int | None = None
     eligibility: BaselineEligibility = field(default_factory=BaselineEligibility)
+    ranking_text: str = ""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "source_id", _required(self.source_id, "source_id"))
@@ -88,6 +90,12 @@ class BaselineCandidate:
             raise ValueError("required candidates cannot define a fallback")
         if self.required and self.relevance == BaselineRelevance.FORBIDDEN:
             raise ValueError("forbidden candidates cannot be required")
+        if not isinstance(self.ranking_text, str):
+            raise ValueError("ranking_text must be a string")
+        ranking_text = self.ranking_text.strip()
+        if len(ranking_text) > self.token_cost * 4:
+            raise ValueError("ranking_text cannot exceed synthetic candidate content")
+        object.__setattr__(self, "ranking_text", ranking_text)
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,10 +116,22 @@ class ContextBaselineScenario:
     output_token_limit: int
     candidates: tuple[BaselineCandidate, ...]
     expected_selected: tuple[ExpectedBaselineSelection, ...]
+    query_text: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "id", _required(self.id, "id"))
         object.__setattr__(self, "task_type", _required(self.task_type, "task_type"))
+        if self.query_text is not None:
+            if not isinstance(self.query_text, str):
+                raise ValueError("query_text must be a string")
+            query_text = self.query_text.strip()
+            if not query_text:
+                raise ValueError("query_text cannot be blank")
+            if len(query_text) > MAX_BASELINE_QUERY_LENGTH:
+                raise ValueError(
+                    f"query_text cannot exceed {MAX_BASELINE_QUERY_LENGTH} characters"
+                )
+            object.__setattr__(self, "query_text", query_text)
         if self.input_token_limit <= 0 or self.output_token_limit <= 0:
             raise ValueError("input and output Token limits must be greater than zero")
         if not self.candidates:
@@ -139,7 +159,7 @@ class ContextBaselineSuite:
     scenarios: tuple[ContextBaselineScenario, ...]
 
     def __post_init__(self) -> None:
-        if self.version not in {1, 2}:
+        if self.version not in {1, 2, 3}:
             raise ValueError(f"unsupported baseline suite version: {self.version}")
         if not 10 <= len(self.scenarios) <= 20:
             raise ValueError("baseline must contain 10 to 20 scenarios")

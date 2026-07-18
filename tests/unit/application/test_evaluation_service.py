@@ -14,6 +14,7 @@ from scripts.run_backend_baseline import main
 
 FIXTURE = Path(__file__).parents[2] / "fixtures" / "backend_baseline_v1.json"
 PHASE_3_FIXTURE = Path(__file__).parents[2] / "fixtures" / "backend_baseline_v2.json"
+RANKING_FIXTURE = Path(__file__).parents[2] / "fixtures" / "backend_baseline_v3.json"
 
 
 def test_phase_0_context_baseline_runs_ten_fixed_quick_and_normal_tasks() -> None:
@@ -53,6 +54,18 @@ def test_phase_3_hard_filters_remove_forbidden_candidates_without_reducing_recal
     assert phase_3.forbidden_selection_count == 0
     assert phase_3.average_recall == phase_0.average_recall
     assert phase_3.average_precision > phase_0.average_precision
+
+
+def test_phase_3_task_ranking_improves_recall_without_reintroducing_forbidden_context() -> None:
+    hard_filter = run_context_baseline(load_context_baseline_suite(PHASE_3_FIXTURE))
+    ranked = run_context_baseline(load_context_baseline_suite(RANKING_FIXTURE))
+
+    assert ranked.suite_version == 3
+    assert ranked.matched_scenarios == 10
+    assert ranked.unexpected_error_count == 0
+    assert ranked.forbidden_selection_count == 0
+    assert ranked.average_recall > hard_filter.average_recall
+    assert ranked.average_precision > hard_filter.average_precision
 
 
 def test_baseline_loader_rejects_suite_outside_the_phase_0_task_count(
@@ -105,6 +118,29 @@ def test_baseline_loader_validates_hard_filter_metadata(
 
     with pytest.raises(ValueError, match=message):
         load_context_baseline_suite(invalid)
+
+
+def test_baseline_loader_bounds_task_ranking_metadata(tmp_path: Path) -> None:
+    oversized_query = json.loads(RANKING_FIXTURE.read_text(encoding="utf-8"))
+    oversized_query["scenarios"][-1]["query_text"] = "x" * 20_001
+    invalid_query = tmp_path / "invalid-ranking-query.json"
+    invalid_query.write_text(json.dumps(oversized_query), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="query_text cannot exceed"):
+        load_context_baseline_suite(invalid_query)
+
+    oversized_candidate = json.loads(RANKING_FIXTURE.read_text(encoding="utf-8"))
+    oversized_candidate["scenarios"][-1]["candidates"][-1]["ranking_text"] = (
+        "x" * 41
+    )
+    invalid_candidate = tmp_path / "invalid-ranking-candidate.json"
+    invalid_candidate.write_text(
+        json.dumps(oversized_candidate),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="synthetic candidate content"):
+        load_context_baseline_suite(invalid_candidate)
 
 
 def test_backend_baseline_command_emits_machine_readable_report(capsys) -> None:  # type: ignore[no-untyped-def]

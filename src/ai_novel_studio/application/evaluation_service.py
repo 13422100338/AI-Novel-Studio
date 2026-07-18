@@ -13,6 +13,7 @@ from ai_novel_studio.core.context.context_builder import (
     ContextBuildRequest,
 )
 from ai_novel_studio.core.context.context_filter import ContextEligibility
+from ai_novel_studio.core.context.context_ranking import ContextTask
 from ai_novel_studio.core.context.token_budget import TokenBudget
 from ai_novel_studio.domain.evaluation import (
     BaselineCandidate,
@@ -77,6 +78,11 @@ def _run_scenario(
                     0,
                 ),
                 blocks=tuple(_context_block(item) for item in scenario.candidates),
+                task=(
+                    ContextTask(scenario.task_type, scenario.query_text)
+                    if scenario.query_text is not None
+                    else None
+                ),
             )
         )
         selected = tuple(
@@ -120,7 +126,10 @@ def _run_scenario(
 
 
 def _context_block(candidate: BaselineCandidate) -> ContextBlock:
-    content = "x" * candidate.token_cost * 4
+    content_length = candidate.token_cost * 4
+    content = candidate.ranking_text + "x" * (
+        content_length - len(candidate.ranking_text)
+    )
     fallback = (
         "f" * candidate.fallback_token_cost * 4
         if candidate.fallback_token_cost is not None
@@ -175,6 +184,11 @@ def _scenario(value: object) -> ContextBaselineScenario:
         ),
         candidates=candidates,
         expected_selected=expected,
+        query_text=(
+            None
+            if data.get("query_text") is None
+            else _string(data.get("query_text"), "query_text")
+        ),
     )
 
 
@@ -200,6 +214,11 @@ def _candidate(value: object) -> BaselineCandidate:
         ),
         relevance=relevance,
         eligibility=_eligibility(data.get("eligibility")),
+        ranking_text=(
+            ""
+            if data.get("ranking_text") is None
+            else _string(data.get("ranking_text"), "candidate.ranking_text")
+        ),
     )
 
 

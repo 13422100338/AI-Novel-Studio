@@ -188,7 +188,7 @@ def test_standard_preparation_compiles_reviewed_pov_and_reader_assertions_with_h
             view_type=ViewType.CHARACTER_VIEW,
             viewer_subject_id=pov.id,
             epistemic_status=EpistemicStatus.BELIEVES,
-            content="克莉丝汀相信艾瑞克会赴约。",
+            content="克莉丝汀相信旧暗号与艾瑞克有关。",
             valid_from_sequence=3,
         ),
         source_id=workspace["current"].id,
@@ -328,9 +328,13 @@ def test_standard_preparation_compiles_reviewed_pov_and_reader_assertions_with_h
     selected_ids = {item.source_id for item in prepared.manifest.selected}
     omitted = {item.source_id: item.reason for item in prepared.manifest.omitted}
     assert {visible.id, reader_visible.id} <= selected_ids
-    assert "克莉丝汀相信艾瑞克会赴约。" in "\n".join(
+    assert "克莉丝汀相信旧暗号与艾瑞克有关。" in "\n".join(
         message.content for message in prepared.messages
     )
+    selected_rationales = {
+        item.source_id: item.rationale for item in prepared.manifest.selected
+    }
+    assert "TASK_RELEVANCE" in selected_rationales[visible.id]
     assert "SOURCE_CHANGED" in omitted[changed.id]
     assert "STALE" in omitted[stale.id]
     assert "AUTHORITY_REJECTED" in omitted[pending.id]

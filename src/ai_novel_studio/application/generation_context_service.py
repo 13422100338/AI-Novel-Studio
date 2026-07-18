@@ -16,6 +16,7 @@ from ai_novel_studio.core.context.context_manifest import (
     ContextManifest,
     ContextManifestRepository,
 )
+from ai_novel_studio.core.context.context_ranking import ContextTask
 from ai_novel_studio.core.context.prose_prompt import (
     PROSE_PROMPT_VERSION,
     build_prose_messages,
@@ -147,7 +148,16 @@ class GenerationContextService:
         try:
             blocks = self._blocks(request, requirement, brief)
             built = self.builder.build(
-                ContextBuildRequest(request.chapter_id, run.id, budget, blocks)
+                ContextBuildRequest(
+                    request.chapter_id,
+                    run.id,
+                    budget,
+                    blocks,
+                    task=ContextTask(
+                        task_type="PROSE_GENERATION",
+                        query_text=requirement.content,
+                    ),
+                )
             )
             manifest = built.manifest
             if context_warning is not None:

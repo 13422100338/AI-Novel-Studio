@@ -11,6 +11,7 @@ from ai_novel_studio.core.context.context_builder import (
 )
 from ai_novel_studio.core.context.context_filter import ContextEligibility
 from ai_novel_studio.core.context.context_manifest import ContextManifestRepository
+from ai_novel_studio.core.context.context_ranking import ContextTask
 from ai_novel_studio.core.context.token_budget import TokenBudget
 from ai_novel_studio.infrastructure.storage.chapter_repository import ChapterRepository
 from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
@@ -144,6 +145,44 @@ def test_required_context_overflow_is_explicit_and_never_truncated() -> None:
 
     with pytest.raises(RequiredContextOverflowError, match="required"):
         builder.build(request)
+
+
+def test_builder_ranks_task_matching_optional_evidence_before_static_priority_noise() -> None:
+    builder = ContextBuilder(CharacterEstimator())
+    request = ContextBuildRequest(
+        chapter_id="chapter-current",
+        run_id="run-task-ranking",
+        budget=TokenBudget(25, 5, 0),
+        blocks=(
+            _block("rules", "RULES", 1, required=True),
+            _block("priority-noise", "N" * 15, 2),
+            _block("relevant-evidence", "旧暗号", 50),
+        ),
+        task=ContextTask(
+            task_type="PROSE_GENERATION",
+            query_text="主角必须认出旧暗号",
+        ),
+    )
+
+    built = builder.build(request)
+
+    assert [item.block_id for item in built.manifest.selected] == [
+        "rules",
+        "relevant-evidence",
+    ]
+    assert built.manifest.omitted[-1].block_id == "priority-noise"
+    assert "TASK_RELEVANCE:NO_MATCH" in built.manifest.omitted[-1].reason
+    assert "TASK_RELEVANCE" in built.manifest.selected[-1].rationale
+
+
+def test_context_task_bounds_oversized_ranking_query() -> None:
+    task = ContextTask(
+        task_type=" PROSE_GENERATION ",
+        query_text="x" * 25_000,
+    )
+
+    assert task.task_type == "PROSE_GENERATION"
+    assert len(task.query_text) == 20_000
 
 
 def test_builder_prefers_previous_full_chapter_then_uses_whole_summary_fallback() -> None:
