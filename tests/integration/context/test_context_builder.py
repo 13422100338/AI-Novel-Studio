@@ -185,6 +185,60 @@ def test_context_task_bounds_oversized_ranking_query() -> None:
     assert len(task.query_text) == 20_000
 
 
+def test_builder_deduplicates_ranked_optional_content_but_preserves_required_blocks() -> None:
+    builder = ContextBuilder(CharacterEstimator())
+    request = ContextBuildRequest(
+        chapter_id="chapter-current",
+        run_id="run-deduplication",
+        budget=TokenBudget(100, 10, 0),
+        blocks=(
+            _block("required-a", "RULES", 1, required=True),
+            _block("required-b", "RULES", 2, required=True),
+            _block("canonical-card", "人物卡：艾瑞克", 10),
+            _block("alias-card", "  人物卡：艾瑞克  ", 11),
+        ),
+        deduplicate=True,
+    )
+
+    built = builder.build(request)
+
+    assert [item.block_id for item in built.manifest.selected] == [
+        "required-a",
+        "required-b",
+        "canonical-card",
+    ]
+    duplicate = built.manifest.omitted[0]
+    assert duplicate.block_id == "alias-card"
+    assert duplicate.reason == "DEDUPLICATED:canonical-card"
+
+
+def test_builder_keeps_same_full_content_when_fallback_representations_differ() -> None:
+    builder = ContextBuilder(CharacterEstimator())
+    built = builder.build(
+        ContextBuildRequest(
+            chapter_id="chapter-current",
+            run_id="run-deduplication-fallback",
+            budget=TokenBudget(100, 10, 0),
+            blocks=(
+                _block("full-only", "same full content", 10),
+                _block(
+                    "with-fallback",
+                    "same full content",
+                    11,
+                    fallback="distinct summary",
+                ),
+            ),
+            deduplicate=True,
+        )
+    )
+
+    assert [item.block_id for item in built.manifest.selected] == [
+        "full-only",
+        "with-fallback",
+    ]
+    assert built.manifest.omitted == ()
+
+
 def test_builder_prefers_previous_full_chapter_then_uses_whole_summary_fallback() -> None:
     builder = ContextBuilder(CharacterEstimator())
     request = ContextBuildRequest(

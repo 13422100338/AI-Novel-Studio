@@ -15,6 +15,9 @@ from scripts.run_backend_baseline import main
 FIXTURE = Path(__file__).parents[2] / "fixtures" / "backend_baseline_v1.json"
 PHASE_3_FIXTURE = Path(__file__).parents[2] / "fixtures" / "backend_baseline_v2.json"
 RANKING_FIXTURE = Path(__file__).parents[2] / "fixtures" / "backend_baseline_v3.json"
+DEDUPLICATION_FIXTURE = (
+    Path(__file__).parents[2] / "fixtures" / "backend_baseline_v4.json"
+)
 
 
 def test_phase_0_context_baseline_runs_ten_fixed_quick_and_normal_tasks() -> None:
@@ -66,6 +69,20 @@ def test_phase_3_task_ranking_improves_recall_without_reintroducing_forbidden_co
     assert ranked.forbidden_selection_count == 0
     assert ranked.average_recall > hard_filter.average_recall
     assert ranked.average_precision > hard_filter.average_precision
+
+
+def test_phase_3_deduplication_improves_precision_without_reducing_recall() -> None:
+    ranked = run_context_baseline(load_context_baseline_suite(RANKING_FIXTURE))
+    deduplicated = run_context_baseline(
+        load_context_baseline_suite(DEDUPLICATION_FIXTURE)
+    )
+
+    assert deduplicated.suite_version == 4
+    assert deduplicated.matched_scenarios == 10
+    assert deduplicated.unexpected_error_count == 0
+    assert deduplicated.forbidden_selection_count == 0
+    assert deduplicated.average_recall == ranked.average_recall
+    assert deduplicated.average_precision > ranked.average_precision
 
 
 def test_baseline_loader_rejects_suite_outside_the_phase_0_task_count(
@@ -141,6 +158,19 @@ def test_baseline_loader_bounds_task_ranking_metadata(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="synthetic candidate content"):
         load_context_baseline_suite(invalid_candidate)
+
+    invalid_deduplication = json.loads(
+        DEDUPLICATION_FIXTURE.read_text(encoding="utf-8")
+    )
+    invalid_deduplication["scenarios"][2]["deduplicate"] = "true"
+    invalid_deduplication_path = tmp_path / "invalid-deduplication.json"
+    invalid_deduplication_path.write_text(
+        json.dumps(invalid_deduplication),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="deduplicate must be a boolean"):
+        load_context_baseline_suite(invalid_deduplication_path)
 
 
 def test_backend_baseline_command_emits_machine_readable_report(capsys) -> None:  # type: ignore[no-untyped-def]

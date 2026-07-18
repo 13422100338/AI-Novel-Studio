@@ -117,6 +117,7 @@ class ContextBaselineScenario:
     candidates: tuple[BaselineCandidate, ...]
     expected_selected: tuple[ExpectedBaselineSelection, ...]
     query_text: str | None = None
+    deduplicate: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "id", _required(self.id, "id"))
@@ -132,6 +133,8 @@ class ContextBaselineScenario:
                     f"query_text cannot exceed {MAX_BASELINE_QUERY_LENGTH} characters"
                 )
             object.__setattr__(self, "query_text", query_text)
+        if not isinstance(self.deduplicate, bool):
+            raise ValueError("deduplicate must be a boolean")
         if self.input_token_limit <= 0 or self.output_token_limit <= 0:
             raise ValueError("input and output Token limits must be greater than zero")
         if not self.candidates:
@@ -159,7 +162,7 @@ class ContextBaselineSuite:
     scenarios: tuple[ContextBaselineScenario, ...]
 
     def __post_init__(self) -> None:
-        if self.version not in {1, 2, 3}:
+        if self.version not in {1, 2, 3, 4}:
             raise ValueError(f"unsupported baseline suite version: {self.version}")
         if not 10 <= len(self.scenarios) <= 20:
             raise ValueError("baseline must contain 10 to 20 scenarios")

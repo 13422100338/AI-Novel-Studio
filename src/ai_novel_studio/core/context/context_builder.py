@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from ai_novel_studio.core.context.context_deduplication import ContextDeduplicator
 from ai_novel_studio.core.context.context_filter import ContextEligibility
 from ai_novel_studio.core.context.context_manifest import (
     ContextManifest,
@@ -46,6 +47,7 @@ class ContextBuildRequest:
     budget: TokenBudget
     blocks: tuple[ContextBlock, ...]
     task: ContextTask | None = None
+    deduplicate: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,9 +61,11 @@ class ContextBuilder:
         self,
         estimator: TokenEstimator | None = None,
         ranker: ContextRanker | None = None,
+        deduplicator: ContextDeduplicator | None = None,
     ) -> None:
         self._estimator = estimator or ConservativeTokenEstimator()
         self._ranker = ranker or ContextRanker()
+        self._deduplicator = deduplicator or ContextDeduplicator()
 
     def build(self, request: ContextBuildRequest) -> BuiltContext:
         ordered = sorted(request.blocks, key=lambda block: (block.priority, block.id))
@@ -77,6 +81,16 @@ class ContextBuilder:
         required = [block for block in eligible if block.required]
         optional = [block for block in eligible if not block.required]
         ranked_optional = self._ranker.rank(optional, request.task)
+        if request.deduplicate:
+            deduplicated = self._deduplicator.deduplicate(ranked_optional)
+            ranked_optional = deduplicated.kept
+            omitted.extend(
+                self._omitted_item(
+                    duplicate.dropped.block,
+                    f"DEDUPLICATED:{duplicate.kept_block_id}",
+                )
+                for duplicate in deduplicated.duplicates
+            )
         required_tokens = sum(self._estimator.estimate(block.content) for block in required)
         if required_tokens > request.budget.input_limit:
             identifiers = ", ".join(block.id for block in required)

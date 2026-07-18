@@ -200,6 +200,19 @@ def test_standard_preparation_compiles_reviewed_pov_and_reader_assertions_with_h
         visible_candidate.id,
         confirmed_by_user=True,
     )
+    duplicate_visible = views.create_user_assertion(
+        ViewAssertionDraft(
+            subject_id=subject.id,
+            view_type=ViewType.CHARACTER_VIEW,
+            viewer_subject_id=pov.id,
+            epistemic_status=EpistemicStatus.BELIEVES,
+            content="克莉丝汀相信旧暗号与艾瑞克有关。",
+            valid_from_sequence=3,
+        ),
+        source_id="duplicate-character-view",
+        source_revision=0,
+        confirmed_by_user=True,
+    )
     pending = views.create_model_candidate(
         ViewAssertionDraft(
             subject_id=subject.id,
@@ -335,6 +348,10 @@ def test_standard_preparation_compiles_reviewed_pov_and_reader_assertions_with_h
         item.source_id: item.rationale for item in prepared.manifest.selected
     }
     assert "TASK_RELEVANCE" in selected_rationales[visible.id]
+    assert duplicate_visible.id not in selected_ids
+    assert omitted[duplicate_visible.id] == (
+        f"DEDUPLICATED:view-assertion-{visible.id}"
+    )
     assert "SOURCE_CHANGED" in omitted[changed.id]
     assert "STALE" in omitted[stale.id]
     assert "AUTHORITY_REJECTED" in omitted[pending.id]

@@ -157,6 +157,7 @@ class GenerationContextService:
                         task_type="PROSE_GENERATION",
                         query_text=requirement.content,
                     ),
+                    deduplicate=True,
                 )
             )
             manifest = built.manifest

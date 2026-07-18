@@ -83,6 +83,7 @@ def _run_scenario(
                     if scenario.query_text is not None
                     else None
                 ),
+                deduplicate=scenario.deduplicate,
             )
         )
         selected = tuple(
@@ -189,6 +190,7 @@ def _scenario(value: object) -> ContextBaselineScenario:
             if data.get("query_text") is None
             else _string(data.get("query_text"), "query_text")
         ),
+        deduplicate=_optional_scenario_boolean(data, "deduplicate", default=False),
     )
 
 
@@ -297,3 +299,11 @@ def _optional_boolean(
     if field not in data:
         return default
     return _boolean(data[field], f"candidate.eligibility.{field}")
+
+
+def _optional_scenario_boolean(
+    data: Mapping[str, object], field: str, *, default: bool
+) -> bool:
+    if field not in data:
+        return default
+    return _boolean(data[field], field)

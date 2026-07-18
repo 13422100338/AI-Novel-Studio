@@ -151,17 +151,12 @@ class GenerationMemoryContextProvider:
     ) -> tuple[ContextBlock, ...]:
         pinned_source_ids = {block.source_id for block in manual}
         pinned_hashes = {block.source_hash for block in manual if block.source_hash}
-        seen_contents: set[str] = set()
         selected: list[ContextBlock] = []
         for block in automatic:
             if block.source_id in pinned_source_ids:
                 continue
             if block.source_hash and block.source_hash in pinned_hashes:
                 continue
-            normalized = " ".join(block.content.split())
-            if normalized in seen_contents:
-                continue
-            seen_contents.add(normalized)
             selected.append(block)
         return tuple(selected)
 
