@@ -9,6 +9,7 @@ from ai_novel_studio.core.context.context_builder import (
     ContextBuildRequest,
     RequiredContextOverflowError,
 )
+from ai_novel_studio.core.context.context_filter import ContextEligibility
 from ai_novel_studio.core.context.context_manifest import ContextManifestRepository
 from ai_novel_studio.core.context.token_budget import TokenBudget
 from ai_novel_studio.infrastructure.storage.chapter_repository import ChapterRepository
@@ -28,6 +29,7 @@ def _block(
     required: bool = False,
     fallback: str | None = None,
     category: str = "history",
+    eligibility: ContextEligibility | None = None,
 ) -> ContextBlock:
     return ContextBlock(
         id=block_id,
@@ -42,7 +44,93 @@ def _block(
         source_hash="hash-" + block_id,
         rationale="测试选择顺序",
         fallback_content=fallback,
+        eligibility=eligibility or ContextEligibility(),
     )
+
+
+def test_builder_hard_filters_ineligible_blocks_before_required_and_budget_selection() -> None:
+    builder = ContextBuilder(CharacterEstimator())
+    request = ContextBuildRequest(
+        chapter_id="chapter-current",
+        run_id="run-hard-filter",
+        budget=TokenBudget(500, 50, 10),
+        blocks=(
+            _block("eligible", "visible", 10),
+            _block(
+                "other-project",
+                "foreign",
+                1,
+                eligibility=ContextEligibility(project_scope_matches=False),
+            ),
+            _block(
+                "old-revision",
+                "superseded",
+                1,
+                eligibility=ContextEligibility(revision_current=False),
+            ),
+            _block(
+                "future-required",
+                "must-not-leak",
+                1,
+                required=True,
+                eligibility=ContextEligibility(time_visible=False),
+            ),
+            _block(
+                "wrong-view",
+                "hidden",
+                2,
+                eligibility=ContextEligibility(view_allowed=False),
+            ),
+            _block(
+                "stale",
+                "old",
+                3,
+                eligibility=ContextEligibility(stale=True),
+            ),
+            _block(
+                "source-changed",
+                "pending-review",
+                4,
+                eligibility=ContextEligibility(source_changed=True),
+            ),
+            _block(
+                "conflicted",
+                "ambiguous",
+                5,
+                eligibility=ContextEligibility(conflicted=True),
+            ),
+            _block(
+                "unapproved",
+                "candidate",
+                6,
+                eligibility=ContextEligibility(authority_allowed=False),
+            ),
+        ),
+    )
+
+    built = builder.build(request)
+
+    assert [item.block_id for item in built.manifest.selected] == ["eligible"]
+    assert [item.block_id for item in built.manifest.omitted] == [
+        "future-required",
+        "old-revision",
+        "other-project",
+        "wrong-view",
+        "stale",
+        "source-changed",
+        "conflicted",
+        "unapproved",
+    ]
+    reasons = {item.block_id: item.reason for item in built.manifest.omitted}
+    assert "PROJECT_SCOPE" in reasons["other-project"]
+    assert "REVISION_INVALID" in reasons["old-revision"]
+    assert "TIME_BOUNDARY" in reasons["future-required"]
+    assert "VIEW_BOUNDARY" in reasons["wrong-view"]
+    assert "STALE" in reasons["stale"]
+    assert "SOURCE_CHANGED" in reasons["source-changed"]
+    assert "CONFLICTED" in reasons["conflicted"]
+    assert "AUTHORITY_REJECTED" in reasons["unapproved"]
+    assert "must-not-leak" not in built.text
 
 
 def test_required_context_overflow_is_explicit_and_never_truncated() -> None:

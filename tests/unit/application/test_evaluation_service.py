@@ -13,6 +13,7 @@ from ai_novel_studio.domain.evaluation import BaselineProfile
 from scripts.run_backend_baseline import main
 
 FIXTURE = Path(__file__).parents[2] / "fixtures" / "backend_baseline_v1.json"
+PHASE_3_FIXTURE = Path(__file__).parents[2] / "fixtures" / "backend_baseline_v2.json"
 
 
 def test_phase_0_context_baseline_runs_ten_fixed_quick_and_normal_tasks() -> None:
@@ -38,6 +39,20 @@ def test_phase_0_context_baseline_runs_ten_fixed_quick_and_normal_tasks() -> Non
     assert report.metric_coverage["context_selection"] is True
     assert report.metric_coverage["model_generation"] is False
     assert report.metric_coverage["human_revision_cost"] is False
+
+
+def test_phase_3_hard_filters_remove_forbidden_candidates_without_reducing_recall() -> None:
+    phase_0 = run_context_baseline(load_context_baseline_suite(FIXTURE))
+    phase_3 = run_context_baseline(load_context_baseline_suite(PHASE_3_FIXTURE))
+
+    assert phase_3.suite_version == 2
+    assert phase_3.total_scenarios == 10
+    assert phase_3.matched_scenarios == 10
+    assert phase_3.unexpected_error_count == 0
+    assert phase_0.forbidden_selection_count == 2
+    assert phase_3.forbidden_selection_count == 0
+    assert phase_3.average_recall == phase_0.average_recall
+    assert phase_3.average_precision > phase_0.average_precision
 
 
 def test_baseline_loader_rejects_suite_outside_the_phase_0_task_count(
@@ -70,6 +85,25 @@ def test_baseline_loader_rejects_unbounded_synthetic_token_cost(tmp_path: Path) 
     invalid.write_text(json.dumps(payload), encoding="utf-8")
 
     with pytest.raises(ValueError, match="token_cost cannot exceed"):
+        load_context_baseline_suite(invalid)
+
+
+@pytest.mark.parametrize(
+    ("eligibility", "message"),
+    [
+        ({"time_visible": "false"}, "must be a boolean"),
+        ({"untrusted_flag": True}, "unknown candidate eligibility fields"),
+    ],
+)
+def test_baseline_loader_validates_hard_filter_metadata(
+    tmp_path: Path, eligibility: dict[str, object], message: str
+) -> None:
+    payload = json.loads(PHASE_3_FIXTURE.read_text(encoding="utf-8"))
+    payload["scenarios"][0]["candidates"][0]["eligibility"] = eligibility
+    invalid = tmp_path / "invalid-eligibility.json"
+    invalid.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match=message):
         load_context_baseline_suite(invalid)
 
 

@@ -12,9 +12,11 @@ from ai_novel_studio.core.context.context_builder import (
     ContextBuilder,
     ContextBuildRequest,
 )
+from ai_novel_studio.core.context.context_filter import ContextEligibility
 from ai_novel_studio.core.context.token_budget import TokenBudget
 from ai_novel_studio.domain.evaluation import (
     BaselineCandidate,
+    BaselineEligibility,
     BaselineProfile,
     BaselineRelevance,
     ContextBaselineObservation,
@@ -137,6 +139,16 @@ def _context_block(candidate: BaselineCandidate) -> ContextBlock:
         source_hash=hashlib.sha256(content.encode("utf-8")).hexdigest(),
         rationale=f"Phase 0 {candidate.relevance.value.lower()} candidate",
         fallback_content=fallback,
+        eligibility=ContextEligibility(
+            project_scope_matches=candidate.eligibility.project_scope_matches,
+            revision_current=candidate.eligibility.revision_current,
+            time_visible=candidate.eligibility.time_visible,
+            view_allowed=candidate.eligibility.view_allowed,
+            authority_allowed=candidate.eligibility.authority_allowed,
+            stale=candidate.eligibility.stale,
+            source_changed=candidate.eligibility.source_changed,
+            conflicted=candidate.eligibility.conflicted,
+        ),
     )
 
 
@@ -187,6 +199,38 @@ def _candidate(value: object) -> BaselineCandidate:
             else _integer(fallback, "candidate.fallback_token_cost")
         ),
         relevance=relevance,
+        eligibility=_eligibility(data.get("eligibility")),
+    )
+
+
+def _eligibility(value: object) -> BaselineEligibility:
+    if value is None:
+        return BaselineEligibility()
+    data = _mapping(value, "candidate.eligibility")
+    allowed = {
+        "project_scope_matches",
+        "revision_current",
+        "time_visible",
+        "view_allowed",
+        "authority_allowed",
+        "stale",
+        "source_changed",
+        "conflicted",
+    }
+    unknown = set(data) - allowed
+    if unknown:
+        raise ValueError(f"unknown candidate eligibility fields: {sorted(unknown)}")
+    return BaselineEligibility(
+        project_scope_matches=_optional_boolean(
+            data, "project_scope_matches", default=True
+        ),
+        revision_current=_optional_boolean(data, "revision_current", default=True),
+        time_visible=_optional_boolean(data, "time_visible", default=True),
+        view_allowed=_optional_boolean(data, "view_allowed", default=True),
+        authority_allowed=_optional_boolean(data, "authority_allowed", default=True),
+        stale=_optional_boolean(data, "stale", default=False),
+        source_changed=_optional_boolean(data, "source_changed", default=False),
+        conflicted=_optional_boolean(data, "conflicted", default=False),
     )
 
 
@@ -226,3 +270,11 @@ def _boolean(value: object, field: str) -> bool:
     if not isinstance(value, bool):
         raise ValueError(f"{field} must be a boolean")
     return value
+
+
+def _optional_boolean(
+    data: Mapping[str, object], field: str, *, default: bool
+) -> bool:
+    if field not in data:
+        return default
+    return _boolean(data[field], f"candidate.eligibility.{field}")

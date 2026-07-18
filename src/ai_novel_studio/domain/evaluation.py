@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 
 MAX_BASELINE_CANDIDATES = 100
@@ -26,6 +26,33 @@ def _required(value: str, field: str) -> str:
 
 
 @dataclass(frozen=True, slots=True)
+class BaselineEligibility:
+    project_scope_matches: bool = True
+    revision_current: bool = True
+    time_visible: bool = True
+    view_allowed: bool = True
+    authority_allowed: bool = True
+    stale: bool = False
+    source_changed: bool = False
+    conflicted: bool = False
+
+    def __post_init__(self) -> None:
+        field_names = (
+            "project_scope_matches",
+            "revision_current",
+            "time_visible",
+            "view_allowed",
+            "authority_allowed",
+            "stale",
+            "source_changed",
+            "conflicted",
+        )
+        for name in field_names:
+            if not isinstance(getattr(self, name), bool):
+                raise ValueError(f"eligibility.{name} must be a boolean")
+
+
+@dataclass(frozen=True, slots=True)
 class BaselineCandidate:
     source_id: str
     category: str
@@ -34,6 +61,7 @@ class BaselineCandidate:
     token_cost: int
     relevance: BaselineRelevance
     fallback_token_cost: int | None = None
+    eligibility: BaselineEligibility = field(default_factory=BaselineEligibility)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "source_id", _required(self.source_id, "source_id"))
@@ -111,16 +139,16 @@ class ContextBaselineSuite:
     scenarios: tuple[ContextBaselineScenario, ...]
 
     def __post_init__(self) -> None:
-        if self.version != 1:
+        if self.version not in {1, 2}:
             raise ValueError(f"unsupported baseline suite version: {self.version}")
         if not 10 <= len(self.scenarios) <= 20:
-            raise ValueError("Phase 0 baseline must contain 10 to 20 scenarios")
+            raise ValueError("baseline must contain 10 to 20 scenarios")
         scenario_ids = tuple(scenario.id for scenario in self.scenarios)
         if len(scenario_ids) != len(set(scenario_ids)):
             raise ValueError("baseline scenario IDs must be unique")
         profiles = {scenario.profile for scenario in self.scenarios}
         if profiles != {BaselineProfile.QUICK, BaselineProfile.NORMAL}:
-            raise ValueError("Phase 0 baseline must cover both QUICK and NORMAL profiles")
+            raise ValueError("baseline must cover both QUICK and NORMAL profiles")
 
 
 @dataclass(frozen=True, slots=True)

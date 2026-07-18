@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
+from ai_novel_studio.core.context.context_filter import ContextEligibility
 from ai_novel_studio.core.context.context_manifest import (
     ContextManifest,
     OmittedManifestItem,
@@ -34,6 +35,7 @@ class ContextBlock:
     source_hash: str
     rationale: str
     fallback_content: str | None = None
+    eligibility: ContextEligibility = field(default_factory=ContextEligibility)
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,8 +58,17 @@ class ContextBuilder:
 
     def build(self, request: ContextBuildRequest) -> BuiltContext:
         ordered = sorted(request.blocks, key=lambda block: (block.priority, block.id))
-        required = [block for block in ordered if block.required]
-        optional = [block for block in ordered if not block.required]
+        eligible: list[ContextBlock] = []
+        omitted: list[OmittedManifestItem] = []
+        for block in ordered:
+            exclusion = block.eligibility.exclusion_reason()
+            if exclusion is None:
+                eligible.append(block)
+                continue
+            omitted.append(self._omitted_item(block, f"HARD_FILTER:{exclusion.value}"))
+
+        required = [block for block in eligible if block.required]
+        optional = [block for block in eligible if not block.required]
         required_tokens = sum(self._estimator.estimate(block.content) for block in required)
         if required_tokens > request.budget.input_limit:
             identifiers = ", ".join(block.id for block in required)
@@ -67,7 +78,6 @@ class ContextBuilder:
             )
 
         selected: list[SelectedManifestItem] = []
-        omitted: list[OmittedManifestItem] = []
         contents: list[str] = []
         used_tokens = 0
         for block in required:
@@ -91,15 +101,8 @@ class ContextBuilder:
                 used_tokens += fallback_tokens
                 continue
             omitted.append(
-                OmittedManifestItem(
-                    block_id=block.id,
-                    category=block.category,
-                    source_type=block.source_type,
-                    source_id=block.source_id,
-                    source_chapter_id=block.source_chapter_id,
-                    source_revision=block.source_revision,
-                    source_hash=block.source_hash,
-                    reason="预算不足，未加入完整内容或摘要回退",
+                self._omitted_item(
+                    block, "预算不足，未加入完整内容或摘要回退"
                 )
             )
 
@@ -132,4 +135,17 @@ class ContextBuilder:
             rationale=block.rationale,
             estimated_tokens=estimated_tokens,
             used_fallback=used_fallback,
+        )
+
+    @staticmethod
+    def _omitted_item(block: ContextBlock, reason: str) -> OmittedManifestItem:
+        return OmittedManifestItem(
+            block_id=block.id,
+            category=block.category,
+            source_type=block.source_type,
+            source_id=block.source_id,
+            source_chapter_id=block.source_chapter_id,
+            source_revision=block.source_revision,
+            source_hash=block.source_hash,
+            reason=reason,
         )
