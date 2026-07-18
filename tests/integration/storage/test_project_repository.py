@@ -189,7 +189,7 @@ def test_open_migrates_v7_project_and_reopens_v11_review_state(tmp_path: Path) -
             ).fetchall()
         }
 
-    assert version == LATEST_SCHEMA_VERSION == 13
+    assert version == LATEST_SCHEMA_VERSION == 14
     assert migration_versions == list(range(1, LATEST_SCHEMA_VERSION + 1))
     assert migrated.project.title == "旧项目"
     assert migrated.list_volumes()[0].title == "旧卷"
@@ -201,6 +201,8 @@ def test_open_migrates_v7_project_and_reopens_v11_review_state(tmp_path: Path) -
         "character_identity_review_decisions",
         "subjects",
         "subject_aliases",
+        "view_assertions",
+        "character_identity_merge_view_assertions",
     } <= tables
     assert (root / "manuscript" / "chapter-1.md").read_text(encoding="utf-8") == (
         "旧项目正文不会被迁移改写。\n"
@@ -291,12 +293,14 @@ def test_failed_v7_migration_rolls_back_and_can_retry(
             ).fetchall()
         }
 
-    assert recovered_version == LATEST_SCHEMA_VERSION == 13
+    assert recovered_version == LATEST_SCHEMA_VERSION == 14
     assert recovered_migration_versions == list(range(1, LATEST_SCHEMA_VERSION + 1))
     assert "project_guidance" in recovered_tables
     assert "character_identity_review_decisions" in recovered_tables
     assert "subjects" in recovered_tables
     assert "subject_aliases" in recovered_tables
+    assert "view_assertions" in recovered_tables
+    assert "character_identity_merge_view_assertions" in recovered_tables
     assert "interrupted_migration" not in recovered_tables
     assert recovered.project.title == "旧项目"
     assert recovered.list_volumes()[0].title == "旧卷"

@@ -2,7 +2,7 @@ import json
 import sqlite3
 from collections.abc import Callable
 
-LATEST_SCHEMA_VERSION = 13
+LATEST_SCHEMA_VERSION = 14
 
 
 def _json_string_tuple(value: object, field: str) -> tuple[str, ...]:
@@ -898,6 +898,25 @@ def _migration_13(connection: sqlite3.Connection) -> None:
         connection.execute(statement)
 
 
+def _migration_14(connection: sqlite3.Connection) -> None:
+    statements = (
+        """
+        CREATE TABLE character_identity_merge_view_assertions (
+            merge_id TEXT NOT NULL REFERENCES character_identity_merges(id),
+            assertion_id TEXT NOT NULL REFERENCES view_assertions(id),
+            reference_role TEXT NOT NULL CHECK(reference_role IN ('SUBJECT', 'VIEWER')),
+            PRIMARY KEY(merge_id, assertion_id, reference_role)
+        )
+        """,
+        """
+        CREATE INDEX character_identity_merge_view_assertion_lookup
+        ON character_identity_merge_view_assertions(assertion_id, merge_id)
+        """,
+    )
+    for statement in statements:
+        connection.execute(statement)
+
+
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     1: _migration_1,
     2: _migration_2,
@@ -912,6 +931,7 @@ MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     11: _migration_11,
     12: _migration_12,
     13: _migration_13,
+    14: _migration_14,
 }
 
 

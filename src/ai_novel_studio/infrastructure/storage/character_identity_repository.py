@@ -68,6 +68,16 @@ class CharacterIdentityRepository:
                 "WHERE subject_type = 'CHARACTER' AND subject_id = ? ORDER BY id",
                 source_character_id,
             )
+            view_subject_assertion_ids = self._ids_for(
+                connection,
+                "SELECT id FROM view_assertions WHERE subject_id = ? ORDER BY id",
+                source_character_id,
+            )
+            view_viewer_assertion_ids = self._ids_for(
+                connection,
+                "SELECT id FROM view_assertions WHERE viewer_subject_id = ? ORDER BY id",
+                source_character_id,
+            )
             brief_rows = connection.execute(
                 "SELECT * FROM chapter_briefs WHERE pov_character_id = ? ORDER BY id",
                 (source_character_id,),
@@ -89,6 +99,16 @@ class CharacterIdentityRepository:
                 "UPDATE knowledge_state_events SET subject_id = ? "
                 "WHERE subject_type = 'CHARACTER' AND subject_id = ?",
                 (target_character_id, source_character_id),
+            )
+            connection.execute(
+                "UPDATE view_assertions SET subject_id = ?, updated_at = ? "
+                "WHERE subject_id = ?",
+                (target_character_id, now, source_character_id),
+            )
+            connection.execute(
+                "UPDATE view_assertions SET viewer_subject_id = ?, updated_at = ? "
+                "WHERE viewer_subject_id = ?",
+                (target_character_id, now, source_character_id),
             )
             moved_briefs = tuple(
                 self._move_brief(
@@ -135,6 +155,12 @@ class CharacterIdentityRepository:
                     now,
                 ),
             )
+            self._record_view_assertion_moves(
+                connection,
+                merge_id=merge_id,
+                subject_assertion_ids=view_subject_assertion_ids,
+                viewer_assertion_ids=view_viewer_assertion_ids,
+            )
         return self.get(merge_id)
 
     def reverse_merge(self, merge_id: str) -> CharacterIdentityMerge:
@@ -155,6 +181,23 @@ class CharacterIdentityRepository:
             if target_aliases != merge.target_aliases_after:
                 raise CharacterIdentityRepositoryError("目标人物卡在归并后又被修改，不能自动撤销")
             self._assert_rows_still_moved(connection, merge)
+            view_subject_ids, view_viewer_ids = self._view_assertion_move_ids(
+                connection, merge.id
+            )
+            self._assert_ids_point_to(
+                connection,
+                "view_assertions",
+                "subject_id",
+                view_subject_ids,
+                merge.target_character_id,
+            )
+            self._assert_ids_point_to(
+                connection,
+                "view_assertions",
+                "viewer_subject_id",
+                view_viewer_ids,
+                merge.target_character_id,
+            )
 
             connection.execute(
                 "UPDATE characters SET aliases_json = ?, updated_at = ? WHERE id = ?",
@@ -170,6 +213,20 @@ class CharacterIdentityRepository:
                 "character_id",
                 merge.moved_state_event_ids,
                 merge.source_character_id,
+            )
+            self._restore_view_assertion_ids(
+                connection,
+                "subject_id",
+                view_subject_ids,
+                merge.source_character_id,
+                now,
+            )
+            self._restore_view_assertion_ids(
+                connection,
+                "viewer_subject_id",
+                view_viewer_ids,
+                merge.source_character_id,
+                now,
             )
             self._restore_ids(
                 connection,
@@ -498,6 +555,69 @@ class CharacterIdentityRepository:
         connection.execute(
             f"UPDATE {table} SET {column} = ? WHERE id IN ({placeholders})",
             (value, *ids),
+        )
+
+    @staticmethod
+    def _record_view_assertion_moves(
+        connection: sqlite3.Connection,
+        *,
+        merge_id: str,
+        subject_assertion_ids: tuple[str, ...],
+        viewer_assertion_ids: tuple[str, ...],
+    ) -> None:
+        connection.executemany(
+            "INSERT INTO character_identity_merge_view_assertions "
+            "(merge_id, assertion_id, reference_role) VALUES (?, ?, ?)",
+            (
+                *(
+                    (merge_id, assertion_id, "SUBJECT")
+                    for assertion_id in subject_assertion_ids
+                ),
+                *(
+                    (merge_id, assertion_id, "VIEWER")
+                    for assertion_id in viewer_assertion_ids
+                ),
+            ),
+        )
+
+    @staticmethod
+    def _restore_view_assertion_ids(
+        connection: sqlite3.Connection,
+        column: str,
+        ids: tuple[str, ...],
+        value: str,
+        updated_at: str,
+    ) -> None:
+        if not ids:
+            return
+        placeholders = ", ".join("?" for _ in ids)
+        connection.execute(
+            f"UPDATE view_assertions SET {column} = ?, updated_at = ? "
+            f"WHERE id IN ({placeholders})",
+            (value, updated_at, *ids),
+        )
+
+    @staticmethod
+    def _view_assertion_move_ids(
+        connection: sqlite3.Connection, merge_id: str
+    ) -> tuple[tuple[str, ...], tuple[str, ...]]:
+        rows = connection.execute(
+            "SELECT assertion_id, reference_role "
+            "FROM character_identity_merge_view_assertions "
+            "WHERE merge_id = ? ORDER BY reference_role, assertion_id",
+            (merge_id,),
+        ).fetchall()
+        return (
+            tuple(
+                str(row["assertion_id"])
+                for row in rows
+                if row["reference_role"] == "SUBJECT"
+            ),
+            tuple(
+                str(row["assertion_id"])
+                for row in rows
+                if row["reference_role"] == "VIEWER"
+            ),
         )
 
     @staticmethod

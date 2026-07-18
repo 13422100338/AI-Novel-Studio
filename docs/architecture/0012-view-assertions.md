@@ -57,6 +57,12 @@ authority value.
 - Migration v13 is additive and atomic. It does not modify manuscripts or rewrite existing
   memory rows.
 
+Schema v14 closes the identity-merge boundary. A confirmed character merge moves existing
+`subject_id` and `viewer_subject_id` references to the surviving subject in the same SQLite
+transaction. The IDs and reference roles moved by that merge are recorded separately. Undo
+restores only those recorded references, leaves assertions created after the merge untouched,
+and aborts instead of overwriting a reference that changed again after the merge.
+
 ## Consequences
 
 - Phase 3 Context Compiler can consume view-safe rows without guessing epistemic state.

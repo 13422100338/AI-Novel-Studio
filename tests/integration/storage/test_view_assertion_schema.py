@@ -81,4 +81,4 @@ def test_schema_13_enforces_view_shapes_and_reader_reveal_time(tmp_path: Path) -
                 view_type="READER_VIEW",
             )
 
-    assert version == LATEST_SCHEMA_VERSION == 13
+    assert version == LATEST_SCHEMA_VERSION == 14

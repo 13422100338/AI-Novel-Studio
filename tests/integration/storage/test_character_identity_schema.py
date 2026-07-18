@@ -29,8 +29,14 @@ def test_schema_v11_adds_character_identity_merge_and_review_tables(tmp_path) ->
                 "PRAGMA table_info(character_identity_review_decisions)"
             ).fetchall()
         }
+        view_move_columns = {
+            str(row[1])
+            for row in connection.execute(
+                "PRAGMA table_info(character_identity_merge_view_assertions)"
+            ).fetchall()
+        }
 
-    assert version == LATEST_SCHEMA_VERSION == 13
+    assert version == LATEST_SCHEMA_VERSION == 14
     assert {
         "id",
         "source_character_id",
@@ -56,6 +62,7 @@ def test_schema_v11_adds_character_identity_merge_and_review_tables(tmp_path) ->
         "created_at",
         "updated_at",
     } == decision_columns
+    assert {"merge_id", "assertion_id", "reference_role"} == view_move_columns
 
 
 def test_schema_v10_rejects_self_merge(tmp_path) -> None:  # type: ignore[no-untyped-def]
