@@ -221,6 +221,83 @@ def test_open_migrates_v7_project_and_reopens_v11_review_state(tmp_path: Path) -
     assert reopened.list_volumes() == migrated.list_volumes()
 
 
+def test_failed_v7_migration_rolls_back_and_can_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "interrupted-v7"
+    _create_legacy_v7_project(root)
+    real_migration_10 = MIGRATIONS[10]
+
+    def fail_during_migration_10(connection: sqlite3.Connection) -> None:
+        connection.execute("CREATE TABLE interrupted_migration (id TEXT PRIMARY KEY)")
+        raise RuntimeError("injected migration interruption")
+
+    monkeypatch.setitem(MIGRATIONS, 10, fail_during_migration_10)
+
+    with pytest.raises(RuntimeError, match="injected migration interruption"):
+        ProjectRepository.open(root)
+
+    with sqlite3.connect(root / "project.sqlite3") as connection:
+        version_after_failure = int(
+            connection.execute("PRAGMA user_version").fetchone()[0]
+        )
+        migration_versions_after_failure = [
+            int(row[0])
+            for row in connection.execute(
+                "SELECT version FROM schema_migrations ORDER BY version"
+            ).fetchall()
+        ]
+        tables_after_failure = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()
+        }
+        canon_columns_after_failure = {
+            str(row[1])
+            for row in connection.execute("PRAGMA table_info(canon_entries)").fetchall()
+        }
+        chapter_after_failure = connection.execute(
+            "SELECT title, synopsis, revision, memory_status FROM chapters"
+        ).fetchone()
+
+    assert version_after_failure == 7
+    assert migration_versions_after_failure == list(range(1, 8))
+    assert "project_guidance" not in tables_after_failure
+    assert "interrupted_migration" not in tables_after_failure
+    assert "category" not in canon_columns_after_failure
+    assert tuple(chapter_after_failure) == ("旧章", "保留的章节简介", 3, "ready")
+    assert (root / "manuscript" / "chapter-1.md").read_text(encoding="utf-8") == (
+        "旧项目正文不会被迁移改写。\n"
+    )
+
+    monkeypatch.setitem(MIGRATIONS, 10, real_migration_10)
+    recovered = ProjectRepository.open(root)
+
+    with recovered.database.connect() as connection:
+        recovered_version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+        recovered_migration_versions = [
+            int(row[0])
+            for row in connection.execute(
+                "SELECT version FROM schema_migrations ORDER BY version"
+            ).fetchall()
+        ]
+        recovered_tables = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()
+        }
+
+    assert recovered_version == LATEST_SCHEMA_VERSION == 11
+    assert recovered_migration_versions == list(range(1, LATEST_SCHEMA_VERSION + 1))
+    assert "project_guidance" in recovered_tables
+    assert "character_identity_review_decisions" in recovered_tables
+    assert "interrupted_migration" not in recovered_tables
+    assert recovered.project.title == "旧项目"
+    assert recovered.list_volumes()[0].title == "旧卷"
+
+
 def test_create_rejects_non_empty_target(tmp_path: Path) -> None:
     root = tmp_path / "novel"
     root.mkdir()

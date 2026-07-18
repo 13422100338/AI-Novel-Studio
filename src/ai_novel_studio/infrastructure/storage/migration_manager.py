@@ -729,6 +729,10 @@ class MigrationManager:
                 f"project uses newer schema {current}; supported version is {LATEST_SCHEMA_VERSION}"
             )
         with self._connection:
+            # sqlite3 does not implicitly start a transaction for DDL.  Begin one
+            # explicitly so schema changes and their version records roll back
+            # together if any migration fails.
+            self._connection.execute("BEGIN IMMEDIATE")
             self._connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS schema_migrations (
