@@ -4,11 +4,118 @@ from pathlib import Path
 
 import pytest
 
+from ai_novel_studio.domain.character_identity import CharacterIdentityReviewDecisionType
+from ai_novel_studio.infrastructure.storage.character_identity_repository import (
+    CharacterIdentityRepository,
+)
 from ai_novel_studio.infrastructure.storage.migration_manager import (
     LATEST_SCHEMA_VERSION,
+    MIGRATIONS,
     MigrationManager,
 )
 from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
+
+
+def _create_legacy_v7_project(root: Path) -> tuple[str, str]:
+    project_id = "00000000-0000-0000-0000-000000000001"
+    volume_id = "00000000-0000-0000-0000-000000000002"
+    chapter_id = "00000000-0000-0000-0000-000000000003"
+    short_character_id = "00000000-0000-0000-0000-000000000004"
+    full_character_id = "00000000-0000-0000-0000-000000000005"
+    canon_id = "00000000-0000-0000-0000-000000000006"
+    timestamp = "2026-07-14T00:00:00+00:00"
+    root.mkdir()
+    (root / "manuscript").mkdir()
+    (root / "manuscript" / "chapter-1.md").write_text(
+        "旧项目正文不会被迁移改写。\n", encoding="utf-8"
+    )
+    (root / "project.json").write_text(
+        json.dumps(
+            {"format_version": 1, "project_id": project_id, "title": "旧项目"},
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    with sqlite3.connect(root / "project.sqlite3") as connection:
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute(
+            "CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, "
+            "applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+        )
+        for version in range(1, 8):
+            MIGRATIONS[version](connection)
+            connection.execute(
+                "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)",
+                (version, timestamp),
+            )
+        connection.execute("PRAGMA user_version = 7")
+        connection.execute(
+            "INSERT INTO projects VALUES (?, ?, ?, ?, ?)",
+            (project_id, "旧项目", 1, timestamp, timestamp),
+        )
+        connection.execute(
+            "INSERT INTO volumes VALUES (?, ?, ?, ?, ?, ?)",
+            (volume_id, "旧卷", "保留的卷简介", 0, timestamp, timestamp),
+        )
+        connection.execute(
+            "INSERT INTO chapters VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                chapter_id,
+                volume_id,
+                "1",
+                "旧章",
+                "保留的章节简介",
+                "manuscript/chapter-1.md",
+                "legacy-chapter-hash",
+                0,
+                3,
+                "ready",
+                0,
+                None,
+                timestamp,
+                timestamp,
+            ),
+        )
+        connection.executemany(
+            "INSERT INTO characters VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                (
+                    short_character_id,
+                    "艾瑞克",
+                    "[]",
+                    "保留的简称人物卡",
+                    timestamp,
+                    timestamp,
+                ),
+                (
+                    full_character_id,
+                    "艾瑞克·温德米尔",
+                    '["温德米尔"]',
+                    "保留的全称人物卡",
+                    timestamp,
+                    timestamp,
+                ),
+            ),
+        )
+        connection.execute(
+            "INSERT INTO canon_entries VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                canon_id,
+                "旧港状态",
+                "旧港已经封闭",
+                chapter_id,
+                None,
+                1.0,
+                "USER_CONFIRMED",
+                "CURRENT",
+                "LOCKED",
+                timestamp,
+                timestamp,
+            ),
+        )
+    return short_character_id, full_character_id
 
 
 def test_create_initializes_portable_project_and_default_volume(tmp_path: Path) -> None:
@@ -53,6 +160,65 @@ def test_open_restores_project_identity_and_structure(tmp_path: Path) -> None:
     assert reopened.project.id == created.project.id
     assert reopened.project.title == "My Novel"
     assert reopened.list_volumes() == created.list_volumes()
+
+
+def test_open_migrates_v7_project_and_reopens_v11_review_state(tmp_path: Path) -> None:
+    root = tmp_path / "legacy-v7"
+    short_character_id, full_character_id = _create_legacy_v7_project(root)
+
+    migrated = ProjectRepository.open(root)
+
+    with migrated.database.connect() as connection:
+        version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+        migration_versions = [
+            int(row[0])
+            for row in connection.execute(
+                "SELECT version FROM schema_migrations ORDER BY version"
+            ).fetchall()
+        ]
+        chapter = connection.execute(
+            "SELECT title, synopsis, revision, memory_status FROM chapters"
+        ).fetchone()
+        canon = connection.execute(
+            "SELECT title, detail, category FROM canon_entries"
+        ).fetchone()
+        tables = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()
+        }
+
+    assert version == LATEST_SCHEMA_VERSION == 11
+    assert migration_versions == list(range(1, LATEST_SCHEMA_VERSION + 1))
+    assert migrated.project.title == "旧项目"
+    assert migrated.list_volumes()[0].title == "旧卷"
+    assert tuple(chapter) == ("旧章", "保留的章节简介", 3, "ready")
+    assert tuple(canon) == ("旧港状态", "旧港已经封闭", None)
+    assert {
+        "project_guidance",
+        "character_identity_merges",
+        "character_identity_review_decisions",
+    } <= tables
+    assert (root / "manuscript" / "chapter-1.md").read_text(encoding="utf-8") == (
+        "旧项目正文不会被迁移改写。\n"
+    )
+
+    saved = CharacterIdentityRepository(migrated).set_review_decision(
+        short_character_id,
+        full_character_id,
+        CharacterIdentityReviewDecisionType.DISTINCT,
+        reason="用户确认简称人物卡并非同一人物",
+    )
+    reopened = ProjectRepository.open(root)
+    restored = CharacterIdentityRepository(reopened).get_review_decision(
+        short_character_id,
+        full_character_id,
+    )
+
+    assert restored == saved
+    assert reopened.project == migrated.project
+    assert reopened.list_volumes() == migrated.list_volumes()
 
 
 def test_create_rejects_non_empty_target(tmp_path: Path) -> None:
