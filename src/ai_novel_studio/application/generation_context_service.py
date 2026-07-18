@@ -297,6 +297,9 @@ class GenerationContextService:
                 requirement.content,
                 tuple(content for _chapter, content in recent_contents),
                 brief.participants if brief is not None else (),
+                pov_character_id=(
+                    brief.pov_character_id if brief is not None else None
+                ),
             )
         )
         for distance, (chapter, content) in enumerate(recent_contents, start=1):

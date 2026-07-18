@@ -11,11 +11,17 @@ from ai_novel_studio.application.generation_context_service import (
     UnknownContextWindowError,
 )
 from ai_novel_studio.application.project_guidance_service import ProjectGuidanceService
+from ai_novel_studio.application.view_assertion_service import ViewAssertionService
 from ai_novel_studio.core.brief.source_fingerprint import BriefSourceSnapshot
 from ai_novel_studio.core.context.context_builder import RequiredContextOverflowError
 from ai_novel_studio.core.context.context_manifest import ContextManifestRepository
 from ai_novel_studio.core.context.token_budget import ModelOutputLimitError
 from ai_novel_studio.domain.generation import BriefStatus, CreationMode, GenerationStatus
+from ai_novel_studio.domain.view import (
+    EpistemicStatus,
+    ViewAssertionDraft,
+    ViewType,
+)
 from ai_novel_studio.infrastructure.llm import ModelCapabilities
 from ai_novel_studio.infrastructure.storage.chapter_brief_repository import (
     BriefDraftData,
@@ -24,6 +30,9 @@ from ai_novel_studio.infrastructure.storage.chapter_brief_repository import (
 from ai_novel_studio.infrastructure.storage.chapter_repository import ChapterRepository
 from ai_novel_studio.infrastructure.storage.chapter_requirement_repository import (
     ChapterRequirementRepository,
+)
+from ai_novel_studio.infrastructure.storage.character_memory_repository import (
+    CharacterMemoryRepository,
 )
 from ai_novel_studio.infrastructure.storage.generation_repository import GenerationRepository
 from ai_novel_studio.infrastructure.storage.project_guidance_repository import (
@@ -130,6 +139,232 @@ def test_basic_preparation_preserves_output_limit_and_links_manifest(
     assert prepared.run.context_manifest_id == prepared.manifest.id
     assert prepared.manifest.run_id == prepared.run.id
     assert workspace["manifests"].load(prepared.manifest.id) == prepared.manifest
+
+
+def test_standard_preparation_compiles_reviewed_pov_and_reader_assertions_with_hard_filters(
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    characters = CharacterMemoryRepository(workspace["project"])
+    pov = characters.create_character("克莉丝汀")
+    subject = characters.create_character("艾瑞克")
+    other_viewer = characters.create_character("局外人")
+    views = ViewAssertionService(workspace["project"])
+
+    changed = views.create_user_assertion(
+        ViewAssertionDraft(
+            subject_id=subject.id,
+            view_type=ViewType.CHARACTER_VIEW,
+            viewer_subject_id=pov.id,
+            epistemic_status=EpistemicStatus.KNOWS,
+            content="来源改变后不应继续使用。",
+        ),
+        source_id=workspace["current"].id,
+        source_revision=workspace["current"].revision,
+        confirmed_by_user=True,
+    )
+    stale = views.create_model_candidate(
+        ViewAssertionDraft(
+            subject_id=subject.id,
+            view_type=ViewType.CHARACTER_VIEW,
+            viewer_subject_id=pov.id,
+            epistemic_status=EpistemicStatus.SUSPECTS,
+            content="旧模型候选不应继续使用。",
+        ),
+        source_id=workspace["current"].id,
+        source_revision=workspace["current"].revision,
+    )
+    workspace["chapters"].save_content(
+        workspace["current"].id,
+        "当前章修订正文",
+        source="test",
+        reason="验证视角断言来源修订过滤",
+        expected_revision=workspace["current"].revision,
+    )
+
+    visible_candidate = views.create_model_candidate(
+        ViewAssertionDraft(
+            subject_id=subject.id,
+            view_type=ViewType.CHARACTER_VIEW,
+            viewer_subject_id=pov.id,
+            epistemic_status=EpistemicStatus.BELIEVES,
+            content="克莉丝汀相信艾瑞克会赴约。",
+            valid_from_sequence=3,
+        ),
+        source_id=workspace["current"].id,
+        source_revision=workspace["chapters"].get_chapter(
+            workspace["current"].id
+        ).revision,
+    )
+    visible = views.approve_candidate(
+        visible_candidate.id,
+        confirmed_by_user=True,
+    )
+    pending = views.create_model_candidate(
+        ViewAssertionDraft(
+            subject_id=subject.id,
+            view_type=ViewType.CHARACTER_VIEW,
+            viewer_subject_id=pov.id,
+            epistemic_status=EpistemicStatus.SUSPECTS,
+            content="尚未审查的模型猜测。",
+        ),
+        source_id="model-extraction-current",
+        source_revision=0,
+    )
+    revision_mismatch = views.create_user_assertion(
+        ViewAssertionDraft(
+            subject_id=subject.id,
+            view_type=ViewType.CHARACTER_VIEW,
+            viewer_subject_id=pov.id,
+            epistemic_status=EpistemicStatus.KNOWS,
+            content="来源修订号不匹配时必须排除。",
+        ),
+        source_id=workspace["current"].id,
+        source_revision=0,
+        confirmed_by_user=True,
+    )
+    future = views.create_user_assertion(
+        ViewAssertionDraft(
+            subject_id=subject.id,
+            view_type=ViewType.CHARACTER_VIEW,
+            viewer_subject_id=pov.id,
+            epistemic_status=EpistemicStatus.KNOWS,
+            content="第四章才知道的真相。",
+            valid_from_sequence=4,
+        ),
+        source_id="future-character-view",
+        source_revision=0,
+        confirmed_by_user=True,
+    )
+    reader_visible = views.create_user_assertion(
+        ViewAssertionDraft(
+            subject_id=subject.id,
+            view_type=ViewType.READER_VIEW,
+            content="第三章开始允许读者知道旧信存在。",
+            narrative_visible_from_sequence=3,
+        ),
+        source_id="reader-visible",
+        source_revision=0,
+        confirmed_by_user=True,
+    )
+    reader_future = views.create_user_assertion(
+        ViewAssertionDraft(
+            subject_id=subject.id,
+            view_type=ViewType.READER_VIEW,
+            content="第四章前不得让读者知道寄信人。",
+            narrative_visible_from_sequence=4,
+        ),
+        source_id="reader-future",
+        source_revision=0,
+        confirmed_by_user=True,
+    )
+    wrong_viewer = views.create_user_assertion(
+        ViewAssertionDraft(
+            subject_id=subject.id,
+            view_type=ViewType.CHARACTER_VIEW,
+            viewer_subject_id=other_viewer.id,
+            epistemic_status=EpistemicStatus.KNOWS,
+            content="只有局外人知道。",
+        ),
+        source_id="wrong-viewer",
+        source_revision=0,
+        confirmed_by_user=True,
+    )
+    world_truth = views.create_user_assertion(
+        ViewAssertionDraft(
+            subject_id=subject.id,
+            view_type=ViewType.WORLD_TRUTH,
+            content="隐藏世界真相。",
+        ),
+        source_id="hidden-world-truth",
+        source_revision=0,
+        confirmed_by_user=True,
+    )
+    author_plan = views.create_user_assertion(
+        ViewAssertionDraft(
+            subject_id=subject.id,
+            view_type=ViewType.AUTHOR_PLAN,
+            content="作者计划第五章让艾瑞克离开。",
+        ),
+        source_id="future-author-plan",
+        source_revision=0,
+        confirmed_by_user=True,
+    )
+
+    brief_source = workspace["briefs"].list_sources(workspace["brief"].id)[0]
+    pov_draft = workspace["briefs"].create_draft(
+        BriefDraftData(
+            chapter_id=workspace["current"].id,
+            mode=CreationMode.STANDARD,
+            dramatic_purpose="验证 POV 知识边界",
+            target_length=5000,
+            story_date="雨夜",
+            pov_character_id=pov.id,
+            hard_events=("认出旧暗号",),
+            soft_goals=("保持克制",),
+            prohibited_changes=("不得揭晓寄信人",),
+            creative_freedom=("自行安排暗号出现位置",),
+            participants=(pov.id, subject.id),
+            knowledge=(),
+            clue_actions=(),
+            style_rules=(),
+            warnings=(),
+        ),
+        (brief_source,),
+    )
+    pov_brief = workspace["briefs"].freeze(
+        pov_draft.id,
+        expected_revision=pov_draft.revision,
+    )
+
+    prepared = workspace["service"].prepare(
+        _request(
+            workspace,
+            mode=CreationMode.STANDARD,
+            brief_id=pov_brief.id,
+        )
+    )
+
+    selected_ids = {item.source_id for item in prepared.manifest.selected}
+    omitted = {item.source_id: item.reason for item in prepared.manifest.omitted}
+    assert {visible.id, reader_visible.id} <= selected_ids
+    assert "克莉丝汀相信艾瑞克会赴约。" in "\n".join(
+        message.content for message in prepared.messages
+    )
+    assert "SOURCE_CHANGED" in omitted[changed.id]
+    assert "STALE" in omitted[stale.id]
+    assert "AUTHORITY_REJECTED" in omitted[pending.id]
+    assert "REVISION_INVALID" in omitted[revision_mismatch.id]
+    assert "TIME_BOUNDARY" in omitted[future.id]
+    assert "TIME_BOUNDARY" in omitted[reader_future.id]
+    recalled_ids = selected_ids | set(omitted)
+    assert wrong_viewer.id not in recalled_ids
+    assert world_truth.id not in recalled_ids
+    assert author_plan.id not in recalled_ids
+    compiled_messages = "\n".join(message.content for message in prepared.messages)
+    for forbidden_text in (
+        "来源改变后不应继续使用。",
+        "旧模型候选不应继续使用。",
+        "尚未审查的模型猜测。",
+        "来源修订号不匹配时必须排除。",
+        "第四章才知道的真相。",
+        "第四章前不得让读者知道寄信人。",
+        "只有局外人知道。",
+        "隐藏世界真相。",
+        "作者计划第五章让艾瑞克离开。",
+    ):
+        assert forbidden_text not in compiled_messages
+
+    current = workspace["chapters"].get_chapter(workspace["current"].id)
+    workspace["chapters"].save_content(
+        current.id,
+        "生成后再次修改当前章",
+        source="test",
+        reason="验证上下文清单来源依赖失效",
+        expected_revision=current.revision,
+    )
+    with pytest.raises(KeyError, match="unknown context manifest"):
+        workspace["manifests"].load(prepared.manifest.id)
 
 
 def test_basic_mode_uses_conservative_input_budget_when_context_window_is_unknown(

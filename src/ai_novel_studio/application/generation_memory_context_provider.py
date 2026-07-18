@@ -14,6 +14,9 @@ from ai_novel_studio.application.plot_memory_context_service import (
 from ai_novel_studio.application.reader_knowledge_summary_service import (
     ReaderKnowledgeSummaryService,
 )
+from ai_novel_studio.application.view_assertion_context_provider import (
+    ViewAssertionContextProvider,
+)
 from ai_novel_studio.core.context.context_builder import ContextBlock
 from ai_novel_studio.core.context.history_retriever import HistoryRetriever
 from ai_novel_studio.core.context.style_retriever import StyleRetriever
@@ -50,6 +53,7 @@ class GenerationMemoryContextProvider:
         self.styles = StyleRepository(project)
         self.history = HistoryRetriever(SearchRepository(project))
         self.summaries = PlotMemoryContextService(project)
+        self.view_assertions = ViewAssertionContextProvider(project)
 
     def blocks(
         self,
@@ -57,11 +61,19 @@ class GenerationMemoryContextProvider:
         requirement: str,
         recent_chapter_texts: tuple[str, ...],
         participant_ids: tuple[str, ...] = (),
+        *,
+        pov_character_id: str | None = None,
     ) -> tuple[ContextBlock, ...]:
         reference_text = "\n".join((requirement, *recent_chapter_texts[:2]))
         participants = self._relevant_characters(reference_text, participant_ids)
         manual = self._manual_pin_blocks(chapter_id)
         automatic: list[ContextBlock] = []
+        automatic.extend(
+            self.view_assertions.blocks(
+                chapter_id,
+                pov_character_id=pov_character_id,
+            )
+        )
         automatic.extend(self._character_blocks(chapter_id))
         automatic.extend(self._reader_summary_blocks(chapter_id))
         automatic.extend(self._canon_blocks(chapter_id))

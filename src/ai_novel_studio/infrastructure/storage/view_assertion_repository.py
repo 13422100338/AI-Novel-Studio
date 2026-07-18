@@ -255,6 +255,46 @@ class ViewAssertionRepository:
             ).fetchall()
         return tuple(self._assertion(row) for row in rows)
 
+    def list_context_candidates(
+        self,
+        *,
+        view_type: ViewType,
+        viewer_subject_id: str | None = None,
+        limit: int = 500,
+    ) -> tuple[ViewAssertion, ...]:
+        self._validate_view_query(
+            view_type=view_type,
+            viewer_subject_id=viewer_subject_id,
+        )
+        if isinstance(limit, bool) or not isinstance(limit, int):
+            raise ValueError("limit must be an integer")
+        if limit < 1:
+            return ()
+        bounded_limit = min(limit, 500)
+        with self.project.database.connect() as connection:
+            if viewer_subject_id is not None:
+                self._require_active_character(
+                    connection,
+                    viewer_subject_id,
+                    "viewer_subject_id",
+                )
+            rows = connection.execute(
+                """
+                SELECT va.*
+                FROM view_assertions va
+                JOIN subjects subject
+                  ON subject.id = va.subject_id
+                 AND subject.type = 'CHARACTER'
+                 AND subject.active = 1
+                WHERE va.view_type = ?
+                  AND va.viewer_subject_id IS ?
+                ORDER BY va.created_at, va.id
+                LIMIT ?
+                """,
+                (view_type.value, viewer_subject_id, bounded_limit),
+            ).fetchall()
+        return tuple(self._assertion(row) for row in rows)
+
     @staticmethod
     def _require_active_character(
         connection: sqlite3.Connection,
@@ -282,8 +322,24 @@ class ViewAssertionRepository:
             or narrative_sequence < 0
         ):
             raise ValueError("narrative_sequence must be a non-negative integer")
+        ViewAssertionRepository._validate_view_query(
+            view_type=view_type,
+            viewer_subject_id=viewer_subject_id,
+        )
+
+    @staticmethod
+    def _validate_view_query(
+        *,
+        view_type: ViewType,
+        viewer_subject_id: str | None,
+    ) -> None:
+        if not isinstance(view_type, ViewType):
+            raise ValueError("view_type must be a ViewType")
         if view_type == ViewType.CHARACTER_VIEW:
-            if viewer_subject_id is None or not viewer_subject_id.strip():
+            if (
+                not isinstance(viewer_subject_id, str)
+                or not viewer_subject_id.strip()
+            ):
                 raise ValueError("CHARACTER_VIEW requires viewer_subject_id")
         elif viewer_subject_id is not None:
             raise ValueError("viewer_subject_id belongs only to CHARACTER_VIEW")
