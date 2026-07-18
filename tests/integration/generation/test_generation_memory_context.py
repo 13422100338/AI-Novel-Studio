@@ -26,6 +26,7 @@ from ai_novel_studio.application.project_memory_workspace_gateway import (
 from ai_novel_studio.application.reader_knowledge_summary_service import (
     ReaderKnowledgeSummaryService,
 )
+from ai_novel_studio.application.view_assertion_service import ViewAssertionService
 from ai_novel_studio.core.context.context_builder import (
     ContextBuilder,
     ContextBuildRequest,
@@ -41,6 +42,7 @@ from ai_novel_studio.domain.memory import (
     SourceType,
     SummaryLevel,
 )
+from ai_novel_studio.domain.view import ViewAssertionDraft, ViewType
 from ai_novel_studio.infrastructure.llm import ModelCapabilities
 from ai_novel_studio.infrastructure.storage.chapter_brief_repository import (
     ChapterBriefRepository,
@@ -206,6 +208,91 @@ def test_plot_and_prose_share_one_time_bounded_reader_summary(tmp_path: Path) ->
     assert [
         block.content for block in prose_blocks if block.source_type == "READER_SUMMARY"
     ] == [shared.content]
+
+
+def test_reviewed_reader_view_replaces_only_its_linked_legacy_reader_event(
+    tmp_path: Path,
+) -> None:
+    project = ProjectRepository.create(tmp_path / "novel", "Novel")
+    volume = project.list_volumes()[0]
+    chapters = ChapterRepository(project)
+    first = chapters.create_chapter(volume.id, "Opening", "1", "Opening body")
+    current = chapters.create_chapter(volume.id, "Visit", "2", "Current body")
+    memory = CharacterMemoryRepository(project)
+    subject = memory.create_character("Eric")
+
+    linked_item = memory.create_knowledge_item(
+        "匿名来信",
+        "读者看见信件由钟楼守夜人投递。",
+        Authority.USER_CONFIRMED,
+        ReviewStatus.APPROVED,
+    )
+    linked_event = memory.append_knowledge_event(
+        linked_item.id,
+        KnowledgeSubject.READER,
+        project.project.id,
+        first.id,
+        KnowledgeState.KNOWN,
+        "第一章正文",
+        SourceType.HUMAN,
+        ReviewStatus.APPROVED,
+    )
+    remaining_item = memory.create_knowledge_item(
+        "旧港封锁",
+        "读者已经知道旧港在午夜封锁。",
+        Authority.USER_CONFIRMED,
+        ReviewStatus.APPROVED,
+    )
+    remaining_event = memory.append_knowledge_event(
+        remaining_item.id,
+        KnowledgeSubject.READER,
+        project.project.id,
+        first.id,
+        KnowledgeState.KNOWN,
+        "第一章正文",
+        SourceType.HUMAN,
+        ReviewStatus.APPROVED,
+    )
+    ViewAssertionService(project).create_model_candidate(
+        ViewAssertionDraft(
+            subject_id=subject.id,
+            view_type=ViewType.READER_VIEW,
+            content="尚未审查的候选不能接管旧读者知识。",
+            narrative_visible_from_sequence=2,
+        ),
+        source_id=remaining_event.id,
+        source_revision=0,
+    )
+    assertion = ViewAssertionService(project).create_user_assertion(
+        ViewAssertionDraft(
+            subject_id=subject.id,
+            view_type=ViewType.READER_VIEW,
+            content="读者看见信件由钟楼守夜人投递。",
+            narrative_visible_from_sequence=2,
+        ),
+        source_id=linked_event.id,
+        source_revision=0,
+        confirmed_by_user=True,
+    )
+
+    blocks = GenerationMemoryContextProvider(project).blocks(
+        current.id,
+        "Continue the story.",
+        (),
+    )
+
+    reader_view = next(
+        block
+        for block in blocks
+        if block.source_id == assertion.id
+        and block.source_type == "VIEW_ASSERTION/READER_VIEW"
+    )
+    legacy_summary = next(
+        block for block in blocks if block.source_type == "READER_SUMMARY"
+    )
+    assert "钟楼守夜人投递" in reader_view.content
+    assert "钟楼守夜人投递" not in legacy_summary.content
+    assert "旧港在午夜封锁" in legacy_summary.content
 
 
 def test_plot_and_prose_share_four_time_bounded_canon_cards(tmp_path: Path) -> None:

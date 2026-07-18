@@ -254,7 +254,17 @@ class GenerationMemoryContextProvider:
         return tuple(blocks)
 
     def _reader_summary_blocks(self, chapter_id: str) -> tuple[ContextBlock, ...]:
-        summary = self.reader_summary.summary_before(chapter_id)
+        unfiltered = self.reader_summary.summary_before(chapter_id)
+        if unfiltered is None:
+            return ()
+        replaced_event_ids = self.view_assertions.replaced_legacy_reader_event_ids(
+            chapter_id,
+            unfiltered.source_event_ids,
+        )
+        summary = self.reader_summary.summary_before(
+            chapter_id,
+            excluded_event_ids=replaced_event_ids,
+        )
         if summary is None:
             return ()
         return (

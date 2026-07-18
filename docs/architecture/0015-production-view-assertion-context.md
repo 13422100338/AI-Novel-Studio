@@ -45,6 +45,14 @@ Candidate recall is bounded to 250 rows per requested view. Unsafe candidate tex
 in-memory block only until deterministic filtering; it is never concatenated into model
 messages. The Manifest records the block metadata and exclusion reason, not its content.
 
+Legacy reader-knowledge summaries remain a compatibility projection because old knowledge
+items do not contain enough subject semantics for a safe automatic rewrite. A reviewed,
+currently eligible `READER_VIEW` replaces one legacy reader event only when its `source_id`
+exactly equals that event ID. The prose projection removes only that linked event from the
+legacy summary. Pending, rejected, stale, source-changed, future, expired, or unlinked
+assertions never suppress legacy data. This is a read-time convergence rule: it does not delete
+or reinterpret old rows, and it avoids treating text similarity as identity.
+
 ## Consequences
 
 - No schema migration, UI change, model call, or manuscript rewrite is required.
@@ -54,3 +62,5 @@ messages. The Manifest records the block metadata and exclusion reason, not its 
   input is introduced; it still receives eligible reader-view boundaries.
 - Conflict detection and conversion of hidden causality into non-revealable constraints remain
   separate Context Compiler tickets.
+- Explicit provenance can move individual reader facts onto `READER_VIEW` without creating a
+  second context chain or losing unrelated legacy reader knowledge.

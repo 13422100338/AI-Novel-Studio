@@ -66,6 +66,30 @@ class ViewAssertionContextProvider:
             for index, assertion in enumerate(candidates)
         )
 
+    def replaced_legacy_reader_event_ids(
+        self,
+        chapter_id: str,
+        event_ids: tuple[str, ...],
+    ) -> frozenset[str]:
+        """Return legacy reader events explicitly replaced by safe reader views."""
+        if not event_ids:
+            return frozenset()
+        narrative_sequence = len(self.chapters.list_before(chapter_id)) + 1
+        known_event_ids = frozenset(event_ids)
+        candidates = self.assertions.list_context_candidates(
+            view_type=ViewType.READER_VIEW,
+            limit=MAX_CONTEXT_VIEW_ASSERTIONS,
+        )
+        return frozenset(
+            assertion.source_id
+            for assertion in candidates
+            if assertion.source_id in known_event_ids
+            and assertion.review_status in {ReviewStatus.APPROVED, ReviewStatus.LOCKED}
+            and not assertion.stale
+            and not assertion.source_changed
+            and self._time_visible(assertion, narrative_sequence)
+        )
+
     def _block(
         self,
         assertion: ViewAssertion,

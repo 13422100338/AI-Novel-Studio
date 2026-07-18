@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Collection
 from dataclasses import dataclass
 
 from ai_novel_studio.domain.memory import (
@@ -39,13 +40,18 @@ class ReaderKnowledgeSummaryService:
         self.chapters = ChapterRepository(project)
         self.knowledge = CharacterMemoryRepository(project)
 
-    def summary_before(self, chapter_id: str) -> ReaderKnowledgeSummary | None:
+    def summary_before(
+        self,
+        chapter_id: str,
+        *,
+        excluded_event_ids: Collection[str] = (),
+    ) -> ReaderKnowledgeSummary | None:
         entries = self.knowledge.knowledge_before(
             KnowledgeSubject.READER,
             self.project.project.id,
             chapter_id,
         )
-        return self._summarize(entries)
+        return self._summarize(entries, excluded_event_ids=excluded_event_ids)
 
     def summary_all(self) -> ReaderKnowledgeSummary | None:
         entries = self.knowledge.latest_knowledge_entries(
@@ -56,7 +62,10 @@ class ReaderKnowledgeSummaryService:
         return self._summarize(entries)
 
     def _summarize(
-        self, entries: tuple[KnowledgeSnapshotEntry, ...]
+        self,
+        entries: tuple[KnowledgeSnapshotEntry, ...],
+        *,
+        excluded_event_ids: Collection[str] = (),
     ) -> ReaderKnowledgeSummary | None:
         active = tuple(
             entry
@@ -76,7 +85,14 @@ class ReaderKnowledgeSummaryService:
             None,
         )
         selected = active[override_index:] if override_index is not None else active
-        if override_index is not None:
+        excluded = frozenset(excluded_event_ids)
+        selected = tuple(
+            entry for entry in selected if entry.event.id not in excluded
+        )
+        if not selected:
+            return None
+        override = active[override_index] if override_index is not None else None
+        if override is not None and override.event.id not in excluded:
             lines = [selected[0].item.detail]
             lines.extend(self._render_entry(entry) for entry in selected[1:])
         else:
