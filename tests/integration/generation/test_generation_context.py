@@ -13,7 +13,11 @@ from ai_novel_studio.application.generation_context_service import (
 from ai_novel_studio.application.project_guidance_service import ProjectGuidanceService
 from ai_novel_studio.application.view_assertion_service import ViewAssertionService
 from ai_novel_studio.core.brief.source_fingerprint import BriefSourceSnapshot
-from ai_novel_studio.core.context.context_builder import RequiredContextOverflowError
+from ai_novel_studio.core.context.context_builder import (
+    ContextBlock,
+    ContextBuilder,
+    RequiredContextOverflowError,
+)
 from ai_novel_studio.core.context.context_manifest import ContextManifestRepository
 from ai_novel_studio.core.context.token_budget import ModelOutputLimitError
 from ai_novel_studio.domain.generation import BriefStatus, CreationMode, GenerationStatus
@@ -510,6 +514,52 @@ def test_recent_full_chapter_is_selected_before_older_full_chapter(
     assert workspace["recent"].id in selected_ids
     assert selected_ids.index(workspace["recent"].id) < len(selected_ids)
     assert workspace["old"].id not in selected_ids
+
+
+def test_prose_generation_guarantees_recent_continuity_before_matching_memory(
+    tmp_path: Path,
+) -> None:
+    class CharacterEstimator:
+        def estimate(self, text: str) -> int:
+            return len(text)
+
+    class MatchingMemoryContext:
+        def blocks(self, *_args, **_kwargs):  # type: ignore[no-untyped-def]
+            return (
+                ContextBlock(
+                    id="matching-memory",
+                    category="MEMORY",
+                    content="旧暗号" * 300,
+                    priority=1,
+                    required=False,
+                    source_type="CANON_CARD",
+                    source_id="matching-memory",
+                    source_chapter_id=None,
+                    source_revision=1,
+                    source_hash="matching-memory-hash",
+                    rationale="与任务词直接匹配的长记忆",
+                ),
+            )
+
+    workspace = _workspace(tmp_path)
+    workspace["service"].builder = ContextBuilder(CharacterEstimator())
+    workspace["service"].memory_context = MatchingMemoryContext()
+
+    prepared = workspace["service"].prepare(
+        _request(
+            workspace,
+            output_token_limit=200,
+            model_capabilities=ModelCapabilities(
+                context_window=2_050,
+                max_output_tokens=500,
+            ),
+            safety_margin=50,
+        )
+    )
+
+    selected_ids = {item.block_id for item in prepared.manifest.selected}
+    assert f"recent-{workspace['recent'].id}" in selected_ids
+    assert "matching-memory" not in selected_ids
 
 
 def test_with_enough_budget_exactly_the_latest_three_full_chapters_are_candidates(

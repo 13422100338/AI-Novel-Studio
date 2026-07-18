@@ -48,6 +48,20 @@ class ContextBuildRequest:
     blocks: tuple[ContextBlock, ...]
     task: ContextTask | None = None
     deduplicate: bool = False
+    minimum_category_coverage: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        normalized: list[str] = []
+        for category in self.minimum_category_coverage:
+            if not isinstance(category, str):
+                raise ValueError("minimum category coverage must contain strings")
+            value = category.strip()
+            if not value:
+                raise ValueError("minimum category coverage cannot be blank")
+            normalized.append(value)
+        if len(normalized) != len(set(normalized)):
+            raise ValueError("minimum category coverage cannot contain duplicates")
+        object.__setattr__(self, "minimum_category_coverage", tuple(normalized))
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,6 +115,7 @@ class ContextBuilder:
 
         selected: list[SelectedManifestItem] = []
         contents: list[str] = []
+        warnings: list[str] = []
         used_tokens = 0
         for block in required:
             tokens = self._estimator.estimate(block.content)
@@ -108,34 +123,60 @@ class ContextBuilder:
             contents.append(block.content)
             used_tokens += tokens
 
+        guaranteed_block_ids: set[str] = set()
+        for category in dict.fromkeys(request.minimum_category_coverage):
+            candidates = tuple(
+                ranked
+                for ranked in ranked_optional
+                if ranked.block.category == category
+            )
+            if not candidates:
+                continue
+            for ranked in candidates:
+                representation = self._fitting_representation(
+                    ranked.block,
+                    request.budget.input_limit - used_tokens,
+                )
+                if representation is None:
+                    continue
+                content, tokens, used_fallback = representation
+                selected.append(
+                    self._selected_item(
+                        ranked.block,
+                        tokens,
+                        used_fallback=used_fallback,
+                        rationale=(
+                            f"{ranked.rationale}；BUDGET_GUARANTEE:{category}"
+                        ),
+                    )
+                )
+                contents.append(content)
+                used_tokens += tokens
+                guaranteed_block_ids.add(ranked.block.id)
+                break
+            else:
+                warnings.append(f"BUDGET_GUARANTEE_UNMET:{category}")
+
         for ranked in ranked_optional:
             block = ranked.block
-            full_tokens = self._estimator.estimate(block.content)
-            if used_tokens + full_tokens <= request.budget.input_limit:
-                selected.append(
-                    self._selected_item(
-                        block,
-                        full_tokens,
-                        used_fallback=False,
-                        rationale=ranked.rationale,
-                    )
-                )
-                contents.append(block.content)
-                used_tokens += full_tokens
+            if block.id in guaranteed_block_ids:
                 continue
-            fallback = block.fallback_content
-            fallback_tokens = self._estimator.estimate(fallback) if fallback is not None else 0
-            if fallback is not None and used_tokens + fallback_tokens <= request.budget.input_limit:
+            representation = self._fitting_representation(
+                block,
+                request.budget.input_limit - used_tokens,
+            )
+            if representation is not None:
+                content, tokens, used_fallback = representation
                 selected.append(
                     self._selected_item(
                         block,
-                        fallback_tokens,
-                        used_fallback=True,
+                        tokens,
+                        used_fallback=used_fallback,
                         rationale=ranked.rationale,
                     )
                 )
-                contents.append(fallback)
-                used_tokens += fallback_tokens
+                contents.append(content)
+                used_tokens += tokens
                 continue
             omitted.append(
                 self._omitted_item(
@@ -153,10 +194,26 @@ class ContextBuilder:
             estimated_input_tokens=used_tokens,
             selected=tuple(selected),
             omitted=tuple(omitted),
-            warnings=(),
+            warnings=tuple(warnings),
             created_at=utc_now(),
         )
         return BuiltContext("".join(contents), manifest)
+
+    def _fitting_representation(
+        self,
+        block: ContextBlock,
+        available_tokens: int,
+    ) -> tuple[str, int, bool] | None:
+        full_tokens = self._estimator.estimate(block.content)
+        if full_tokens <= available_tokens:
+            return block.content, full_tokens, False
+        fallback = block.fallback_content
+        if fallback is None:
+            return None
+        fallback_tokens = self._estimator.estimate(fallback)
+        if fallback_tokens <= available_tokens:
+            return fallback, fallback_tokens, True
+        return None
 
     @staticmethod
     def _selected_item(

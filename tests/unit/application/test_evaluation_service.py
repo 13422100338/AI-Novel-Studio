@@ -19,6 +19,7 @@ DEDUPLICATION_FIXTURE = (
     Path(__file__).parents[2] / "fixtures" / "backend_baseline_v4.json"
 )
 CONFLICT_FIXTURE = Path(__file__).parents[2] / "fixtures" / "backend_baseline_v5.json"
+BUDGET_FIXTURE = Path(__file__).parents[2] / "fixtures" / "backend_baseline_v6.json"
 
 
 def test_phase_0_context_baseline_runs_ten_fixed_quick_and_normal_tasks() -> None:
@@ -98,6 +99,26 @@ def test_phase_3_conflict_filter_reaches_full_precision_without_reducing_recall(
     assert conflict_safe.forbidden_selection_count == 0
     assert conflict_safe.average_recall == deduplicated.average_recall
     assert conflict_safe.average_precision == 1
+
+
+def test_phase_3_budget_guarantee_preserves_recent_continuity_under_pressure() -> None:
+    budgeted = run_context_baseline(load_context_baseline_suite(BUDGET_FIXTURE))
+
+    assert budgeted.suite_version == 6
+    assert budgeted.matched_scenarios == 10
+    assert budgeted.unexpected_error_count == 0
+    assert budgeted.forbidden_selection_count == 0
+    assert budgeted.average_recall == 1
+    assert budgeted.average_precision == 1
+    pressure = next(
+        item
+        for item in budgeted.observations
+        if item.scenario_id == "normal-recent-continuity-floor"
+    )
+    assert [item.source_id for item in pressure.selected] == [
+        "normal-5-task",
+        "normal-5-recent",
+    ]
 
 
 def test_baseline_loader_rejects_suite_outside_the_phase_0_task_count(

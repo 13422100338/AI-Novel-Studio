@@ -158,6 +158,7 @@ class GenerationContextService:
                         query_text=requirement.content,
                     ),
                     deduplicate=True,
+                    minimum_category_coverage=("RECENT_FULL",),
                 )
             )
             manifest = built.manifest

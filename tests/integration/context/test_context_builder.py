@@ -175,6 +175,107 @@ def test_builder_ranks_task_matching_optional_evidence_before_static_priority_no
     assert "TASK_RELEVANCE" in built.manifest.selected[-1].rationale
 
 
+def test_builder_reserves_one_ranked_block_for_each_guaranteed_category() -> None:
+    builder = ContextBuilder(CharacterEstimator())
+    request = ContextBuildRequest(
+        chapter_id="chapter-current",
+        run_id="run-budget-guarantee",
+        budget=TokenBudget(30, 10, 0),
+        blocks=(
+            _block("rules", "RULES", 1, required=True),
+            _block("recent", "R" * 10, 10, category="RECENT_FULL"),
+            _block("matching-memory", "旧暗号" * 5, 20, category="MEMORY"),
+        ),
+        task=ContextTask(
+            task_type="PROSE_GENERATION",
+            query_text="必须认出旧暗号",
+        ),
+        minimum_category_coverage=("RECENT_FULL",),
+    )
+
+    built = builder.build(request)
+
+    assert [item.block_id for item in built.manifest.selected] == [
+        "rules",
+        "recent",
+    ]
+    assert built.manifest.omitted[-1].block_id == "matching-memory"
+
+
+def test_builder_uses_whole_fallback_to_meet_category_coverage() -> None:
+    builder = ContextBuilder(CharacterEstimator())
+    request = ContextBuildRequest(
+        chapter_id="chapter-current",
+        run_id="run-budget-guarantee-fallback",
+        budget=TokenBudget(22, 10, 0),
+        blocks=(
+            _block("rules", "RULES", 1, required=True),
+            _block(
+                "recent",
+                "R" * 10,
+                10,
+                category="RECENT_FULL",
+                fallback="S" * 5,
+            ),
+        ),
+        minimum_category_coverage=("RECENT_FULL",),
+    )
+
+    built = builder.build(request)
+
+    assert built.manifest.selected[-1].block_id == "recent"
+    assert built.manifest.selected[-1].used_fallback is True
+    assert built.text.endswith("S" * 5)
+
+
+def test_builder_warns_when_available_category_coverage_cannot_fit() -> None:
+    builder = ContextBuilder(CharacterEstimator())
+    request = ContextBuildRequest(
+        chapter_id="chapter-current",
+        run_id="run-budget-guarantee-unmet",
+        budget=TokenBudget(20, 10, 0),
+        blocks=(
+            _block("rules", "R" * 8, 1, required=True),
+            _block(
+                "recent",
+                "F" * 10,
+                10,
+                category="RECENT_FULL",
+                fallback="S" * 3,
+            ),
+        ),
+        minimum_category_coverage=("RECENT_FULL",),
+    )
+
+    built = builder.build(request)
+
+    assert built.manifest.warnings == (
+        "BUDGET_GUARANTEE_UNMET:RECENT_FULL",
+    )
+    assert built.manifest.selected[0].block_id == "rules"
+    assert built.manifest.omitted[-1].block_id == "recent"
+
+
+def test_context_request_rejects_duplicate_or_blank_category_coverage() -> None:
+    common = {
+        "chapter_id": "chapter-current",
+        "run_id": "run-invalid-budget-guarantee",
+        "budget": TokenBudget(100, 10, 0),
+        "blocks": (),
+    }
+
+    with pytest.raises(ValueError, match="duplicates"):
+        ContextBuildRequest(
+            **common,
+            minimum_category_coverage=("RECENT_FULL", "RECENT_FULL"),
+        )
+    with pytest.raises(ValueError, match="cannot be blank"):
+        ContextBuildRequest(
+            **common,
+            minimum_category_coverage=(" ",),
+        )
+
+
 def test_context_task_bounds_oversized_ranking_query() -> None:
     task = ContextTask(
         task_type=" PROSE_GENERATION ",

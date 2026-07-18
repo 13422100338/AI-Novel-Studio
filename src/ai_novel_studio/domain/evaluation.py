@@ -118,6 +118,7 @@ class ContextBaselineScenario:
     expected_selected: tuple[ExpectedBaselineSelection, ...]
     query_text: str | None = None
     deduplicate: bool = False
+    minimum_category_coverage: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "id", _required(self.id, "id"))
@@ -135,6 +136,17 @@ class ContextBaselineScenario:
             object.__setattr__(self, "query_text", query_text)
         if not isinstance(self.deduplicate, bool):
             raise ValueError("deduplicate must be a boolean")
+        normalized_coverage = tuple(
+            _required(category, "minimum_category_coverage")
+            for category in self.minimum_category_coverage
+        )
+        if len(normalized_coverage) != len(set(normalized_coverage)):
+            raise ValueError("minimum_category_coverage cannot contain duplicates")
+        object.__setattr__(
+            self,
+            "minimum_category_coverage",
+            normalized_coverage,
+        )
         if self.input_token_limit <= 0 or self.output_token_limit <= 0:
             raise ValueError("input and output Token limits must be greater than zero")
         if not self.candidates:
@@ -162,7 +174,7 @@ class ContextBaselineSuite:
     scenarios: tuple[ContextBaselineScenario, ...]
 
     def __post_init__(self) -> None:
-        if self.version not in {1, 2, 3, 4, 5}:
+        if self.version not in {1, 2, 3, 4, 5, 6}:
             raise ValueError(f"unsupported baseline suite version: {self.version}")
         if not 10 <= len(self.scenarios) <= 20:
             raise ValueError("baseline must contain 10 to 20 scenarios")

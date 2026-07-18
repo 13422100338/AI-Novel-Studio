@@ -84,6 +84,7 @@ def _run_scenario(
                     else None
                 ),
                 deduplicate=scenario.deduplicate,
+                minimum_category_coverage=scenario.minimum_category_coverage,
             )
         )
         selected = tuple(
@@ -191,6 +192,10 @@ def _scenario(value: object) -> ContextBaselineScenario:
             else _string(data.get("query_text"), "query_text")
         ),
         deduplicate=_optional_scenario_boolean(data, "deduplicate", default=False),
+        minimum_category_coverage=_optional_string_sequence(
+            data,
+            "minimum_category_coverage",
+        ),
     )
 
 
@@ -260,6 +265,19 @@ def _expected(value: object) -> ExpectedBaselineSelection:
     return ExpectedBaselineSelection(
         source_id=_string(data.get("source_id"), "expected.source_id"),
         used_fallback=_boolean(data.get("used_fallback"), "expected.used_fallback"),
+    )
+
+
+def _optional_string_sequence(
+    data: Mapping[str, object],
+    field: str,
+) -> tuple[str, ...]:
+    value = data.get(field)
+    if value is None:
+        return ()
+    return tuple(
+        _string(item, f"{field}[{index}]")
+        for index, item in enumerate(_sequence(value, field))
     )
 
 
