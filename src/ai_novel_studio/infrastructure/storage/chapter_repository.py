@@ -11,6 +11,9 @@ from ai_novel_studio.infrastructure.storage.memory_dependency_repository import 
     MemoryDependencyRepository,
 )
 from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
+from ai_novel_studio.infrastructure.storage.view_assertion_repository import (
+    ViewAssertionRepository,
+)
 
 
 class StaleChapterRevisionError(RuntimeError):
@@ -258,6 +261,12 @@ class ChapterRepository:
                         chapter.id,
                         chapter.revision + 1,
                         _hash(content),
+                    )
+                    ViewAssertionRepository.invalidate_source_revision_in_connection(
+                        connection,
+                        source_id=chapter.id,
+                        new_revision=chapter.revision + 1,
+                        updated_at=now.isoformat(),
                     )
         except BaseException:
             atomic_write_text(canonical, previous)

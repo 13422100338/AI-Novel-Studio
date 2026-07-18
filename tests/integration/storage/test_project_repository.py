@@ -189,7 +189,7 @@ def test_open_migrates_v7_project_and_reopens_v11_review_state(tmp_path: Path) -
             ).fetchall()
         }
 
-    assert version == LATEST_SCHEMA_VERSION == 14
+    assert version == LATEST_SCHEMA_VERSION == 15
     assert migration_versions == list(range(1, LATEST_SCHEMA_VERSION + 1))
     assert migrated.project.title == "旧项目"
     assert migrated.list_volumes()[0].title == "旧卷"
@@ -293,7 +293,7 @@ def test_failed_v7_migration_rolls_back_and_can_retry(
             ).fetchall()
         }
 
-    assert recovered_version == LATEST_SCHEMA_VERSION == 14
+    assert recovered_version == LATEST_SCHEMA_VERSION == 15
     assert recovered_migration_versions == list(range(1, LATEST_SCHEMA_VERSION + 1))
     assert "project_guidance" in recovered_tables
     assert "character_identity_review_decisions" in recovered_tables

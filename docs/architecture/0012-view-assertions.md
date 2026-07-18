@@ -40,6 +40,14 @@ authority; rejection is terminal for that candidate. Stale or source-changed can
 regeneration and cannot be approved. Bulk extraction, conflict resolution, editing, and UI are
 still deferred.
 
+When a chapter is saved with memory invalidation enabled, the same SQLite transaction compares
+its new revision with assertion provenance. Pending or rejected derived records become `stale`;
+`APPROVED` or `LOCKED` records become `source_changed` so the user's decision is preserved but
+must be reviewed again. Neither transition deletes content, changes authority, or silently
+demotes review status. A non-invalidating maintenance save leaves assertions unchanged.
+Schema v15 adds the `(source_id, source_revision)` index used by this invalidation path so
+chapter saves do not scan the full sparse assertion table.
+
 ## Context safety boundary
 
 The Phase 2 query is a hard deterministic filter. It returns only records that:
@@ -71,6 +79,7 @@ and aborts instead of overwriting a reference that changed again after the merge
 
 - Phase 3 Context Compiler can consume view-safe rows without guessing epistemic state.
 - Reader secrets remain invisible before their explicit reveal boundary.
-- Existing memory and generation paths are unchanged until a later integration ticket.
+- Chapter revision now invalidates dependent view assertions, while current context assembly
+  remains unchanged until Phase 3 consumes the new records.
 - `LOCATION`, `ORGANIZATION`, `ITEM`, `ABILITY`, `EVENT`, and `CONCEPT` subjects remain
-  deferred, as do model-generated assertion candidates and UI review workflows.
+  deferred, as do bulk model extraction, conflict-resolution, and UI review workflows.

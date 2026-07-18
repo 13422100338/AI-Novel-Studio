@@ -51,6 +51,10 @@ def test_schema_13_enforces_view_shapes_and_reader_reveal_time(tmp_path: Path) -
 
     with project.database.connect() as connection:
         version = connection.execute("PRAGMA user_version").fetchone()[0]
+        indexes = {
+            str(row[1])
+            for row in connection.execute("PRAGMA index_list(view_assertions)").fetchall()
+        }
         _insert_assertion(
             connection,
             assertion_id="valid-character-view",
@@ -81,4 +85,5 @@ def test_schema_13_enforces_view_shapes_and_reader_reveal_time(tmp_path: Path) -
                 view_type="READER_VIEW",
             )
 
-    assert version == LATEST_SCHEMA_VERSION == 14
+    assert version == LATEST_SCHEMA_VERSION
+    assert "view_assertions_source_revision" in indexes

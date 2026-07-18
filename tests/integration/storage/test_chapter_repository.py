@@ -5,6 +5,9 @@ import pytest
 
 from ai_novel_studio.infrastructure.storage.chapter_repository import ChapterRepository
 from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
+from ai_novel_studio.infrastructure.storage.view_assertion_repository import (
+    ViewAssertionRepository,
+)
 
 
 def _repositories(tmp_path: Path) -> tuple[ProjectRepository, ChapterRepository]:
@@ -39,6 +42,43 @@ def test_save_snapshots_previous_revision_before_atomic_replace(tmp_path: Path) 
     snapshot = project.layout.root / versions[0].content_snapshot_path
     assert snapshot.read_text(encoding="utf-8") == "old"
     assert versions[0].content_hash == hashlib.sha256(b"old").hexdigest()
+
+
+def test_view_invalidation_failure_restores_chapter_file_and_database(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project, chapters = _repositories(tmp_path)
+    chapter = chapters.create_chapter(
+        project.list_volumes()[0].id,
+        "Opening",
+        "1",
+        "old",
+    )
+
+    def fail_invalidation(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("injected view invalidation failure")
+
+    monkeypatch.setattr(
+        ViewAssertionRepository,
+        "invalidate_source_revision_in_connection",
+        fail_invalidation,
+    )
+
+    with pytest.raises(RuntimeError, match="injected view invalidation failure"):
+        chapters.save_content(
+            chapter.id,
+            "new",
+            source="manual",
+            reason="rewrite",
+        )
+
+    restored = chapters.get_chapter(chapter.id)
+    assert restored.revision == 0
+    assert chapters.read_content(chapter.id) == "old"
+    assert chapters.list_versions(chapter.id) == []
+    history = project.layout.history / chapter.id
+    assert not history.exists() or not tuple(history.iterdir())
 
 
 def test_delete_moves_chapter_to_trash_and_restore_recovers_it(tmp_path: Path) -> None:

@@ -89,6 +89,37 @@ class ViewAssertionRepository:
             )
         return self.get(assertion_id)
 
+    @staticmethod
+    def invalidate_source_revision_in_connection(
+        connection: sqlite3.Connection,
+        *,
+        source_id: str,
+        new_revision: int,
+        updated_at: str,
+    ) -> None:
+        connection.execute(
+            """
+            UPDATE view_assertions
+            SET source_changed = 1, updated_at = ?
+            WHERE source_id = ?
+              AND source_revision != ?
+              AND review_status IN ('APPROVED', 'LOCKED')
+              AND source_changed = 0
+            """,
+            (updated_at, source_id, new_revision),
+        )
+        connection.execute(
+            """
+            UPDATE view_assertions
+            SET stale = 1, updated_at = ?
+            WHERE source_id = ?
+              AND source_revision != ?
+              AND review_status NOT IN ('APPROVED', 'LOCKED')
+              AND stale = 0
+            """,
+            (updated_at, source_id, new_revision),
+        )
+
     def get(self, assertion_id: str) -> ViewAssertion:
         with self.project.database.connect() as connection:
             row = connection.execute(

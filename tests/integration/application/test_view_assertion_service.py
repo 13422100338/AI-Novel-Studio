@@ -12,6 +12,7 @@ from ai_novel_studio.domain.view import (
     ViewAssertionDraft,
     ViewType,
 )
+from ai_novel_studio.infrastructure.storage.chapter_repository import ChapterRepository
 from ai_novel_studio.infrastructure.storage.character_memory_repository import (
     CharacterMemoryRepository,
 )
@@ -348,3 +349,118 @@ def test_changed_or_stale_model_candidates_require_regeneration(
     for candidate in (stale, changed):
         with pytest.raises(ViewAssertionReviewError, match="来源已经变化"):
             service.approve_candidate(candidate.id, confirmed_by_user=True)
+
+
+def test_chapter_revision_invalidates_view_assertions_without_deleting_them(
+    tmp_path: Path,
+) -> None:
+    project, eric, _christine = _project_with_characters(tmp_path)
+    chapters = ChapterRepository(project)
+    chapter = chapters.create_chapter(
+        project.list_volumes()[0].id,
+        "国王的秘密",
+        "1",
+        "国王仍然活着。",
+    )
+    service = ViewAssertionService(project)
+    approved_model = service.approve_candidate(
+        service.create_model_candidate(
+            ViewAssertionDraft(
+                subject_id=eric.id,
+                view_type=ViewType.WORLD_TRUTH,
+                content="国王仍然活着。",
+            ),
+            source_id=chapter.id,
+            source_revision=chapter.revision,
+        ).id,
+        confirmed_by_user=True,
+    )
+    pending_model = service.create_model_candidate(
+        ViewAssertionDraft(
+            subject_id=eric.id,
+            view_type=ViewType.WORLD_TRUTH,
+            content="国王被囚禁在北塔。",
+        ),
+        source_id=chapter.id,
+        source_revision=chapter.revision,
+    )
+    confirmed_human = service.create_user_assertion(
+        ViewAssertionDraft(
+            subject_id=eric.id,
+            view_type=ViewType.WORLD_TRUTH,
+            content="用户确认国王尚在人世。",
+        ),
+        source_id=chapter.id,
+        source_revision=chapter.revision,
+        confirmed_by_user=True,
+    )
+    unrelated = service.create_user_assertion(
+        ViewAssertionDraft(
+            subject_id=eric.id,
+            view_type=ViewType.WORLD_TRUTH,
+            content="这条记录来自另一份来源。",
+        ),
+        source_id="manual-note-unrelated",
+        source_revision=0,
+        confirmed_by_user=True,
+    )
+
+    chapters.save_content(
+        chapter.id,
+        "国王已经在北塔遇害。",
+        source="user_edit",
+        reason="rewrite",
+    )
+
+    changed_model = service.repository.get(approved_model.id)
+    stale_model = service.repository.get(pending_model.id)
+    changed_human = service.repository.get(confirmed_human.id)
+    assert changed_model.source_changed is True
+    assert changed_model.stale is False
+    assert changed_model.review_status == ReviewStatus.APPROVED
+    assert changed_model.authority == Authority.MODEL_EXTRACTED
+    assert stale_model.stale is True
+    assert stale_model.source_changed is False
+    assert stale_model.review_status == ReviewStatus.REVIEW
+    assert changed_human.source_changed is True
+    assert changed_human.stale is False
+    assert changed_human.content == "用户确认国王尚在人世。"
+    assert service.repository.get(unrelated.id) == unrelated
+    assert service.list_for_context(
+        narrative_sequence=2,
+        view_type=ViewType.WORLD_TRUTH,
+    ) == (unrelated,)
+
+
+def test_chapter_save_can_explicitly_skip_view_assertion_invalidation(
+    tmp_path: Path,
+) -> None:
+    project, eric, _christine = _project_with_characters(tmp_path)
+    chapters = ChapterRepository(project)
+    chapter = chapters.create_chapter(
+        project.list_volumes()[0].id,
+        "草稿",
+        "1",
+        "旧内容",
+    )
+    service = ViewAssertionService(project)
+    assertion = service.create_user_assertion(
+        ViewAssertionDraft(
+            subject_id=eric.id,
+            view_type=ViewType.WORLD_TRUTH,
+            content="暂不触发记忆失效。",
+        ),
+        source_id=chapter.id,
+        source_revision=chapter.revision,
+        confirmed_by_user=True,
+    )
+
+    chapters.save_content(
+        chapter.id,
+        "新内容",
+        source="system",
+        reason="non-invalidating maintenance",
+        invalidate_memory=False,
+    )
+
+    assert service.repository.get(assertion.id) == assertion
