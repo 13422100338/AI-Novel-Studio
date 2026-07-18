@@ -32,9 +32,13 @@ The storage model has two independent time dimensions. `valid_from_sequence` and
 shown in narrative context. `story_time_label` is optional display metadata and does not drive
 ordering.
 
-This ticket exposes one conservative write path: an explicitly user-confirmed record is stored
-as `USER_CONFIRMED`, `APPROVED`, and `HUMAN`. Model candidates, bulk extraction, conflict
-resolution, editing, and UI are deferred.
+The first write path stores an explicitly user-confirmed record as `USER_CONFIRMED`,
+`APPROVED`, and `HUMAN`. The second path accepts validated model output only as
+`MODEL_EXTRACTED`, `REVIEW`, and `MODEL`. A model candidate never enters context until the user
+explicitly approves it. Approval changes only its review state, preserving model provenance and
+authority; rejection is terminal for that candidate. Stale or source-changed candidates require
+regeneration and cannot be approved. Bulk extraction, conflict resolution, editing, and UI are
+still deferred.
 
 ## Context safety boundary
 

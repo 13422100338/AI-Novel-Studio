@@ -14,6 +14,10 @@ from ai_novel_studio.domain.view import (
 from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
 
 
+class ViewAssertionRepositoryError(RuntimeError):
+    pass
+
+
 class ViewAssertionRepository:
     def __init__(self, project: ProjectRepository) -> None:
         self.project = project
@@ -94,6 +98,78 @@ class ViewAssertionRepository:
         if row is None:
             raise KeyError(f"unknown view assertion: {assertion_id}")
         return self._assertion(row)
+
+    def list_model_review_candidates(
+        self, *, limit: int = 100
+    ) -> tuple[ViewAssertion, ...]:
+        if isinstance(limit, bool) or not isinstance(limit, int):
+            raise ValueError("limit must be an integer")
+        if limit < 1:
+            return ()
+        bounded_limit = min(limit, 500)
+        with self.project.database.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT va.*
+                FROM view_assertions va
+                JOIN subjects subject
+                  ON subject.id = va.subject_id
+                 AND subject.type = 'CHARACTER'
+                 AND subject.active = 1
+                WHERE va.authority = 'MODEL_EXTRACTED'
+                  AND va.source_type = 'MODEL'
+                  AND va.review_status = 'REVIEW'
+                  AND va.stale = 0
+                  AND va.source_changed = 0
+                ORDER BY va.created_at, va.id
+                LIMIT ?
+                """,
+                (bounded_limit,),
+            ).fetchall()
+        return tuple(self._assertion(row) for row in rows)
+
+    def review_model_candidate(
+        self,
+        assertion_id: str,
+        *,
+        decision: ReviewStatus,
+    ) -> ViewAssertion:
+        if decision not in {ReviewStatus.APPROVED, ReviewStatus.REJECTED}:
+            raise ValueError("model candidate decision must be APPROVED or REJECTED")
+        now = datetime.now(UTC).isoformat()
+        with self.project.database.connect() as connection, connection:
+            row = connection.execute(
+                "SELECT * FROM view_assertions WHERE id = ?",
+                (assertion_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"unknown view assertion: {assertion_id}")
+            if (
+                row["authority"] != Authority.MODEL_EXTRACTED.value
+                or row["source_type"] != SourceType.MODEL.value
+            ):
+                raise ViewAssertionRepositoryError("只有模型提取候选可以执行此审查")
+            if bool(row["stale"]) or bool(row["source_changed"]):
+                raise ViewAssertionRepositoryError("候选来源已经变化，需要重新生成")
+            if row["review_status"] != ReviewStatus.REVIEW.value:
+                raise ViewAssertionRepositoryError("候选已经完成审查，不能重复审查")
+            cursor = connection.execute(
+                """
+                UPDATE view_assertions
+                SET review_status = ?, updated_at = ?
+                WHERE id = ?
+                  AND authority = 'MODEL_EXTRACTED'
+                  AND source_type = 'MODEL'
+                  AND review_status = 'REVIEW'
+                  AND stale = 0
+                  AND source_changed = 0
+                  AND updated_at = ?
+                """,
+                (decision.value, now, assertion_id, row["updated_at"]),
+            )
+            if cursor.rowcount != 1:
+                raise ViewAssertionRepositoryError("候选在审查期间发生变化，请重新载入")
+        return self.get(assertion_id)
 
     def list_visible_at(
         self,

@@ -2,7 +2,11 @@ from pathlib import Path
 
 import pytest
 
-from ai_novel_studio.application.view_assertion_service import ViewAssertionService
+from ai_novel_studio.application.view_assertion_service import (
+    ViewAssertionReviewError,
+    ViewAssertionService,
+)
+from ai_novel_studio.domain.memory import Authority, ReviewStatus, SourceType
 from ai_novel_studio.domain.view import (
     EpistemicStatus,
     ViewAssertionDraft,
@@ -224,3 +228,123 @@ def test_context_filter_excludes_assertions_for_inactive_subjects(
         narrative_sequence=1,
         view_type=ViewType.WORLD_TRUTH,
     ) == ()
+
+
+def test_model_candidate_stays_out_of_context_until_explicit_approval(
+    tmp_path: Path,
+) -> None:
+    project, eric, _christine = _project_with_characters(tmp_path)
+    service = ViewAssertionService(project)
+    candidate = service.create_model_candidate(
+        ViewAssertionDraft(
+            subject_id=eric.id,
+            view_type=ViewType.WORLD_TRUTH,
+            content="模型认为国王仍然活着。",
+        ),
+        source_id="chapter-8",
+        source_revision=3,
+    )
+
+    assert candidate.authority == Authority.MODEL_EXTRACTED
+    assert candidate.review_status == ReviewStatus.REVIEW
+    assert candidate.source_type == SourceType.MODEL
+    assert service.list_review_candidates() == (candidate,)
+    assert service.list_for_context(
+        narrative_sequence=8,
+        view_type=ViewType.WORLD_TRUTH,
+    ) == ()
+    with pytest.raises(PermissionError, match="用户明确确认"):
+        service.approve_candidate(candidate.id, confirmed_by_user=False)
+    with pytest.raises(PermissionError, match="用户明确确认"):
+        service.approve_candidate(
+            candidate.id,
+            confirmed_by_user="yes",  # type: ignore[arg-type]
+        )
+
+    approved = service.approve_candidate(candidate.id, confirmed_by_user=True)
+
+    assert approved.authority == Authority.MODEL_EXTRACTED
+    assert approved.review_status == ReviewStatus.APPROVED
+    assert service.list_review_candidates() == ()
+    assert service.list_for_context(
+        narrative_sequence=8,
+        view_type=ViewType.WORLD_TRUTH,
+    ) == (approved,)
+
+
+def test_rejected_model_candidate_cannot_be_approved_later(tmp_path: Path) -> None:
+    project, eric, _christine = _project_with_characters(tmp_path)
+    service = ViewAssertionService(project)
+    candidate = service.create_model_candidate(
+        ViewAssertionDraft(
+            subject_id=eric.id,
+            view_type=ViewType.AUTHOR_PLAN,
+            content="模型猜测作者计划让艾瑞克离开领地。",
+        ),
+        source_id="outline-5",
+        source_revision=1,
+    )
+
+    with pytest.raises(PermissionError, match="用户明确确认"):
+        service.reject_candidate(candidate.id, confirmed_by_user=False)
+    rejected = service.reject_candidate(candidate.id, confirmed_by_user=True)
+
+    assert rejected.review_status == ReviewStatus.REJECTED
+    with pytest.raises(ViewAssertionReviewError, match="不能重复审查"):
+        service.approve_candidate(candidate.id, confirmed_by_user=True)
+    assert service.list_for_context(
+        narrative_sequence=20,
+        view_type=ViewType.AUTHOR_PLAN,
+    ) == ()
+
+    human_assertion = service.create_user_assertion(
+        ViewAssertionDraft(
+            subject_id=eric.id,
+            view_type=ViewType.AUTHOR_PLAN,
+            content="用户直接建立的作者计划。",
+        ),
+        source_id="manual-plan",
+        source_revision=0,
+        confirmed_by_user=True,
+    )
+    with pytest.raises(ViewAssertionReviewError, match="只有模型提取候选"):
+        service.reject_candidate(human_assertion.id, confirmed_by_user=True)
+
+
+def test_changed_or_stale_model_candidates_require_regeneration(
+    tmp_path: Path,
+) -> None:
+    project, eric, _christine = _project_with_characters(tmp_path)
+    service = ViewAssertionService(project)
+    stale = service.create_model_candidate(
+        ViewAssertionDraft(
+            subject_id=eric.id,
+            view_type=ViewType.WORLD_TRUTH,
+            content="来自旧章节修订的候选。",
+        ),
+        source_id="chapter-2",
+        source_revision=1,
+    )
+    changed = service.create_model_candidate(
+        ViewAssertionDraft(
+            subject_id=eric.id,
+            view_type=ViewType.WORLD_TRUTH,
+            content="来源已经发生变化的候选。",
+        ),
+        source_id="chapter-3",
+        source_revision=2,
+    )
+    with project.database.connect() as connection, connection:
+        connection.execute(
+            "UPDATE view_assertions SET stale = 1 WHERE id = ?",
+            (stale.id,),
+        )
+        connection.execute(
+            "UPDATE view_assertions SET source_changed = 1 WHERE id = ?",
+            (changed.id,),
+        )
+
+    assert service.list_review_candidates() == ()
+    for candidate in (stale, changed):
+        with pytest.raises(ViewAssertionReviewError, match="来源已经变化"):
+            service.approve_candidate(candidate.id, confirmed_by_user=True)

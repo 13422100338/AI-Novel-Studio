@@ -22,14 +22,23 @@ class EpistemicStatus(StrEnum):
     UNAWARE = "UNAWARE"
 
 
-def _optional_text(value: str | None, field: str, limit: int) -> str | None:
+def _optional_text(value: object, field: str, limit: int) -> str | None:
     if value is None:
         return None
+    if not isinstance(value, str):
+        raise ValueError(f"{field} must be a string")
     normalized = value.strip()
     if not normalized:
         raise ValueError(f"{field} cannot be blank")
     if len(normalized) > limit:
         raise ValueError(f"{field} exceeds {limit} characters")
+    return normalized
+
+
+def _required_text(value: object, field: str, limit: int) -> str:
+    normalized = _optional_text(value, field, limit)
+    if normalized is None:
+        raise ValueError(f"{field} is required")
     return normalized
 
 
@@ -55,8 +64,14 @@ class ViewAssertionDraft:
     narrative_visible_to_sequence: int | None = None
 
     def __post_init__(self) -> None:
-        subject_id = _optional_text(self.subject_id, "subject_id", 200)
-        content = _optional_text(self.content, "content", 20_000)
+        if not isinstance(self.view_type, ViewType):
+            raise ValueError("view_type must be a ViewType")
+        if self.epistemic_status is not None and not isinstance(
+            self.epistemic_status, EpistemicStatus
+        ):
+            raise ValueError("epistemic_status must be an EpistemicStatus")
+        subject_id = _required_text(self.subject_id, "subject_id", 200)
+        content = _required_text(self.content, "content", 20_000)
         viewer_id = _optional_text(self.viewer_subject_id, "viewer_subject_id", 200)
         story_time = _optional_text(self.story_time_label, "story_time_label", 500)
         valid_from = _sequence(self.valid_from_sequence, "valid_from_sequence")
