@@ -74,7 +74,7 @@ def test_latest_schema_keeps_generation_tables_and_preserves_v2_data(tmp_path) -
     finally:
         connection.close()
 
-    assert version == LATEST_SCHEMA_VERSION == 12
+    assert version == LATEST_SCHEMA_VERSION == 13
     assert title == "旧港状态"
     assert category is None
     assert {

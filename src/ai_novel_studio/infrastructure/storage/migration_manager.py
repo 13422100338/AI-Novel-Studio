@@ -2,7 +2,7 @@ import json
 import sqlite3
 from collections.abc import Callable
 
-LATEST_SCHEMA_VERSION = 12
+LATEST_SCHEMA_VERSION = 13
 
 
 def _json_string_tuple(value: object, field: str) -> tuple[str, ...]:
@@ -825,6 +825,79 @@ def _migration_12(connection: sqlite3.Connection) -> None:
                 raise ValueError("active character merge aliases are inconsistent")
 
 
+def _migration_13(connection: sqlite3.Connection) -> None:
+    statements = (
+        """
+        CREATE TABLE view_assertions (
+            id TEXT PRIMARY KEY,
+            subject_id TEXT NOT NULL REFERENCES subjects(id),
+            view_type TEXT NOT NULL CHECK(view_type IN (
+                'WORLD_TRUTH', 'CHARACTER_VIEW', 'READER_VIEW', 'AUTHOR_PLAN'
+            )),
+            viewer_subject_id TEXT REFERENCES subjects(id),
+            epistemic_status TEXT CHECK(epistemic_status IN (
+                'KNOWS', 'BELIEVES', 'SUSPECTS', 'MISBELIEVES', 'UNAWARE'
+            )),
+            content TEXT NOT NULL CHECK(length(trim(content)) > 0),
+            valid_from_sequence INTEGER CHECK(valid_from_sequence >= 0),
+            valid_to_sequence INTEGER CHECK(valid_to_sequence >= 0),
+            story_time_label TEXT,
+            narrative_visible_from_sequence INTEGER
+                CHECK(narrative_visible_from_sequence >= 0),
+            narrative_visible_to_sequence INTEGER
+                CHECK(narrative_visible_to_sequence >= 0),
+            authority TEXT NOT NULL CHECK(authority IN (
+                'USER_CONFIRMED', 'OUTLINE', 'AUDITED',
+                'MODEL_EXTRACTED', 'INFERRED'
+            )),
+            review_status TEXT NOT NULL CHECK(review_status IN (
+                'REVIEW', 'APPROVED', 'REJECTED', 'LOCKED'
+            )),
+            source_type TEXT NOT NULL CHECK(source_type IN (
+                'HUMAN', 'MODEL', 'IMPORT', 'SYSTEM'
+            )),
+            source_id TEXT NOT NULL CHECK(length(trim(source_id)) > 0),
+            source_revision INTEGER NOT NULL CHECK(source_revision >= 0),
+            stale INTEGER NOT NULL CHECK(stale IN (0, 1)),
+            source_changed INTEGER NOT NULL CHECK(source_changed IN (0, 1)),
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            CHECK(valid_from_sequence IS NULL OR valid_to_sequence IS NULL
+                  OR valid_from_sequence <= valid_to_sequence),
+            CHECK(narrative_visible_from_sequence IS NULL
+                  OR narrative_visible_to_sequence IS NULL
+                  OR narrative_visible_from_sequence
+                     <= narrative_visible_to_sequence),
+            CHECK(
+                (view_type = 'CHARACTER_VIEW'
+                 AND viewer_subject_id IS NOT NULL
+                 AND epistemic_status IS NOT NULL)
+                OR
+                (view_type != 'CHARACTER_VIEW'
+                 AND viewer_subject_id IS NULL
+                 AND epistemic_status IS NULL)
+            ),
+            CHECK(view_type != 'READER_VIEW'
+                  OR narrative_visible_from_sequence IS NOT NULL)
+        )
+        """,
+        """
+        CREATE INDEX view_assertions_context_lookup
+        ON view_assertions(
+            view_type, viewer_subject_id, subject_id, stale, source_changed
+        )
+        """,
+        """
+        CREATE INDEX view_assertions_narrative_visibility
+        ON view_assertions(
+            narrative_visible_from_sequence, narrative_visible_to_sequence
+        )
+        """,
+    )
+    for statement in statements:
+        connection.execute(statement)
+
+
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     1: _migration_1,
     2: _migration_2,
@@ -838,6 +911,7 @@ MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     10: _migration_10,
     11: _migration_11,
     12: _migration_12,
+    13: _migration_13,
 }
 
 

@@ -30,7 +30,7 @@ def test_schema_v11_adds_character_identity_merge_and_review_tables(tmp_path) ->
             ).fetchall()
         }
 
-    assert version == LATEST_SCHEMA_VERSION == 12
+    assert version == LATEST_SCHEMA_VERSION == 13
     assert {
         "id",
         "source_character_id",
