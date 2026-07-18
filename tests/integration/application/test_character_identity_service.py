@@ -25,6 +25,7 @@ from ai_novel_studio.infrastructure.storage.character_memory_repository import (
     CharacterMemoryRepository,
 )
 from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
+from ai_novel_studio.infrastructure.storage.subject_repository import SubjectRepository
 
 
 def _project_with_chapter(tmp_path: Path):  # type: ignore[no-untyped-def]
@@ -93,6 +94,7 @@ def test_confirmed_merge_moves_references_hides_source_and_can_be_undone(
         _brief_data(chapter.id, source.id), ()
     )
     service = CharacterIdentityService(project)
+    subjects = SubjectRepository(project)
 
     with pytest.raises(PermissionError):
         service.merge(
@@ -116,6 +118,9 @@ def test_confirmed_merge_moves_references_hides_source_and_can_be_undone(
     assert [item.id for item in memory.list_characters()] == [target.id]
     assert memory.get_character(source.id).canonical_name == "艾瑞克"
     assert memory.get_character(target.id).aliases == ("温德米尔", "艾瑞克", "艾瑞")
+    assert subjects.get(source.id).active is False
+    assert subjects.get(target.id).active is True
+    assert [item.id for item in subjects.resolve_character_name("艾瑞")] == [target.id]
     assert memory.state_history(target.id)[0].id == state.id
     assert (
         memory.latest_knowledge_entries(
@@ -130,6 +135,8 @@ def test_confirmed_merge_moves_references_hides_source_and_can_be_undone(
     assert reversed_merge.status == CharacterMergeStatus.REVERSED
     assert [item.id for item in memory.list_characters()] == [source.id, target.id]
     assert memory.get_character(target.id).aliases == ("温德米尔",)
+    assert subjects.get(source.id).active is True
+    assert [item.id for item in subjects.resolve_character_name("艾瑞")] == [source.id]
     assert memory.state_history(source.id)[0].id == state.id
     assert (
         memory.latest_knowledge_entries(
@@ -171,6 +178,25 @@ def test_merge_rejects_self_merge_duplicate_merge_and_stale_undo(tmp_path: Path)
         )
     with pytest.raises(CharacterIdentityError, match="归并后又被修改"):
         service.undo(merge.id, confirmed_by_user=True)
+
+
+def test_merge_does_not_store_target_canonical_name_as_its_own_alias(
+    tmp_path: Path,
+) -> None:
+    project, _chapter = _project_with_chapter(tmp_path)
+    memory = CharacterMemoryRepository(project)
+    source = memory.create_character("艾瑞克", ("小艾",))
+    target = memory.create_character("艾瑞克", ("三少爷",))
+
+    CharacterIdentityService(project).merge(
+        source.id,
+        target.id,
+        reason="用户确认两张同名人物卡属于同一人物",
+        confirmed_by_user=True,
+    )
+
+    aliases = SubjectRepository(project).list_aliases(target.id)
+    assert [item.alias for item in aliases] == ["三少爷", "小艾"]
 
 
 def test_undo_refuses_to_overwrite_brief_edited_after_merge(tmp_path: Path) -> None:

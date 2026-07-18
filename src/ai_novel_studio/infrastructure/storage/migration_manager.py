@@ -1,7 +1,20 @@
+import json
 import sqlite3
 from collections.abc import Callable
 
-LATEST_SCHEMA_VERSION = 11
+LATEST_SCHEMA_VERSION = 12
+
+
+def _json_string_tuple(value: object, field: str) -> tuple[str, ...]:
+    try:
+        payload = json.loads(str(value))
+    except (TypeError, json.JSONDecodeError) as error:
+        raise ValueError(f"{field} must be a JSON string list") from error
+    if not isinstance(payload, list) or not all(
+        isinstance(item, str) for item in payload
+    ):
+        raise ValueError(f"{field} must be a JSON string list")
+    return tuple(dict.fromkeys(item.strip() for item in payload if item.strip()))
 
 
 def _migration_1(connection: sqlite3.Connection) -> None:
@@ -703,6 +716,115 @@ def _migration_11(connection: sqlite3.Connection) -> None:
         connection.execute(statement)
 
 
+def _migration_12(connection: sqlite3.Connection) -> None:
+    statements = (
+        """
+        CREATE TABLE subjects (
+            id TEXT PRIMARY KEY,
+            type TEXT NOT NULL CHECK(type = 'CHARACTER'),
+            canonical_name TEXT NOT NULL CHECK(length(trim(canonical_name)) > 0),
+            active INTEGER NOT NULL CHECK(active IN (0, 1)),
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """,
+        """
+        CREATE INDEX subjects_type_active_name
+        ON subjects(type, active, canonical_name)
+        """,
+        """
+        CREATE TABLE subject_aliases (
+            id TEXT PRIMARY KEY,
+            subject_id TEXT NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
+            alias TEXT NOT NULL CHECK(length(trim(alias)) > 0),
+            source_id TEXT NOT NULL CHECK(length(trim(source_id)) > 0),
+            confirmed INTEGER NOT NULL CHECK(confirmed IN (0, 1)),
+            UNIQUE(subject_id, alias)
+        )
+        """,
+        """
+        CREATE INDEX subject_aliases_lookup
+        ON subject_aliases(alias, subject_id)
+        """,
+    )
+    for statement in statements:
+        connection.execute(statement)
+
+    rows = connection.execute(
+        """
+        SELECT c.*,
+               CASE WHEN EXISTS (
+                   SELECT 1 FROM character_identity_merges m
+                   WHERE m.source_character_id = c.id AND m.status = 'APPLIED'
+               ) THEN 0 ELSE 1 END AS subject_active
+        FROM characters c
+        ORDER BY c.created_at, c.id
+        """
+    ).fetchall()
+    for row in rows:
+        connection.execute(
+            """
+            INSERT INTO subjects (
+                id, type, canonical_name, active, created_at, updated_at
+            ) VALUES (?, 'CHARACTER', ?, ?, ?, ?)
+            """,
+            (
+                row["id"],
+                row["canonical_name"],
+                row["subject_active"],
+                row["created_at"],
+                row["updated_at"],
+            ),
+        )
+        aliases = tuple(
+            alias
+            for alias in _json_string_tuple(
+                row["aliases_json"], "characters.aliases_json"
+            )
+            if alias != row["canonical_name"]
+        )
+        for index, alias in enumerate(aliases):
+            connection.execute(
+                """
+                INSERT INTO subject_aliases (
+                    id, subject_id, alias, source_id, confirmed
+                ) VALUES (?, ?, ?, ?, 1)
+                """,
+                (f"subject-alias:{row['id']}:{index}", row["id"], alias, row["id"]),
+            )
+
+    merge_rows = connection.execute(
+        """
+        SELECT source_character_id, target_character_id,
+               target_aliases_before_json, target_aliases_after_json
+        FROM character_identity_merges
+        WHERE status = 'APPLIED'
+        ORDER BY created_at, id
+        """
+    ).fetchall()
+    for row in merge_rows:
+        aliases_before = set(
+            _json_string_tuple(
+                row["target_aliases_before_json"],
+                "character_identity_merges.target_aliases_before_json",
+            )
+        )
+        aliases_after = _json_string_tuple(
+            row["target_aliases_after_json"],
+            "character_identity_merges.target_aliases_after_json",
+        )
+        for alias in aliases_after:
+            if alias in aliases_before:
+                continue
+            cursor = connection.execute(
+                "UPDATE subject_aliases SET source_id = ? "
+                "WHERE subject_id = ? AND alias = ?",
+                (row["source_character_id"], row["target_character_id"], alias),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("active character merge aliases are inconsistent")
+
+
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     1: _migration_1,
     2: _migration_2,
@@ -715,6 +837,7 @@ MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     9: _migration_9,
     10: _migration_10,
     11: _migration_11,
+    12: _migration_12,
 }
 
 

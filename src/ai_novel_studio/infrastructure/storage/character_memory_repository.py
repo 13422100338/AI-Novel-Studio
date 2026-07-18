@@ -18,6 +18,9 @@ from ai_novel_studio.domain.memory import (
     SourceType,
 )
 from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
+from ai_novel_studio.infrastructure.storage.subject_repository import (
+    register_character_subject,
+)
 
 
 def _now() -> datetime:
@@ -62,6 +65,14 @@ class CharacterMemoryRepository:
                     now,
                     now,
                 ),
+            )
+            register_character_subject(
+                connection,
+                character_id=character.id,
+                canonical_name=character.canonical_name,
+                aliases=character.aliases,
+                created_at=now,
+                updated_at=now,
             )
         return character
 

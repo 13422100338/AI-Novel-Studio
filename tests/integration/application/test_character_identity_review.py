@@ -115,6 +115,12 @@ def test_agent_merge_proposal_enters_review_queue_without_mutating_cards(
     memory = CharacterMemoryRepository(project)
     source = memory.create_character("小艾")
     target = memory.create_character("北境继承人")
+    with project.database.connect() as connection, connection:
+        connection.execute(
+            "INSERT INTO subject_aliases "
+            "(id, subject_id, alias, source_id, confirmed) VALUES (?, ?, ?, ?, 1)",
+            ("alias-manual-review", source.id, "三少爷", "manual-review"),
+        )
     agents = AgentRepository(project)
     run = agents.create_run(
         chapter_id=chapter.id,
@@ -131,7 +137,7 @@ def test_agent_merge_proposal_enters_review_queue_without_mutating_cards(
         run.id,
         AgentToolName.PROPOSE_CHARACTER_IDENTITY_MERGE,
         '{"reason":"小说证据表明两者是同一人",'
-        '"source_character_name":"小艾",'
+        '"source_character_name":"三少爷",'
         '"target_character_name":"北境继承人"}',
     )
     agents.complete_tool_call(

@@ -19,6 +19,10 @@ from ai_novel_studio.infrastructure.storage.chapter_brief_repository import (
     compute_brief_content_hash,
 )
 from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
+from ai_novel_studio.infrastructure.storage.subject_repository import (
+    merge_character_subjects,
+    reverse_character_subject_merge,
+)
 
 
 class CharacterIdentityRepositoryError(RuntimeError):
@@ -90,6 +94,17 @@ class CharacterIdentityRepository:
                     updated_at=now,
                 )
                 for row in brief_rows
+            )
+            merge_character_subjects(
+                connection,
+                source_character_id=source_character_id,
+                target_character_id=target_character_id,
+                aliases=tuple(
+                    alias
+                    for alias in target_aliases_after
+                    if alias not in target_aliases_before
+                ),
+                updated_at=now,
             )
             connection.execute(
                 """
@@ -168,6 +183,12 @@ class CharacterIdentityRepository:
                     pov_character_id=merge.source_character_id,
                     updated_at=now,
                 )
+            reverse_character_subject_merge(
+                connection,
+                source_character_id=merge.source_character_id,
+                target_character_id=merge.target_character_id,
+                updated_at=now,
+            )
             connection.execute(
                 "UPDATE character_identity_merges "
                 "SET status = 'REVERSED', reversed_at = ? WHERE id = ?",

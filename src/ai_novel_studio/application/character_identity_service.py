@@ -22,6 +22,7 @@ from ai_novel_studio.infrastructure.storage.character_memory_repository import (
     CharacterMemoryRepository,
 )
 from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
+from ai_novel_studio.infrastructure.storage.subject_repository import SubjectRepository
 
 
 class CharacterIdentityError(RuntimeError):
@@ -79,6 +80,7 @@ class CharacterIdentityService:
         self.repository = CharacterIdentityRepository(project)
         self.memory_repository = CharacterMemoryRepository(project)
         self.agent_repository = AgentRepository(project)
+        self.subject_repository = SubjectRepository(project)
 
     def merge(
         self,
@@ -270,17 +272,14 @@ class CharacterIdentityService:
             seen_pairs.add(pair)
         return tuple(candidates)
 
-    @staticmethod
     def _character_by_name(
-        characters: tuple[Character, ...], name: str
+        self, characters: tuple[Character, ...], name: str
     ) -> Character | None:
-        normalized = name.strip()
-        matches = tuple(
-            character
-            for character in characters
-            if normalized in (character.canonical_name, *character.aliases)
-        )
-        return matches[0] if len(matches) == 1 else None
+        subjects = self.subject_repository.resolve_character_name(name)
+        if len(subjects) != 1:
+            return None
+        character_by_id = {character.id: character for character in characters}
+        return character_by_id.get(subjects[0].id)
 
     def list_recent_applied_merges(
         self, *, limit: int = 20
