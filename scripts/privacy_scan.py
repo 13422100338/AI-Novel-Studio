@@ -15,7 +15,7 @@ EXCLUDED_DIRS = {
     "__pycache__",
     "build",
 }
-EXCLUDED_FILES = {".privacy-blocklist"}
+EXCLUDED_FILES = {".privacy-blocklist", "PROJECT_LOCATION.md"}
 TEXT_SUFFIXES = {
     ".bat",
     ".cfg",

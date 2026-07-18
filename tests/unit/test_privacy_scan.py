@@ -31,6 +31,14 @@ def test_scan_tree_ignores_local_privacy_blocklist(tmp_path: Path) -> None:
     assert scan_tree(tmp_path, ("Private Person",)) == []
 
 
+def test_scan_tree_ignores_local_project_location_note(tmp_path: Path) -> None:
+    (tmp_path / "PROJECT_LOCATION.md").write_text(
+        "C:\\Users\\private-user and Private Person", encoding="utf-8"
+    )
+
+    assert scan_tree(tmp_path, ("Private Person",)) == []
+
+
 def test_scan_tree_ignores_python_cache_directories(tmp_path: Path) -> None:
     cache_dir = tmp_path / "scripts" / "__pycache__"
     cache_dir.mkdir(parents=True)
