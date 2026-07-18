@@ -117,7 +117,7 @@ def test_confirmed_merge_moves_references_hides_source_and_can_be_undone(
     assert merge.moved_brief_ids == (brief.id,)
     assert [item.id for item in memory.list_characters()] == [target.id]
     assert memory.get_character(source.id).canonical_name == "艾瑞克"
-    assert memory.get_character(target.id).aliases == ("温德米尔", "艾瑞克", "艾瑞")
+    assert memory.get_character(target.id).aliases == ("温德米尔", "艾瑞", "艾瑞克")
     assert subjects.get(source.id).active is False
     assert subjects.get(target.id).active is True
     assert [item.id for item in subjects.resolve_character_name("艾瑞")] == [target.id]
@@ -147,7 +147,9 @@ def test_confirmed_merge_moves_references_hides_source_and_can_be_undone(
     assert ChapterBriefRepository(project).get(brief.id).pov_character_id == source.id
 
 
-def test_merge_rejects_self_merge_duplicate_merge_and_stale_undo(tmp_path: Path) -> None:
+def test_merge_rejects_self_merge_and_duplicate_but_ignores_legacy_mirror_drift(
+    tmp_path: Path,
+) -> None:
     project, _chapter = _project_with_chapter(tmp_path)
     memory = CharacterMemoryRepository(project)
     source = memory.create_character("艾瑞克")
@@ -176,6 +178,31 @@ def test_merge_rejects_self_merge_duplicate_merge_and_stale_undo(tmp_path: Path)
             "UPDATE characters SET aliases_json = ? WHERE id = ?",
             ('["用户后来新增的别名"]', target.id),
         )
+    reversed_merge = service.undo(merge.id, confirmed_by_user=True)
+
+    assert reversed_merge.status == CharacterMergeStatus.REVERSED
+    assert memory.get_character(target.id).aliases == ()
+
+
+def test_undo_rejects_authoritative_subject_alias_changes(tmp_path: Path) -> None:
+    project, _chapter = _project_with_chapter(tmp_path)
+    memory = CharacterMemoryRepository(project)
+    source = memory.create_character("艾瑞克")
+    target = memory.create_character("艾瑞克·温德米尔")
+    service = CharacterIdentityService(project)
+    merge = service.merge(
+        source.id,
+        target.id,
+        reason="用户确认同一人物",
+        confirmed_by_user=True,
+    )
+    with project.database.connect() as connection, connection:
+        connection.execute(
+            "INSERT INTO subject_aliases "
+            "(id, subject_id, alias, source_id, confirmed) VALUES (?, ?, ?, ?, 1)",
+            ("manual-alias", target.id, "用户新增的权威别名", "manual-review"),
+        )
+
     with pytest.raises(CharacterIdentityError, match="归并后又被修改"):
         service.undo(merge.id, confirmed_by_user=True)
 

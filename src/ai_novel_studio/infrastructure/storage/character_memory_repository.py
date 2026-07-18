@@ -78,32 +78,55 @@ class CharacterMemoryRepository:
 
     def get_character(self, character_id: str) -> Character:
         with self.project.database.connect() as connection:
-            row = connection.execute(
-                "SELECT * FROM characters WHERE id = ?", (character_id,)
-            ).fetchone()
-        if row is None:
+            rows = connection.execute(
+                """
+                SELECT s.id, s.canonical_name, c.profile, a.alias
+                FROM subjects s
+                JOIN characters c ON c.id = s.id
+                LEFT JOIN subject_aliases a ON a.subject_id = s.id
+                WHERE s.id = ? AND s.type = 'CHARACTER'
+                ORDER BY a.alias, a.id
+                """,
+                (character_id,),
+            ).fetchall()
+        if not rows:
             raise KeyError(f"unknown character: {character_id}")
-        aliases = tuple(str(value) for value in json.loads(row["aliases_json"]))
-        return Character(row["id"], row["canonical_name"], aliases, row["profile"])
+        first = rows[0]
+        aliases = tuple(str(row["alias"]) for row in rows if row["alias"] is not None)
+        return Character(first["id"], first["canonical_name"], aliases, first["profile"])
 
     def list_characters(self) -> tuple[Character, ...]:
         with self.project.database.connect() as connection:
             rows = connection.execute(
-                "SELECT c.* FROM characters c "
-                "WHERE NOT EXISTS ("
-                "SELECT 1 FROM character_identity_merges m "
-                "WHERE m.source_character_id = c.id AND m.status = 'APPLIED'"
-                ") ORDER BY c.created_at, c.id"
+                """
+                SELECT s.id, s.canonical_name, c.profile, a.alias
+                FROM subjects s
+                JOIN characters c ON c.id = s.id
+                LEFT JOIN subject_aliases a ON a.subject_id = s.id
+                WHERE s.type = 'CHARACTER' AND s.active = 1
+                ORDER BY s.created_at, s.id, a.alias, a.id
+                """
             ).fetchall()
-        return tuple(
-            Character(
-                row["id"],
-                row["canonical_name"],
-                tuple(str(value) for value in json.loads(row["aliases_json"])),
-                row["profile"],
-            )
-            for row in rows
-        )
+        characters: list[Character] = []
+        current_id = ""
+        canonical_name = ""
+        profile = ""
+        aliases: list[str] = []
+        for row in rows:
+            row_id = str(row["id"])
+            if current_id and row_id != current_id:
+                characters.append(
+                    Character(current_id, canonical_name, tuple(aliases), profile)
+                )
+                aliases = []
+            current_id = row_id
+            canonical_name = str(row["canonical_name"])
+            profile = str(row["profile"])
+            if row["alias"] is not None:
+                aliases.append(str(row["alias"]))
+        if current_id:
+            characters.append(Character(current_id, canonical_name, tuple(aliases), profile))
+        return tuple(characters)
 
     def update_character_profile(self, character_id: str, profile: str) -> Character:
         with self.project.database.connect() as connection, connection:

@@ -41,16 +41,20 @@ class CharacterIdentityRepository:
         now = datetime.now(UTC).isoformat()
         merge_id = new_id()
         with self.project.database.connect() as connection, connection:
-            source = self._character(connection, source_character_id)
-            target = self._character(connection, target_character_id)
+            self._character(connection, source_character_id)
+            self._character(connection, target_character_id)
             self._assert_merge_shape(connection, source_character_id, target_character_id)
 
-            source_aliases = self._text_tuple(source["aliases_json"])
-            target_aliases_before = self._text_tuple(target["aliases_json"])
+            source_name, source_aliases = self._subject_identity(
+                connection, source_character_id
+            )
+            target_name, target_aliases_before = self._subject_identity(
+                connection, target_character_id
+            )
             target_aliases_after = self._merged_aliases(
-                target["canonical_name"],
+                target_name,
                 target_aliases_before,
-                source["canonical_name"],
+                source_name,
                 source_aliases,
             )
             state_ids = self._ids_for(
@@ -120,7 +124,7 @@ class CharacterIdentityRepository:
                     merge_id,
                     source_character_id,
                     target_character_id,
-                    source["canonical_name"],
+                    source_name,
                     json.dumps(source_aliases, ensure_ascii=False),
                     json.dumps(target_aliases_before, ensure_ascii=False),
                     json.dumps(target_aliases_after, ensure_ascii=False),
@@ -144,8 +148,11 @@ class CharacterIdentityRepository:
             merge = self._merge(row)
             if merge.status != CharacterMergeStatus.APPLIED:
                 raise CharacterIdentityRepositoryError("该人物归并已经撤销")
-            target = self._character(connection, merge.target_character_id)
-            if self._text_tuple(target["aliases_json"]) != merge.target_aliases_after:
+            self._character(connection, merge.target_character_id)
+            _, target_aliases = self._subject_identity(
+                connection, merge.target_character_id
+            )
+            if target_aliases != merge.target_aliases_after:
                 raise CharacterIdentityRepositoryError("目标人物卡在归并后又被修改，不能自动撤销")
             self._assert_rows_still_moved(connection, merge)
 
@@ -302,6 +309,27 @@ class CharacterIdentityRepository:
         return row
 
     @staticmethod
+    def _subject_identity(
+        connection: sqlite3.Connection, character_id: str
+    ) -> tuple[str, tuple[str, ...]]:
+        row = connection.execute(
+            "SELECT canonical_name FROM subjects "
+            "WHERE id = ? AND type = 'CHARACTER'",
+            (character_id,),
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"不存在人物主体：{character_id}")
+        aliases = tuple(
+            str(alias_row["alias"])
+            for alias_row in connection.execute(
+                "SELECT alias FROM subject_aliases WHERE subject_id = ? "
+                "ORDER BY alias, id",
+                (character_id,),
+            ).fetchall()
+        )
+        return str(row["canonical_name"]), aliases
+
+    @staticmethod
     def _assert_merge_shape(
         connection: sqlite3.Connection, source_character_id: str, target_character_id: str
     ) -> None:
@@ -335,10 +363,12 @@ class CharacterIdentityRepository:
         source_aliases: tuple[str, ...],
     ) -> tuple[str, ...]:
         return tuple(
-            dict.fromkeys(
-                value
-                for value in (*target_aliases, source_name, *source_aliases)
-                if value and value != target_name
+            sorted(
+                dict.fromkeys(
+                    value
+                    for value in (*target_aliases, source_name, *source_aliases)
+                    if value and value != target_name
+                )
             )
         )
 

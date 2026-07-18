@@ -23,9 +23,10 @@ Phase 1 supports only `CHARACTER`. Existing character IDs are reused as subject 
 current event, Brief, or memory foreign key needs rewriting. Migration v12 backfills every
 character and marks an already-merged source subject inactive.
 
-For this compatibility phase, `characters` remains the character-card write model while the
-Subject Registry is the stable identity projection. The following writes update both models in
-the same SQLite transaction:
+For this compatibility phase, `characters.profile` remains the character-card detail model,
+while Subject Registry is the sole runtime source for canonical names, aliases, and activity.
+The legacy `characters.canonical_name` and `characters.aliases_json` columns remain write-only
+compatibility mirrors. The following writes update both models in the same SQLite transaction:
 
 - creating a character creates its subject and confirmed alias rows;
 - applying a user-confirmed identity merge deactivates the source subject and adds its names to
@@ -49,8 +50,8 @@ model response nor an Agent tool call can directly merge subjects.
 
 - Phase 2 records can reference a stable `subject_id` without depending on display names.
 - Existing UI and memory code continue to work while later tickets move reads to the Registry.
-- During this compatibility phase, direct database writes that bypass repositories can cause
-  projection drift; product code must continue to write through application/storage services.
+- Direct edits to the legacy name and alias mirror cannot override runtime identity. Direct edits
+  to the authoritative Subject Registry remain unsupported and are detected before merge Undo.
 - Location, organization, item, ability, event, and concept subjects remain deferred.
 - There is no destructive down migration. Recovery uses the existing atomic migration rollback
   and verified project backup workflow.

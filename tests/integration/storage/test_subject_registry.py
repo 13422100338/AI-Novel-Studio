@@ -167,3 +167,23 @@ def test_schema_v12_rejects_invalid_alias_payload_without_partial_migration(
     assert version == 11
     assert "subjects" not in tables
     assert "subject_aliases" not in tables
+
+
+def test_legacy_character_identity_mirror_cannot_override_subject_registry(
+    tmp_path,
+) -> None:  # type: ignore[no-untyped-def]
+    project = ProjectRepository.create(tmp_path / "project", "Identity Source Test")
+    memory = CharacterMemoryRepository(project)
+    character = memory.create_character("艾瑞克·温德米尔", ("艾瑞克",))
+    with project.database.connect() as connection, connection:
+        connection.execute(
+            "UPDATE characters SET canonical_name = ?, aliases_json = ? WHERE id = ?",
+            ("被篡改的旧名称", '["被篡改的旧别名"]', character.id),
+        )
+
+    loaded = memory.get_character(character.id)
+    listed = memory.list_characters()
+
+    assert loaded.canonical_name == "艾瑞克·温德米尔"
+    assert loaded.aliases == ("艾瑞克",)
+    assert listed == (loaded,)
