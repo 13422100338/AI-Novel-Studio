@@ -6,7 +6,13 @@ from ai_novel_studio.application.view_assertion_service import (
     ViewAssertionReviewError,
     ViewAssertionService,
 )
-from ai_novel_studio.domain.memory import Authority, ReviewStatus, SourceType
+from ai_novel_studio.domain.memory import (
+    Authority,
+    KnowledgeState,
+    KnowledgeSubject,
+    ReviewStatus,
+    SourceType,
+)
 from ai_novel_studio.domain.view import (
     EpistemicStatus,
     ViewAssertionDraft,
@@ -100,6 +106,148 @@ def test_reader_view_stays_sparse_and_blocks_premature_reveal(tmp_path: Path) ->
         view_type=ViewType.CHARACTER_VIEW,
         viewer_subject_id=eric.id,
     ) == ()
+
+
+def test_user_can_explicitly_replace_one_reviewed_legacy_reader_event(
+    tmp_path: Path,
+) -> None:
+    project, eric, _christine = _project_with_characters(tmp_path)
+    volume = project.list_volumes()[0]
+    chapter = ChapterRepository(project).create_chapter(
+        volume.id,
+        "Opening",
+        "1",
+        "The reader sees the courier.",
+    )
+    memory = CharacterMemoryRepository(project)
+    item = memory.create_knowledge_item(
+        "匿名来信",
+        "读者看见守夜人投递匿名来信。",
+        Authority.USER_CONFIRMED,
+        ReviewStatus.APPROVED,
+    )
+    event = memory.append_knowledge_event(
+        item.id,
+        KnowledgeSubject.READER,
+        project.project.id,
+        chapter.id,
+        KnowledgeState.KNOWN,
+        "第一章正文",
+        SourceType.HUMAN,
+        ReviewStatus.APPROVED,
+    )
+    service = ViewAssertionService(project)
+    draft = ViewAssertionDraft(
+        subject_id=eric.id,
+        view_type=ViewType.READER_VIEW,
+        content="读者已经看见守夜人投递匿名来信。",
+        narrative_visible_from_sequence=2,
+    )
+
+    with pytest.raises(PermissionError, match="用户明确确认"):
+        service.create_user_reader_view_from_legacy_event(
+            draft,
+            legacy_event_id=event.id,
+            confirmed_by_user=False,
+        )
+    assertion = service.create_user_reader_view_from_legacy_event(
+        draft,
+        legacy_event_id=event.id,
+        confirmed_by_user=True,
+    )
+
+    assert assertion.source_id == event.id
+    assert assertion.source_revision == 0
+    assert assertion.authority == Authority.USER_CONFIRMED
+    assert assertion.review_status == ReviewStatus.APPROVED
+    with pytest.raises(ValueError, match="已经存在有效的 Reader View"):
+        service.create_user_reader_view_from_legacy_event(
+            draft,
+            legacy_event_id=event.id,
+            confirmed_by_user=True,
+        )
+
+
+def test_legacy_reader_replacement_rejects_wrong_subject_or_unsafe_state(
+    tmp_path: Path,
+) -> None:
+    project, eric, christine = _project_with_characters(tmp_path)
+    volume = project.list_volumes()[0]
+    chapter = ChapterRepository(project).create_chapter(
+        volume.id,
+        "Opening",
+        "1",
+        "Opening body",
+    )
+    memory = CharacterMemoryRepository(project)
+    item = memory.create_knowledge_item(
+        "秘密",
+        "一条旧知识。",
+        Authority.USER_CONFIRMED,
+        ReviewStatus.APPROVED,
+    )
+    character_event = memory.append_knowledge_event(
+        item.id,
+        KnowledgeSubject.CHARACTER,
+        christine.id,
+        chapter.id,
+        KnowledgeState.KNOWN,
+        "人物证据",
+        SourceType.HUMAN,
+        ReviewStatus.APPROVED,
+    )
+    forgotten_event = memory.append_knowledge_event(
+        item.id,
+        KnowledgeSubject.READER,
+        project.project.id,
+        chapter.id,
+        KnowledgeState.FORGOTTEN,
+        "读者边界",
+        SourceType.HUMAN,
+        ReviewStatus.APPROVED,
+    )
+    pending_item = memory.create_knowledge_item(
+        "待审查秘密",
+        "这条旧知识还没有经过用户审查。",
+        Authority.MODEL_EXTRACTED,
+        ReviewStatus.REVIEW,
+    )
+    pending_event = memory.append_knowledge_event(
+        pending_item.id,
+        KnowledgeSubject.READER,
+        project.project.id,
+        chapter.id,
+        KnowledgeState.SUSPECTED,
+        "模型候选",
+        SourceType.MODEL,
+        ReviewStatus.REVIEW,
+    )
+    service = ViewAssertionService(project)
+    draft = ViewAssertionDraft(
+        subject_id=eric.id,
+        view_type=ViewType.READER_VIEW,
+        content="读者视角记录。",
+        narrative_visible_from_sequence=2,
+    )
+
+    with pytest.raises(ValueError, match="不是当前项目的读者知识"):
+        service.create_user_reader_view_from_legacy_event(
+            draft,
+            legacy_event_id=character_event.id,
+            confirmed_by_user=True,
+        )
+    with pytest.raises(ValueError, match="状态不能接管"):
+        service.create_user_reader_view_from_legacy_event(
+            draft,
+            legacy_event_id=forgotten_event.id,
+            confirmed_by_user=True,
+        )
+    with pytest.raises(ValueError, match="尚未审查"):
+        service.create_user_reader_view_from_legacy_event(
+            draft,
+            legacy_event_id=pending_event.id,
+            confirmed_by_user=True,
+        )
 
 
 def test_unknown_is_absence_and_unaware_must_be_explicit(tmp_path: Path) -> None:

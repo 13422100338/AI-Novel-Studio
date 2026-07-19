@@ -1,7 +1,16 @@
 from __future__ import annotations
 
-from ai_novel_studio.domain.memory import Authority, ReviewStatus, SourceType
+from ai_novel_studio.domain.memory import (
+    Authority,
+    KnowledgeState,
+    KnowledgeSubject,
+    ReviewStatus,
+    SourceType,
+)
 from ai_novel_studio.domain.view import ViewAssertion, ViewAssertionDraft, ViewType
+from ai_novel_studio.infrastructure.storage.character_memory_repository import (
+    CharacterMemoryRepository,
+)
 from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
 from ai_novel_studio.infrastructure.storage.view_assertion_repository import (
     ViewAssertionRepository,
@@ -17,6 +26,8 @@ class ViewAssertionService:
     """Stores explicit assertions and exposes only context-safe records."""
 
     def __init__(self, project: ProjectRepository) -> None:
+        self.project = project
+        self.knowledge = CharacterMemoryRepository(project)
         self.repository = ViewAssertionRepository(project)
 
     def create_user_assertion(
@@ -53,6 +64,52 @@ class ViewAssertionService:
             source_id=source_id,
             source_revision=source_revision,
         )
+
+    def create_user_reader_view_from_legacy_event(
+        self,
+        draft: ViewAssertionDraft,
+        *,
+        legacy_event_id: str,
+        confirmed_by_user: bool,
+    ) -> ViewAssertion:
+        """Create one reviewed reader view with verified legacy provenance."""
+        if confirmed_by_user is not True:
+            raise PermissionError("旧读者知识接管必须由用户明确确认")
+        if draft.view_type != ViewType.READER_VIEW:
+            raise ValueError("旧读者知识只能接管为 READER_VIEW")
+        try:
+            entry = self.knowledge.get_knowledge_entry(legacy_event_id)
+        except KeyError as error:
+            raise ValueError("旧知识事件不存在") from error
+        if (
+            entry.event.subject_type != KnowledgeSubject.READER
+            or entry.event.subject_id != self.project.project.id
+        ):
+            raise ValueError("旧知识事件不是当前项目的读者知识")
+        trusted_statuses = {ReviewStatus.APPROVED, ReviewStatus.LOCKED}
+        if (
+            entry.item.review_status not in trusted_statuses
+            or entry.event.review_status not in trusted_statuses
+        ):
+            raise ValueError("旧读者知识尚未审查，不能接管")
+        if entry.event.state not in {
+            KnowledgeState.KNOWN,
+            KnowledgeState.SUSPECTED,
+            KnowledgeState.MISUNDERSTOOD,
+        }:
+            raise ValueError("该旧读者知识状态不能接管")
+        try:
+            return self.repository.create(
+                draft,
+                authority=Authority.USER_CONFIRMED,
+                review_status=ReviewStatus.APPROVED,
+                source_type=SourceType.HUMAN,
+                source_id=entry.event.id,
+                source_revision=0,
+                reject_active_reader_replacement=True,
+            )
+        except ViewAssertionRepositoryError as error:
+            raise ValueError(str(error)) from error
 
     def list_review_candidates(self, *, limit: int = 100) -> tuple[ViewAssertion, ...]:
         return self.repository.list_model_review_candidates(limit=limit)

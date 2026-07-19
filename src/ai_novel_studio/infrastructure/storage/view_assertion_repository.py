@@ -31,6 +31,7 @@ class ViewAssertionRepository:
         source_type: SourceType,
         source_id: str,
         source_revision: int,
+        reject_active_reader_replacement: bool = False,
     ) -> ViewAssertion:
         normalized_source_id = source_id.strip()
         if not normalized_source_id or len(normalized_source_id) > 500:
@@ -41,9 +42,17 @@ class ViewAssertionRepository:
             or source_revision < 0
         ):
             raise ValueError("source_revision must be a non-negative integer")
+        if reject_active_reader_replacement and draft.view_type != ViewType.READER_VIEW:
+            raise ValueError("reader replacement uniqueness requires READER_VIEW")
         assertion_id = new_id()
         now = datetime.now(UTC).isoformat()
         with self.project.database.connect() as connection, connection:
+            if reject_active_reader_replacement:
+                connection.execute("BEGIN IMMEDIATE")
+                if self._has_active_reader_replacement(connection, normalized_source_id):
+                    raise ViewAssertionRepositoryError(
+                        "该旧读者知识已经存在有效的 Reader View"
+                    )
             self._require_active_character(connection, draft.subject_id, "subject_id")
             if draft.viewer_subject_id is not None:
                 self._require_active_character(
@@ -294,6 +303,26 @@ class ViewAssertionRepository:
                 (view_type.value, viewer_subject_id, bounded_limit),
             ).fetchall()
         return tuple(self._assertion(row) for row in rows)
+
+    @staticmethod
+    def _has_active_reader_replacement(
+        connection: sqlite3.Connection,
+        source_id: str,
+    ) -> bool:
+        row = connection.execute(
+            """
+            SELECT 1
+            FROM view_assertions
+            WHERE view_type = 'READER_VIEW'
+              AND source_id = ?
+              AND review_status IN ('REVIEW', 'APPROVED', 'LOCKED')
+              AND stale = 0
+              AND source_changed = 0
+            LIMIT 1
+            """,
+            (source_id,),
+        ).fetchone()
+        return row is not None
 
     @staticmethod
     def _require_active_character(

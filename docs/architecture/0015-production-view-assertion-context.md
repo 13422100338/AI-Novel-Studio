@@ -52,6 +52,9 @@ exactly equals that event ID. The prose projection removes only that linked even
 legacy summary. Pending, rejected, stale, source-changed, future, expired, or unlinked
 assertions never suppress legacy data. This is a read-time convergence rule: it does not delete
 or reinterpret old rows, and it avoids treating text similarity as identity.
+The application service exposes a user-confirmed conversion operation that verifies project
+ownership, reader scope, review state, active knowledge state, and replacement uniqueness before
+creating this provenance link.
 
 ## Consequences
 

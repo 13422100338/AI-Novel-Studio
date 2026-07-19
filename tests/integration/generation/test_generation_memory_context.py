@@ -263,15 +263,14 @@ def test_reviewed_reader_view_replaces_only_its_linked_legacy_reader_event(
         source_id=remaining_event.id,
         source_revision=0,
     )
-    assertion = ViewAssertionService(project).create_user_assertion(
+    assertion = ViewAssertionService(project).create_user_reader_view_from_legacy_event(
         ViewAssertionDraft(
             subject_id=subject.id,
             view_type=ViewType.READER_VIEW,
             content="读者看见信件由钟楼守夜人投递。",
             narrative_visible_from_sequence=2,
         ),
-        source_id=linked_event.id,
-        source_revision=0,
+        legacy_event_id=linked_event.id,
         confirmed_by_user=True,
     )
 

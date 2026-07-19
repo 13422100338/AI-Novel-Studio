@@ -431,6 +431,25 @@ class CharacterMemoryRepository:
             )
         return event
 
+    def get_knowledge_entry(self, event_id: str) -> KnowledgeSnapshotEntry:
+        with self.project.database.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT e.*, i.title, i.detail, i.authority,
+                    i.review_status AS item_review_status
+                FROM knowledge_state_events e
+                JOIN knowledge_items i ON i.id = e.knowledge_id
+                WHERE e.id = ?
+                """,
+                (event_id,),
+            ).fetchone()
+        if row is None:
+            raise KeyError(f"unknown knowledge event: {event_id}")
+        return KnowledgeSnapshotEntry(
+            self._knowledge_item(row),
+            self._knowledge_event(row),
+        )
+
     def knowledge_before(
         self,
         subject_type: KnowledgeSubject,
