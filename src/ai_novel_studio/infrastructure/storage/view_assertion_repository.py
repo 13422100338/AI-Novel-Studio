@@ -304,6 +304,24 @@ class ViewAssertionRepository:
             ).fetchall()
         return tuple(self._assertion(row) for row in rows)
 
+    def list_active_reader_replacement_source_ids(self) -> frozenset[str]:
+        with self.project.database.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT DISTINCT va.source_id
+                FROM view_assertions va
+                JOIN subjects subject
+                  ON subject.id = va.subject_id
+                 AND subject.type = 'CHARACTER'
+                 AND subject.active = 1
+                WHERE va.view_type = 'READER_VIEW'
+                  AND va.review_status IN ('REVIEW', 'APPROVED', 'LOCKED')
+                  AND va.stale = 0
+                  AND va.source_changed = 0
+                """
+            ).fetchall()
+        return frozenset(str(row["source_id"]) for row in rows)
+
     @staticmethod
     def _has_active_reader_replacement(
         connection: sqlite3.Connection,

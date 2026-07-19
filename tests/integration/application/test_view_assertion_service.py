@@ -137,33 +137,41 @@ def test_user_can_explicitly_replace_one_reviewed_legacy_reader_event(
         ReviewStatus.APPROVED,
     )
     service = ViewAssertionService(project)
-    draft = ViewAssertionDraft(
-        subject_id=eric.id,
-        view_type=ViewType.READER_VIEW,
-        content="读者已经看见守夜人投递匿名来信。",
-        narrative_visible_from_sequence=2,
-    )
+    candidates = service.list_legacy_reader_view_candidates()
+
+    assert len(candidates) == 1
+    assert candidates[0].event_id == event.id
+    assert candidates[0].title == "匿名来信"
+    assert candidates[0].detail == "读者看见守夜人投递匿名来信。"
+    assert candidates[0].state == KnowledgeState.KNOWN
+    assert candidates[0].source_chapter_id == chapter.id
+    assert candidates[0].narrative_visible_from_sequence == 2
 
     with pytest.raises(PermissionError, match="用户明确确认"):
-        service.create_user_reader_view_from_legacy_event(
-            draft,
+        service.replace_legacy_reader_event(
             legacy_event_id=event.id,
+            subject_id=eric.id,
+            content="读者已经看见守夜人投递匿名来信。",
             confirmed_by_user=False,
         )
-    assertion = service.create_user_reader_view_from_legacy_event(
-        draft,
+    assertion = service.replace_legacy_reader_event(
         legacy_event_id=event.id,
+        subject_id=eric.id,
+        content="读者已经看见守夜人投递匿名来信。",
         confirmed_by_user=True,
     )
 
     assert assertion.source_id == event.id
     assert assertion.source_revision == 0
+    assert assertion.narrative_visible_from_sequence == 2
     assert assertion.authority == Authority.USER_CONFIRMED
     assert assertion.review_status == ReviewStatus.APPROVED
+    assert service.list_legacy_reader_view_candidates() == ()
     with pytest.raises(ValueError, match="已经存在有效的 Reader View"):
-        service.create_user_reader_view_from_legacy_event(
-            draft,
+        service.replace_legacy_reader_event(
             legacy_event_id=event.id,
+            subject_id=eric.id,
+            content="重复接管。",
             confirmed_by_user=True,
         )
 
@@ -229,6 +237,8 @@ def test_legacy_reader_replacement_rejects_wrong_subject_or_unsafe_state(
         content="读者视角记录。",
         narrative_visible_from_sequence=2,
     )
+
+    assert service.list_legacy_reader_view_candidates() == ()
 
     with pytest.raises(ValueError, match="不是当前项目的读者知识"):
         service.create_user_reader_view_from_legacy_event(

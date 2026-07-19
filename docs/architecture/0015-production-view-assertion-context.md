@@ -55,6 +55,10 @@ or reinterpret old rows, and it avoids treating text similarity as identity.
 The application service exposes a user-confirmed conversion operation that verifies project
 ownership, reader scope, review state, active knowledge state, and replacement uniqueness before
 creating this provenance link.
+Its UI-facing candidate query returns only the latest reviewed, active, unlinked legacy reader
+events. The simplified conversion derives `narrative_visible_from_sequence` as the source
+chapter's canonical sequence plus one, preserving the pre-chapter boundary when that source
+chapter is regenerated.
 
 ## Consequences
 

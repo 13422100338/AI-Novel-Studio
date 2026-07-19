@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+
+from ai_novel_studio.application.reader_knowledge_summary_service import (
+    READER_SUMMARY_OVERRIDE_TITLE,
+)
 from ai_novel_studio.domain.memory import (
     Authority,
     KnowledgeState,
@@ -8,6 +13,7 @@ from ai_novel_studio.domain.memory import (
     SourceType,
 )
 from ai_novel_studio.domain.view import ViewAssertion, ViewAssertionDraft, ViewType
+from ai_novel_studio.infrastructure.storage.chapter_repository import ChapterRepository
 from ai_novel_studio.infrastructure.storage.character_memory_repository import (
     CharacterMemoryRepository,
 )
@@ -22,11 +28,23 @@ class ViewAssertionReviewError(RuntimeError):
     pass
 
 
+@dataclass(frozen=True, slots=True)
+class LegacyReaderViewCandidate:
+    event_id: str
+    title: str
+    detail: str
+    state: KnowledgeState
+    source_chapter_id: str
+    source_chapter_title: str
+    narrative_visible_from_sequence: int
+
+
 class ViewAssertionService:
     """Stores explicit assertions and exposes only context-safe records."""
 
     def __init__(self, project: ProjectRepository) -> None:
         self.project = project
+        self.chapters = ChapterRepository(project)
         self.knowledge = CharacterMemoryRepository(project)
         self.repository = ViewAssertionRepository(project)
 
@@ -92,6 +110,8 @@ class ViewAssertionService:
             or entry.event.review_status not in trusted_statuses
         ):
             raise ValueError("旧读者知识尚未审查，不能接管")
+        if entry.item.title == READER_SUMMARY_OVERRIDE_TITLE:
+            raise ValueError("人工读者大摘要不能作为单条 Reader View 接管")
         if entry.event.state not in {
             KnowledgeState.KNOWN,
             KnowledgeState.SUSPECTED,
@@ -110,6 +130,81 @@ class ViewAssertionService:
             )
         except ViewAssertionRepositoryError as error:
             raise ValueError(str(error)) from error
+
+    def list_legacy_reader_view_candidates(
+        self,
+    ) -> tuple[LegacyReaderViewCandidate, ...]:
+        active_states = {
+            KnowledgeState.KNOWN,
+            KnowledgeState.SUSPECTED,
+            KnowledgeState.MISUNDERSTOOD,
+        }
+        replaced_ids = self.repository.list_active_reader_replacement_source_ids()
+        chapters = self.chapters.list_chapters()
+        chapter_sequences = {
+            chapter.id: index for index, chapter in enumerate(chapters, start=1)
+        }
+        chapter_titles = {chapter.id: chapter.title for chapter in chapters}
+        candidates: list[LegacyReaderViewCandidate] = []
+        for entry in self.knowledge.latest_knowledge_entries(
+            KnowledgeSubject.READER,
+            self.project.project.id,
+        ):
+            event = entry.event
+            if (
+                event.state not in active_states
+                or event.id in replaced_ids
+                or entry.item.title == READER_SUMMARY_OVERRIDE_TITLE
+                or event.chapter_id not in chapter_sequences
+            ):
+                continue
+            candidates.append(
+                LegacyReaderViewCandidate(
+                    event_id=event.id,
+                    title=entry.item.title,
+                    detail=entry.item.detail,
+                    state=event.state,
+                    source_chapter_id=event.chapter_id,
+                    source_chapter_title=chapter_titles[event.chapter_id],
+                    narrative_visible_from_sequence=(
+                        chapter_sequences[event.chapter_id] + 1
+                    ),
+                )
+            )
+        return tuple(candidates)
+
+    def replace_legacy_reader_event(
+        self,
+        *,
+        legacy_event_id: str,
+        subject_id: str,
+        content: str,
+        confirmed_by_user: bool,
+    ) -> ViewAssertion:
+        if confirmed_by_user is not True:
+            raise PermissionError("旧读者知识接管必须由用户明确确认")
+        try:
+            event = self.knowledge.get_knowledge_entry(legacy_event_id).event
+        except KeyError as error:
+            raise ValueError("旧知识事件不存在") from error
+        chapter_sequences = {
+            chapter.id: index
+            for index, chapter in enumerate(self.chapters.list_chapters(), start=1)
+        }
+        try:
+            visible_from = chapter_sequences[event.chapter_id] + 1
+        except KeyError as error:
+            raise ValueError("旧知识事件的来源章节不存在") from error
+        return self.create_user_reader_view_from_legacy_event(
+            ViewAssertionDraft(
+                subject_id=subject_id,
+                view_type=ViewType.READER_VIEW,
+                content=content,
+                narrative_visible_from_sequence=visible_from,
+            ),
+            legacy_event_id=legacy_event_id,
+            confirmed_by_user=True,
+        )
 
     def list_review_candidates(self, *, limit: int = 100) -> tuple[ViewAssertion, ...]:
         return self.repository.list_model_review_candidates(limit=limit)
