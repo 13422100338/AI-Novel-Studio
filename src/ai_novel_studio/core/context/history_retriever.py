@@ -1,12 +1,25 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Protocol
 
 from ai_novel_studio.domain.memory import MemoryStatus
 from ai_novel_studio.infrastructure.storage.search_repository import (
+    MAX_RECALL_CANDIDATES,
+    MAX_SEARCH_QUERY_CHARS,
+    EmbeddingCandidate,
     RetrievalRoute,
     SearchRepository,
 )
+
+
+class EmbeddingRecallProvider(Protocol):
+    def recall(
+        self,
+        query: str,
+        *,
+        limit: int,
+    ) -> tuple[EmbeddingCandidate, ...]: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -21,6 +34,7 @@ class SearchHit:
     excerpt: str
     status: MemoryStatus
     lexical_score: float
+    semantic_score: float
     participant_boost: float
     pinned_weight: float
     recency_score: float
@@ -30,8 +44,13 @@ class SearchHit:
 
 
 class HistoryRetriever:
-    def __init__(self, repository: SearchRepository) -> None:
+    def __init__(
+        self,
+        repository: SearchRepository,
+        embedding_recall: EmbeddingRecallProvider | None = None,
+    ) -> None:
         self.repository = repository
+        self.embedding_recall = embedding_recall
 
     def search(
         self,
@@ -43,12 +62,22 @@ class HistoryRetriever:
     ) -> tuple[SearchHit, ...]:
         if limit <= 0:
             raise ValueError("检索数量必须大于零")
+        normalized_query = query.strip()[:MAX_SEARCH_QUERY_CHARS]
+        embedding_candidates = (
+            self.embedding_recall.recall(
+                normalized_query,
+                limit=min(max(limit * 5, limit), MAX_RECALL_CANDIDATES),
+            )
+            if self.embedding_recall is not None and normalized_query
+            else ()
+        )
         participant_set = set(participants)
         hits: list[SearchHit] = []
         for row in self.repository.search_rows(
-            query,
+            normalized_query,
             before_chapter_id,
             participants=participants,
+            embedding_candidates=embedding_candidates,
             limit=limit,
         ):
             document = row.document
@@ -67,6 +96,7 @@ class HistoryRetriever:
             stale_penalty = -10.0 if document.status == MemoryStatus.STALE else 0.0
             total = (
                 lexical_score
+                + row.semantic_score
                 + participant_boost
                 + document.pinned_weight
                 + recency_score
@@ -84,6 +114,7 @@ class HistoryRetriever:
                     row.excerpt,
                     document.status,
                     lexical_score,
+                    row.semantic_score,
                     participant_boost,
                     document.pinned_weight,
                     recency_score,

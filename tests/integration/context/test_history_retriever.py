@@ -1,10 +1,30 @@
 from pathlib import Path
 
+import pytest
+
 from ai_novel_studio.core.context.history_retriever import HistoryRetriever
 from ai_novel_studio.domain.memory import MemoryStatus, ReviewStatus
 from ai_novel_studio.infrastructure.storage.chapter_repository import ChapterRepository
 from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
-from ai_novel_studio.infrastructure.storage.search_repository import SearchRepository
+from ai_novel_studio.infrastructure.storage.search_repository import (
+    EmbeddingCandidate,
+    SearchRepository,
+)
+
+
+class _StaticEmbeddingRecall:
+    def __init__(self, candidates: tuple[EmbeddingCandidate, ...]) -> None:
+        self._candidates = candidates
+
+    def recall(self, query: str, *, limit: int) -> tuple[EmbeddingCandidate, ...]:
+        return self._candidates[:limit]
+
+
+class _RejectsLongEmbeddingQuery:
+    def recall(self, query: str, *, limit: int) -> tuple[EmbeddingCandidate, ...]:
+        if len(query) > 20_000:
+            raise AssertionError("embedding query was not bounded")
+        return ()
 
 
 def _project_with_four_chapters(tmp_path: Path):  # type: ignore[no-untyped-def]
@@ -248,3 +268,124 @@ def test_stronger_bm25_match_receives_the_higher_lexical_score(tmp_path: Path) -
 
     assert [hit.document_id for hit in hits[:2]] == [stronger.id, weaker.id]
     assert hits[0].lexical_score > hits[1].lexical_score
+
+
+def test_embedding_route_recalls_semantic_history_without_lexical_overlap(
+    tmp_path: Path,
+) -> None:
+    project, _, chapters = _project_with_four_chapters(tmp_path)
+    search = SearchRepository(project)
+    document = search.index_document(
+        document_type="CANON",
+        source_id="canon-hidden-heir",
+        chapter_id=chapters[0].id,
+        title="harbor succession",
+        content="The duke privately named his youngest child as the heir.",
+        participants=(),
+        pinned_weight=0,
+        review_status=ReviewStatus.APPROVED,
+        status=MemoryStatus.CURRENT,
+    )
+    embedding = _StaticEmbeddingRecall((EmbeddingCandidate(document.id, 0.91),))
+
+    hits = HistoryRetriever(search, embedding).search(
+        "secret inheritance claim",
+        chapters[1].id,
+    )
+
+    assert [hit.document_id for hit in hits] == [document.id]
+    assert hits[0].semantic_score == pytest.approx(0.91)
+    assert hits[0].retrieval_routes == ("EMBEDDING",)
+
+
+def test_embedding_candidates_are_rechecked_against_hard_filters(tmp_path: Path) -> None:
+    project, _, chapters = _project_with_four_chapters(tmp_path)
+    search = SearchRepository(project)
+    visible = search.index_document(
+        document_type="CANON",
+        source_id="canon-visible-semantic",
+        chapter_id=chapters[0].id,
+        title="visible record",
+        content="An approved fact from the first chapter.",
+        participants=(),
+        pinned_weight=0,
+        review_status=ReviewStatus.APPROVED,
+        status=MemoryStatus.CURRENT,
+    )
+    review = search.index_document(
+        document_type="CANON",
+        source_id="canon-review-semantic",
+        chapter_id=chapters[1].id,
+        title="review record",
+        content="A model candidate still awaiting review.",
+        participants=(),
+        pinned_weight=0,
+        review_status=ReviewStatus.REVIEW,
+        status=MemoryStatus.CURRENT,
+    )
+    future = search.index_document(
+        document_type="CANON",
+        source_id="canon-future-semantic",
+        chapter_id=chapters[3].id,
+        title="future record",
+        content="A fact that only becomes available later.",
+        participants=(),
+        pinned_weight=0,
+        review_status=ReviewStatus.APPROVED,
+        status=MemoryStatus.CURRENT,
+    )
+    embedding = _StaticEmbeddingRecall(
+        (
+            EmbeddingCandidate(review.id, 0.99),
+            EmbeddingCandidate(future.id, 0.98),
+            EmbeddingCandidate("missing-document", 0.97),
+            EmbeddingCandidate(visible.id, 0.80),
+        )
+    )
+
+    hits = HistoryRetriever(search, embedding).search(
+        "semantic-only-query",
+        chapters[2].id,
+    )
+
+    assert [hit.document_id for hit in hits] == [visible.id]
+    assert hits[0].retrieval_routes == ("EMBEDDING",)
+
+
+def test_embedding_route_merges_with_existing_recall_routes(tmp_path: Path) -> None:
+    project, _, chapters = _project_with_four_chapters(tmp_path)
+    search = SearchRepository(project)
+    document = search.index_chapter(
+        chapters[0].id,
+        "钟楼档案",
+        "钟楼档案记录了蓝色火焰。",
+    )
+    embedding = _StaticEmbeddingRecall((EmbeddingCandidate(document.id, 0.88),))
+
+    hits = HistoryRetriever(search, embedding).search("钟楼档案", chapters[1].id)
+
+    assert [hit.document_id for hit in hits] == [document.id]
+    assert hits[0].retrieval_routes == ("EXACT_PHRASE", "KEYWORD", "EMBEDDING")
+
+
+@pytest.mark.parametrize("score", [True, float("nan"), float("inf"), -0.01, 1.01])
+def test_embedding_candidate_rejects_invalid_similarity(score: float) -> None:
+    with pytest.raises(ValueError, match="similarity"):
+        EmbeddingCandidate("document-id", score)
+
+
+@pytest.mark.parametrize("document_id", ["  ", "x" * 201])
+def test_embedding_candidate_rejects_an_invalid_document_id(document_id: str) -> None:
+    with pytest.raises(ValueError, match="document ID"):
+        EmbeddingCandidate(document_id, 0.5)
+
+
+def test_embedding_provider_receives_the_bounded_search_query(tmp_path: Path) -> None:
+    project, _, chapters = _project_with_four_chapters(tmp_path)
+
+    hits = HistoryRetriever(
+        SearchRepository(project),
+        _RejectsLongEmbeddingQuery(),
+    ).search("x" * 20_001, chapters[1].id)
+
+    assert hits == ()

@@ -22,13 +22,21 @@ source.
 
 1. `EXACT_PHRASE` keeps the quoted FTS5 query;
 2. `KEYWORD` derives a parameterized OR query from bounded ASCII terms and CJK trigrams;
-3. `SUBJECT` recalls approved or locked rows whose stored participant IDs match the requested
+3. `EMBEDDING` accepts document IDs and normalized similarity scores from an optional injected
+   `EmbeddingRecallProvider`;
+4. `SUBJECT` recalls approved or locked rows whose stored participant IDs match the requested
    subjects.
 
 Every route applies the same chapter boundary and review-state filter. Current and future chapters
 remain ineligible. Subject-only candidates have no fabricated BM25 rank, so `HistoryRetriever`
 assigns them a zero lexical score and ranks them with the existing participant, pin, recency, and
 staleness signals.
+
+The embedding boundary is contract-first. The Provider performs semantic lookup but cannot return
+stored text or bypass repository policy. Its document IDs and finite 0–1 scores are validated and
+bounded before `SearchRepository` reloads the authoritative rows and applies the same review and
+chapter filters. With no Provider injected, the route is disabled and existing production behavior
+is unchanged. Repository code never calls a model or owns credentials.
 
 Rows are merged by the existing memory-document ID before final reranking. The merged hit records
 all contributing routes in deterministic order, which makes recall behavior inspectable without a
@@ -45,6 +53,6 @@ slightly lower score because of the old absolute-value transform.
 - Review candidates and future chapters cannot enter through the new subject route.
 - No schema migration, vector database, model call, manuscript change, or second retriever is
   introduced.
-- Embedding recall remains a later route behind the same repository/retriever contract. Its vector
-  representation, invalidation policy, and deterministic fallback must be designed and tested
-  separately before it is enabled.
+- The Embedding recall contract is ready, but production vector representation, persistence,
+  invalidation, and Provider wiring remain disabled until they are designed and tested in separate
+  migration and indexing tickets.

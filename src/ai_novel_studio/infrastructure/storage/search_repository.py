@@ -4,22 +4,26 @@ import re
 import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from math import isfinite
 from typing import Literal
 
 from ai_novel_studio.domain.identifiers import new_id
 from ai_novel_studio.domain.memory import MemoryStatus, ReviewStatus
 from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
 
-RetrievalRoute = Literal["EXACT_PHRASE", "KEYWORD", "SUBJECT"]
+RetrievalRoute = Literal["EXACT_PHRASE", "KEYWORD", "EMBEDDING", "SUBJECT"]
+MAX_RECALL_CANDIDATES = 250
+MAX_SEARCH_QUERY_CHARS = 20_000
 
 _SEARCH_TERM = re.compile(r"[a-z0-9_]{3,}|[\u3400-\u4dbf\u4e00-\u9fff]+")
 _MAX_KEYWORD_TERMS = 24
-_MAX_SEARCH_QUERY_CHARS = 20_000
 _MAX_SEARCH_PARTICIPANTS = 64
+_MAX_DOCUMENT_ID_CHARS = 200
 _ROUTE_ORDER: dict[RetrievalRoute, int] = {
     "EXACT_PHRASE": 0,
     "KEYWORD": 1,
-    "SUBJECT": 2,
+    "EMBEDDING": 2,
+    "SUBJECT": 3,
 }
 
 
@@ -46,9 +50,28 @@ class SearchDocument:
 
 
 @dataclass(frozen=True, slots=True)
+class EmbeddingCandidate:
+    document_id: str
+    similarity: float
+
+    def __post_init__(self) -> None:
+        document_id = self.document_id.strip()
+        if not document_id or len(document_id) > _MAX_DOCUMENT_ID_CHARS:
+            raise ValueError("embedding candidate document ID is invalid")
+        if isinstance(self.similarity, bool):
+            raise ValueError("embedding candidate similarity must be numeric")
+        similarity = float(self.similarity)
+        if not isfinite(similarity) or not 0 <= similarity <= 1:
+            raise ValueError("embedding candidate similarity must be between 0 and 1")
+        object.__setattr__(self, "document_id", document_id)
+        object.__setattr__(self, "similarity", similarity)
+
+
+@dataclass(frozen=True, slots=True)
 class SearchRow:
     document: SearchDocument
     lexical_rank: float | None
+    semantic_score: float
     excerpt: str
     chapter_distance: int | None
     retrieval_routes: tuple[RetrievalRoute, ...]
@@ -197,16 +220,19 @@ class SearchRepository:
         before_chapter_id: str,
         *,
         participants: tuple[str, ...] = (),
+        embedding_candidates: tuple[EmbeddingCandidate, ...] = (),
         limit: int,
     ) -> tuple[SearchRow, ...]:
-        normalized_query = query.strip()[:_MAX_SEARCH_QUERY_CHARS]
+        if limit <= 0:
+            raise ValueError("检索数量必须大于零")
+        normalized_query = query.strip()[:MAX_SEARCH_QUERY_CHARS]
         normalized_participants = tuple(
             dict.fromkeys(value.strip() for value in participants if value.strip())
         )[:_MAX_SEARCH_PARTICIPANTS]
-        if not normalized_query and not normalized_participants:
+        if not normalized_query and not normalized_participants and not embedding_candidates:
             return ()
         route_rows: list[SearchRow] = []
-        candidate_limit = max(limit * 5, limit)
+        candidate_limit = min(max(limit * 5, limit), MAX_RECALL_CANDIDATES)
         with self.project.database.connect() as connection:
             if normalized_query:
                 phrase = '"' + normalized_query.replace('"', '""') + '"'
@@ -236,6 +262,15 @@ class SearchRepository:
                         connection,
                         before_chapter_id,
                         normalized_participants,
+                        candidate_limit,
+                    )
+                )
+            if embedding_candidates:
+                route_rows.extend(
+                    self._embedding_rows(
+                        connection,
+                        before_chapter_id,
+                        embedding_candidates,
                         candidate_limit,
                     )
                 )
@@ -280,6 +315,7 @@ class SearchRepository:
             SearchRow(
                 self._document(row),
                 float(row["lexical_rank"]),
+                0.0,
                 row["excerpt"],
                 _chapter_distance(row),
                 (route,),
@@ -327,9 +363,62 @@ class SearchRepository:
             SearchRow(
                 self._document(row),
                 None,
+                0.0,
                 row["excerpt"],
                 _chapter_distance(row),
                 ("SUBJECT",),
+            )
+            for row in rows
+        )
+
+    def _embedding_rows(
+        self,
+        connection: sqlite3.Connection,
+        before_chapter_id: str,
+        candidates: tuple[EmbeddingCandidate, ...],
+        limit: int,
+    ) -> tuple[SearchRow, ...]:
+        scores: dict[str, float] = {}
+        for candidate in candidates[:limit]:
+            scores[candidate.document_id] = max(
+                scores.get(candidate.document_id, 0.0),
+                candidate.similarity,
+            )
+        if not scores:
+            return ()
+        placeholders = ", ".join("?" for _ in scores)
+        rows = connection.execute(
+            f"""
+            WITH ordered AS (
+                SELECT c.id, ROW_NUMBER() OVER (
+                    ORDER BY v.sort_index, c.sort_index, c.id
+                ) AS ordinal
+                FROM chapters c JOIN volumes v ON v.id = c.volume_id
+                WHERE c.is_deleted = 0
+            ), target AS (
+                SELECT ordinal FROM ordered WHERE id = ?
+            )
+            SELECT d.*, substr(d.content, 1, 240) AS excerpt,
+                CASE WHEN source.ordinal IS NULL THEN NULL
+                     ELSE target.ordinal - source.ordinal END AS chapter_distance
+            FROM memory_documents d
+            LEFT JOIN ordered source ON source.id = d.chapter_id
+            CROSS JOIN target
+            WHERE d.id IN ({placeholders})
+              AND d.review_status IN ('APPROVED', 'LOCKED')
+              AND (d.chapter_id IS NULL OR source.ordinal < target.ordinal)
+            ORDER BY d.id
+            """,
+            (before_chapter_id, *scores),
+        ).fetchall()
+        return tuple(
+            SearchRow(
+                self._document(row),
+                None,
+                scores[row["id"]],
+                row["excerpt"],
+                _chapter_distance(row),
+                ("EMBEDDING",),
             )
             for row in rows
         )
@@ -391,6 +480,7 @@ def _merge_rows(rows: list[SearchRow]) -> tuple[SearchRow, ...]:
             if value is not None
         )
         lexical_rank = min(lexical_candidates) if lexical_candidates else None
+        semantic_score = max(current.semantic_score, row.semantic_score)
         routes = tuple(
             sorted(
                 set((*current.retrieval_routes, *row.retrieval_routes)),
@@ -403,6 +493,7 @@ def _merge_rows(rows: list[SearchRow]) -> tuple[SearchRow, ...]:
         merged[row.document.id] = SearchRow(
             row.document,
             lexical_rank,
+            semantic_score,
             excerpt,
             row.chapter_distance,
             routes,
