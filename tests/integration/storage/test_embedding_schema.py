@@ -31,6 +31,24 @@ def _index_document(project: ProjectRepository):  # type: ignore[no-untyped-def]
     )
 
 
+def _insert_v15_memory_document(project: ProjectRepository) -> str:
+    document_id = "legacy-memory-document"
+    with project.database.connect() as connection, connection:
+        connection.execute(
+            """
+            INSERT INTO memory_documents (
+                id, document_type, source_id, chapter_id, volume_id,
+                source_revision, source_hash, title, content, participants,
+                pinned_weight, review_status, status, updated_at
+            ) VALUES (?, 'CANON', 'legacy-canon-source', NULL, NULL, 0, '',
+                      '继承权记录', '公爵曾经私下指定继承人。', '', 0,
+                      'APPROVED', 'CURRENT', '2026-07-19')
+            """,
+            (document_id,),
+        )
+    return document_id
+
+
 def test_schema_v16_adds_constrained_embedding_cache(tmp_path: Path) -> None:
     project = ProjectRepository.create(tmp_path / "project", "Embedding schema")
     document = _index_document(project)
@@ -120,7 +138,7 @@ def test_failed_v16_migration_rolls_back_and_retries_without_data_loss(
     real_migration = migration_module.MIGRATIONS[16]
     monkeypatch.setattr(migration_module, "LATEST_SCHEMA_VERSION", 15)
     legacy = ProjectRepository.create(root, "Legacy v15")
-    document = _index_document(legacy)
+    document_id = _insert_v15_memory_document(legacy)
 
     monkeypatch.setattr(migration_module, "LATEST_SCHEMA_VERSION", 16)
 
@@ -147,7 +165,7 @@ def test_failed_v16_migration_rolls_back_and_retries_without_data_loss(
         }
         preserved = connection.execute(
             "SELECT title, content FROM memory_documents WHERE id = ?",
-            (document.id,),
+            (document_id,),
         ).fetchone()
 
     assert version_after_failure == 15
@@ -166,7 +184,7 @@ def test_failed_v16_migration_rolls_back_and_retries_without_data_loss(
         )
         recovered_document = connection.execute(
             "SELECT title, content FROM memory_documents WHERE id = ?",
-            (document.id,),
+            (document_id,),
         ).fetchone()
 
     assert recovered_version == 16

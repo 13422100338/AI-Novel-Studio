@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 import sqlite3
 from dataclasses import dataclass
@@ -19,6 +21,8 @@ _SEARCH_TERM = re.compile(r"[a-z0-9_]{3,}|[\u3400-\u4dbf\u4e00-\u9fff]+")
 _MAX_KEYWORD_TERMS = 24
 _MAX_SEARCH_PARTICIPANTS = 64
 _MAX_DOCUMENT_ID_CHARS = 200
+_MAX_EMBEDDING_DIMENSIONS = 32_768
+_MAX_EMBEDDING_JSON_CHARS = 1_000_000
 _ROUTE_ORDER: dict[RetrievalRoute, int] = {
     "EXACT_PHRASE": 0,
     "KEYWORD": 1,
@@ -65,6 +69,25 @@ class EmbeddingCandidate:
             raise ValueError("embedding candidate similarity must be between 0 and 1")
         object.__setattr__(self, "document_id", document_id)
         object.__setattr__(self, "similarity", similarity)
+
+
+@dataclass(frozen=True, slots=True)
+class EmbeddingSource:
+    document_id: str
+    text: str
+    content_hash: str
+
+
+@dataclass(frozen=True, slots=True)
+class StoredEmbedding:
+    document_id: str
+    model_id: str
+    dimensions: int
+    vector: tuple[float, ...]
+    content_hash: str
+    status: MemoryStatus
+    created_at: datetime
+    updated_at: datetime
 
 
 @dataclass(frozen=True, slots=True)
@@ -148,6 +171,7 @@ class SearchRepository:
         revision = revision or 0
         content_hash = content_hash or ""
         now = _now()
+        embedding_hash = _embedding_content_hash(title, content)
         with self.project.database.connect() as connection, connection:
             existing = connection.execute(
                 "SELECT id FROM memory_documents WHERE document_type = ? AND source_id = ?",
@@ -192,6 +216,15 @@ class SearchRepository:
                 "INSERT INTO memory_fts VALUES (?, ?, ?, ?)",
                 (document_id, title, content, " ".join(participants)),
             )
+            connection.execute(
+                """
+                UPDATE memory_embeddings
+                SET status = 'STALE', updated_at = ?
+                WHERE document_id = ? AND status != 'STALE'
+                  AND (content_hash != ? OR ? = 'STALE')
+                """,
+                (now.isoformat(), document_id, embedding_hash, status.value),
+            )
             if chapter_id is not None:
                 connection.execute(
                     """
@@ -213,6 +246,105 @@ class SearchRepository:
         if row is None:
             raise KeyError(f"unknown search document: {document_id}")
         return self._document(row)
+
+    def embedding_source(self, document_id: str) -> EmbeddingSource:
+        return _embedding_source(self.get(document_id))
+
+    def save_embedding(
+        self,
+        document_id: str,
+        model_id: str,
+        vector: tuple[float, ...],
+        *,
+        expected_content_hash: str,
+    ) -> StoredEmbedding:
+        normalized_model_id = _model_id(model_id)
+        normalized_vector = _embedding_vector(vector)
+        normalized_hash = _content_hash(expected_content_hash)
+        vector_json = json.dumps(
+            normalized_vector,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        if len(vector_json) > _MAX_EMBEDDING_JSON_CHARS:
+            raise ValueError("embedding vector JSON exceeds storage limit")
+        now = _now()
+        with self.project.database.connect() as connection, connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT * FROM memory_documents WHERE id = ?",
+                (document_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"unknown search document: {document_id}")
+            source = _embedding_source(self._document(row))
+            if source.content_hash != normalized_hash:
+                raise RuntimeError("embedding source changed before vector save")
+            connection.execute(
+                """
+                INSERT INTO memory_embeddings (
+                    document_id, model_id, dimensions, vector_json, content_hash,
+                    status, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, 'CURRENT', ?, ?)
+                ON CONFLICT(document_id, model_id) DO UPDATE SET
+                    dimensions = excluded.dimensions,
+                    vector_json = excluded.vector_json,
+                    content_hash = excluded.content_hash,
+                    status = 'CURRENT',
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    document_id,
+                    normalized_model_id,
+                    len(normalized_vector),
+                    vector_json,
+                    normalized_hash,
+                    now.isoformat(),
+                    now.isoformat(),
+                ),
+            )
+        return self.get_embedding(document_id, normalized_model_id)
+
+    def get_embedding(self, document_id: str, model_id: str) -> StoredEmbedding:
+        normalized_model_id = _model_id(model_id)
+        with self.project.database.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM memory_embeddings
+                WHERE document_id = ? AND model_id = ?
+                """,
+                (document_id, normalized_model_id),
+            ).fetchone()
+        if row is None:
+            raise KeyError(f"unknown memory embedding: {document_id}/{normalized_model_id}")
+        return _stored_embedding(row)
+
+    def pending_embedding_sources(
+        self,
+        model_id: str,
+        *,
+        limit: int = 100,
+    ) -> tuple[EmbeddingSource, ...]:
+        normalized_model_id = _model_id(model_id)
+        if limit <= 0 or limit > MAX_RECALL_CANDIDATES:
+            raise ValueError(
+                f"embedding rebuild limit must be between 1 and {MAX_RECALL_CANDIDATES}"
+            )
+        with self.project.database.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT d.* FROM memory_documents d
+                LEFT JOIN memory_embeddings e
+                  ON e.document_id = d.id AND e.model_id = ?
+                WHERE d.status = 'CURRENT'
+                  AND d.review_status IN ('APPROVED', 'LOCKED')
+                  AND (e.document_id IS NULL OR e.status = 'STALE')
+                ORDER BY d.pinned_weight DESC, d.updated_at DESC, d.id
+                LIMIT ?
+                """,
+                (normalized_model_id, limit),
+            ).fetchall()
+        return tuple(_embedding_source(self._document(row)) for row in rows)
 
     def search_rows(
         self,
@@ -460,6 +592,91 @@ def _keyword_query(query: str) -> str:
         if len(terms) >= _MAX_KEYWORD_TERMS:
             break
     return " OR ".join(f'"{term}"' for term in terms)
+
+
+def _embedding_source(document: SearchDocument) -> EmbeddingSource:
+    if document.status != MemoryStatus.CURRENT or document.review_status not in {
+        ReviewStatus.APPROVED,
+        ReviewStatus.LOCKED,
+    }:
+        raise ValueError("only current reviewed memory documents can be embedded")
+    text = _embedding_text(document.title, document.content)
+    return EmbeddingSource(
+        document.id,
+        text,
+        _hash_text(text),
+    )
+
+
+def _embedding_text(title: str, content: str) -> str:
+    return f"{title.strip()}\n\n{content.strip()}"
+
+
+def _embedding_content_hash(title: str, content: str) -> str:
+    return _hash_text(_embedding_text(title, content))
+
+
+def _hash_text(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _model_id(value: str) -> str:
+    normalized = value.strip()
+    if not normalized or len(normalized) > 200:
+        raise ValueError("embedding model ID is invalid")
+    return normalized
+
+
+def _content_hash(value: str) -> str:
+    normalized = value.strip().casefold()
+    if len(normalized) != 64 or any(
+        character not in "0123456789abcdef" for character in normalized
+    ):
+        raise ValueError("embedding content hash must be a SHA-256 hex digest")
+    return normalized
+
+
+def _embedding_vector(values: tuple[float, ...]) -> tuple[float, ...]:
+    if not values or len(values) > _MAX_EMBEDDING_DIMENSIONS:
+        raise ValueError("embedding vector dimensions are invalid")
+    normalized: list[float] = []
+    for value in values:
+        if isinstance(value, bool):
+            raise ValueError("embedding vector values must be finite numbers")
+        try:
+            number = float(value)
+        except (TypeError, ValueError) as error:
+            raise ValueError("embedding vector values must be finite numbers") from error
+        if not isfinite(number):
+            raise ValueError("embedding vector values must be finite numbers")
+        normalized.append(number)
+    return tuple(normalized)
+
+
+def _stored_embedding(row: sqlite3.Row) -> StoredEmbedding:
+    try:
+        decoded = json.loads(row["vector_json"])
+    except (TypeError, json.JSONDecodeError) as error:
+        raise ValueError("stored embedding vector is invalid") from error
+    if not isinstance(decoded, list):
+        raise ValueError("stored embedding vector is invalid")
+    try:
+        vector = _embedding_vector(tuple(decoded))
+    except ValueError as error:
+        raise ValueError("stored embedding vector is invalid") from error
+    dimensions = int(row["dimensions"])
+    if dimensions != len(vector):
+        raise ValueError("stored embedding dimensions do not match vector")
+    return StoredEmbedding(
+        row["document_id"],
+        row["model_id"],
+        dimensions,
+        vector,
+        _content_hash(row["content_hash"]),
+        MemoryStatus(row["status"]),
+        datetime.fromisoformat(row["created_at"]),
+        datetime.fromisoformat(row["updated_at"]),
+    )
 
 
 def _chapter_distance(row: sqlite3.Row) -> int | None:

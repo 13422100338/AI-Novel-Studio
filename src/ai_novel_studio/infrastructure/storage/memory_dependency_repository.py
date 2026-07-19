@@ -38,10 +38,17 @@ class MemoryDependencyRepository:
                     "UPDATE memory_documents SET status = 'STALE' WHERE id = ?",
                     (memory_id,),
                 )
+                connection.execute(
+                    """
+                    UPDATE memory_embeddings
+                    SET status = 'STALE', updated_at = CURRENT_TIMESTAMP
+                    WHERE document_id = ? AND status != 'STALE'
+                    """,
+                    (memory_id,),
+                )
             elif memory_type == "MANIFEST":
                 connection.execute(
                     "UPDATE context_manifests SET status = 'STALE' WHERE id = ?",
                     (memory_id,),
                 )
         return affected
-
