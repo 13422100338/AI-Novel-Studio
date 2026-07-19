@@ -181,3 +181,79 @@ def test_pending_rebuild_only_returns_current_reviewed_documents(tmp_path: Path)
     pending = search.pending_embedding_sources("embedding-model", limit=10)
 
     assert [item.document_id for item in pending] == [approved.id]
+
+
+def test_embedding_recall_ranks_valid_current_vectors_by_cosine_similarity(
+    tmp_path: Path,
+) -> None:
+    search = SearchRepository(_project(tmp_path))
+    best = _index_document(search, source_id="best")
+    weaker = _index_document(search, source_id="weaker")
+    opposite = _index_document(search, source_id="opposite")
+    stale = _index_document(search, source_id="stale")
+    awaiting_review = _index_document(search, source_id="review")
+    corrupted = _index_document(search, source_id="corrupted")
+    mismatched_hash = _index_document(search, source_id="mismatched-hash")
+    wrong_dimensions = _index_document(search, source_id="wrong-dimensions")
+
+    for document, vector in (
+        (best, (1.0, 0.0)),
+        (weaker, (0.5, 0.8660254038)),
+        (opposite, (-1.0, 0.0)),
+        (stale, (0.9, 0.1)),
+        (awaiting_review, (0.8, 0.2)),
+        (corrupted, (0.7, 0.3)),
+        (mismatched_hash, (0.6, 0.4)),
+        (wrong_dimensions, (1.0, 0.0, 0.0)),
+    ):
+        source = search.embedding_source(document.id)
+        search.save_embedding(
+            document.id,
+            "embedding-model",
+            vector,
+            expected_content_hash=source.content_hash,
+        )
+
+    _index_document(search, source_id="stale", content="来源已经变化。")
+    _index_document(
+        search,
+        source_id="review",
+        review_status=ReviewStatus.REVIEW,
+    )
+    with search.project.database.connect() as connection, connection:
+        connection.execute(
+            "UPDATE memory_embeddings SET vector_json = '[broken]' WHERE document_id = ?",
+            (corrupted.id,),
+        )
+        connection.execute(
+            "UPDATE memory_embeddings SET content_hash = ? WHERE document_id = ?",
+            ("a" * 64, mismatched_hash.id),
+        )
+
+    candidates = search.recall_embeddings(
+        "embedding-model",
+        (1.0, 0.0),
+        limit=10,
+    )
+
+    assert [candidate.document_id for candidate in candidates] == [best.id, weaker.id]
+    assert candidates[0].similarity == pytest.approx(1.0)
+    assert candidates[1].similarity == pytest.approx(0.5)
+
+
+@pytest.mark.parametrize(
+    "query_vector",
+    [(), (0.0, 0.0), (float("nan"), 0.0), (float("inf"), 0.0)],
+)
+def test_embedding_recall_rejects_an_invalid_query_vector(
+    tmp_path: Path,
+    query_vector: tuple[float, ...],
+) -> None:
+    search = SearchRepository(_project(tmp_path))
+
+    with pytest.raises(ValueError, match="embedding query vector"):
+        search.recall_embeddings(
+            "embedding-model",
+            query_vector,
+            limit=10,
+        )

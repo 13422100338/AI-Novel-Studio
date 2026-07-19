@@ -22,6 +22,35 @@ class EmbeddingRecallProvider(Protocol):
     ) -> tuple[EmbeddingCandidate, ...]: ...
 
 
+class QueryEmbeddingProvider(Protocol):
+    @property
+    def model_id(self) -> str: ...
+
+    def embed_query(self, query: str) -> tuple[float, ...]: ...
+
+
+class StoredEmbeddingRecallProvider:
+    def __init__(
+        self,
+        repository: SearchRepository,
+        query_embeddings: QueryEmbeddingProvider,
+    ) -> None:
+        self.repository = repository
+        self.query_embeddings = query_embeddings
+
+    def recall(
+        self,
+        query: str,
+        *,
+        limit: int,
+    ) -> tuple[EmbeddingCandidate, ...]:
+        return self.repository.recall_embeddings(
+            self.query_embeddings.model_id,
+            self.query_embeddings.embed_query(query),
+            limit=limit,
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class SearchHit:
     document_id: str

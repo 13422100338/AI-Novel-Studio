@@ -6,7 +6,7 @@ import re
 import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from math import isfinite
+from math import fsum, hypot, isfinite
 from typing import Literal
 
 from ai_novel_studio.domain.identifiers import new_id
@@ -23,6 +23,8 @@ _MAX_SEARCH_PARTICIPANTS = 64
 _MAX_DOCUMENT_ID_CHARS = 200
 _MAX_EMBEDDING_DIMENSIONS = 32_768
 _MAX_EMBEDDING_JSON_CHARS = 1_000_000
+_MAX_EMBEDDING_SCAN_ROWS = 5_000
+_MAX_EMBEDDING_SCAN_VALUES = 8_000_000
 _ROUTE_ORDER: dict[RetrievalRoute, int] = {
     "EXACT_PHRASE": 0,
     "KEYWORD": 1,
@@ -346,6 +348,65 @@ class SearchRepository:
             ).fetchall()
         return tuple(_embedding_source(self._document(row)) for row in rows)
 
+    def recall_embeddings(
+        self,
+        model_id: str,
+        query_vector: tuple[float, ...],
+        *,
+        limit: int,
+    ) -> tuple[EmbeddingCandidate, ...]:
+        normalized_model_id = _model_id(model_id)
+        if limit <= 0 or limit > MAX_RECALL_CANDIDATES:
+            raise ValueError(
+                f"embedding recall limit must be between 1 and {MAX_RECALL_CANDIDATES}"
+            )
+        try:
+            normalized_query = _embedding_vector(query_vector)
+        except ValueError as error:
+            raise ValueError("embedding query vector is invalid") from error
+        query_unit = _unit_vector(normalized_query)
+        if query_unit is None:
+            raise ValueError("embedding query vector cannot be zero")
+        scan_limit = min(
+            _MAX_EMBEDDING_SCAN_ROWS,
+            max(limit, _MAX_EMBEDDING_SCAN_VALUES // len(query_unit)),
+        )
+        with self.project.database.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT e.*, d.title AS source_title, d.content AS source_content
+                FROM memory_embeddings e
+                JOIN memory_documents d ON d.id = e.document_id
+                WHERE e.model_id = ?
+                  AND e.status = 'CURRENT'
+                  AND d.status = 'CURRENT'
+                  AND d.review_status IN ('APPROVED', 'LOCKED')
+                ORDER BY d.pinned_weight DESC, d.updated_at DESC, d.id
+                LIMIT ?
+                """,
+                (normalized_model_id, scan_limit),
+            ).fetchall()
+        candidates: list[EmbeddingCandidate] = []
+        for row in rows:
+            if row["content_hash"] != _embedding_content_hash(
+                row["source_title"],
+                row["source_content"],
+            ):
+                continue
+            try:
+                stored = _stored_embedding(row)
+            except (TypeError, ValueError):
+                continue
+            similarity = _cosine_similarity(query_unit, stored.vector)
+            if similarity is not None:
+                candidates.append(EmbeddingCandidate(stored.document_id, similarity))
+        return tuple(
+            sorted(
+                candidates,
+                key=lambda candidate: (-candidate.similarity, candidate.document_id),
+            )[:limit]
+        )
+
     def search_rows(
         self,
         query: str,
@@ -651,6 +712,31 @@ def _embedding_vector(values: tuple[float, ...]) -> tuple[float, ...]:
             raise ValueError("embedding vector values must be finite numbers")
         normalized.append(number)
     return tuple(normalized)
+
+
+def _unit_vector(vector: tuple[float, ...]) -> tuple[float, ...] | None:
+    norm = hypot(*vector)
+    if not isfinite(norm) or norm <= 0:
+        return None
+    return tuple(value / norm for value in vector)
+
+
+def _cosine_similarity(
+    query_unit: tuple[float, ...],
+    stored_vector: tuple[float, ...],
+) -> float | None:
+    if len(query_unit) != len(stored_vector):
+        return None
+    stored_unit = _unit_vector(stored_vector)
+    if stored_unit is None:
+        return None
+    similarity = fsum(
+        query_value * stored_value
+        for query_value, stored_value in zip(query_unit, stored_unit, strict=True)
+    )
+    if not isfinite(similarity) or similarity <= 0:
+        return None
+    return min(1.0, similarity)
 
 
 def _stored_embedding(row: sqlite3.Row) -> StoredEmbedding:

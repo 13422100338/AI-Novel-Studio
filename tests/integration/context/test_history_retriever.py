@@ -2,7 +2,10 @@ from pathlib import Path
 
 import pytest
 
-from ai_novel_studio.core.context.history_retriever import HistoryRetriever
+from ai_novel_studio.core.context.history_retriever import (
+    HistoryRetriever,
+    StoredEmbeddingRecallProvider,
+)
 from ai_novel_studio.domain.memory import MemoryStatus, ReviewStatus
 from ai_novel_studio.infrastructure.storage.chapter_repository import ChapterRepository
 from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
@@ -25,6 +28,18 @@ class _RejectsLongEmbeddingQuery:
         if len(query) > 20_000:
             raise AssertionError("embedding query was not bounded")
         return ()
+
+
+class _StaticQueryEmbeddings:
+    model_id = "embedding-model"
+
+    def __init__(self, vector: tuple[float, ...]) -> None:
+        self.vector = vector
+        self.queries: list[str] = []
+
+    def embed_query(self, query: str) -> tuple[float, ...]:
+        self.queries.append(query)
+        return self.vector
 
 
 def _project_with_four_chapters(tmp_path: Path):  # type: ignore[no-untyped-def]
@@ -295,6 +310,42 @@ def test_embedding_route_recalls_semantic_history_without_lexical_overlap(
 
     assert [hit.document_id for hit in hits] == [document.id]
     assert hits[0].semantic_score == pytest.approx(0.91)
+    assert hits[0].retrieval_routes == ("EMBEDDING",)
+
+
+def test_stored_embedding_provider_uses_existing_history_retrieval_path(
+    tmp_path: Path,
+) -> None:
+    project, _, chapters = _project_with_four_chapters(tmp_path)
+    search = SearchRepository(project)
+    document = search.index_document(
+        document_type="CANON",
+        source_id="canon-stored-hidden-heir",
+        chapter_id=chapters[0].id,
+        title="harbor succession",
+        content="The duke privately named his youngest child as the heir.",
+        participants=(),
+        pinned_weight=0,
+        review_status=ReviewStatus.APPROVED,
+        status=MemoryStatus.CURRENT,
+    )
+    source = search.embedding_source(document.id)
+    search.save_embedding(
+        document.id,
+        "embedding-model",
+        (1.0, 0.0),
+        expected_content_hash=source.content_hash,
+    )
+    query_embeddings = _StaticQueryEmbeddings((1.0, 0.0))
+
+    hits = HistoryRetriever(
+        search,
+        StoredEmbeddingRecallProvider(search, query_embeddings),
+    ).search("secret inheritance claim", chapters[1].id)
+
+    assert query_embeddings.queries == ["secret inheritance claim"]
+    assert [hit.document_id for hit in hits] == [document.id]
+    assert hits[0].semantic_score == pytest.approx(1.0)
     assert hits[0].retrieval_routes == ("EMBEDDING",)
 
 

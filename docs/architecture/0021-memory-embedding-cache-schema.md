@@ -43,9 +43,21 @@ uses the canonical embedding input `title.strip() + "\n\n" + content.strip()` wi
 - rebuild scans return only current, approved or locked memory documents whose requested model row
   is missing or stale.
 
-The repository does not generate embeddings, call a provider, or perform cosine retrieval. Those
-remain separate application/provider responsibilities behind the existing Embedding recall
-boundary.
+The repository does not generate embeddings or call a provider. Query encoding remains a separate
+provider responsibility behind the existing Embedding recall boundary.
+
+The subsequent repository operation performs dependency-free cosine recall over the same cache.
+It scans only current rows for the requested model whose authoritative memory document is current
+and approved or locked. Before scoring, it revalidates the serialized vector, dimensions, and exact
+source hash; malformed, zero, mismatched, or non-positive-similarity rows fail closed and do not
+consume result slots. Output is deterministically sorted by positive cosine similarity and document
+ID. There is deliberately no semantic threshold or hand-tuned weighting before benchmark evidence.
+
+Because SQLite JSON vectors have no approximate-nearest-neighbor index, each request has both a
+5,000-row cap and an eight-million-vector-value scan budget derived from query dimensions. Recent
+and manually pinned rows are scanned first when a project exceeds that budget.
+This bounded portable implementation is the Phase 3 baseline, not a claim that linear scanning is
+the permanent large-project solution.
 
 The new migration lives in `schema_migrations_v16.py`; v1-v15 remains frozen. The registry now
 rejects duplicate and missing versions when modules are composed. Migration execution continues to
@@ -61,5 +73,5 @@ the real migration.
 - Vectors are explicitly disposable derived data; `memory_documents` remains authoritative.
 - Downgrade-in-place is not introduced. Recovery uses the existing backup path or transaction
   rollback on failed migration, rather than destructive reverse migrations.
-- Persistence, source-race protection, invalidation, and bounded rebuild discovery are now enabled;
-  provider/API wiring and vector similarity retrieval remain disabled until later tickets.
+- Persistence, source-race protection, invalidation, bounded rebuild discovery, and local cosine
+  candidate retrieval are now enabled; real model/API wiring remains disabled until later tickets.
