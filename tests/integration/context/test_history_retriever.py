@@ -123,3 +123,128 @@ def test_ascii_query_and_deterministic_tie_breaking_need_no_vector_database(
 
     assert {hit.document_id for hit in hits} == {first.id, second.id}
     assert [hit.document_id for hit in hits] == sorted(hit.document_id for hit in hits)
+
+
+def test_keyword_route_recalls_history_without_an_exact_phrase_match(
+    tmp_path: Path,
+) -> None:
+    project, _, chapters = _project_with_four_chapters(tmp_path)
+    search = SearchRepository(project)
+    document = search.index_chapter(
+        chapters[0].id,
+        "sealed archive",
+        "The sealed object was hidden. Later, the letter was burned as evidence.",
+    )
+
+    hits = HistoryRetriever(search).search(
+        "sealed letter evidence",
+        chapters[1].id,
+    )
+
+    assert [hit.document_id for hit in hits] == [document.id]
+    assert hits[0].retrieval_routes == ("KEYWORD",)
+
+
+def test_subject_route_respects_review_and_chapter_boundaries(tmp_path: Path) -> None:
+    project, _, chapters = _project_with_four_chapters(tmp_path)
+    search = SearchRepository(project)
+    visible = search.index_document(
+        document_type="CHARACTER_STATE",
+        source_id="state-visible",
+        chapter_id=chapters[0].id,
+        title="林岚的旧伤",
+        content="她在雨夜里再次感觉到左肩疼痛。",
+        participants=("character-lan",),
+        pinned_weight=0,
+        review_status=ReviewStatus.APPROVED,
+        status=MemoryStatus.CURRENT,
+    )
+    search.index_document(
+        document_type="CHARACTER_STATE",
+        source_id="state-review",
+        chapter_id=chapters[1].id,
+        title="未审核状态",
+        content="这条候选状态仍需人工确认。",
+        participants=("character-lan",),
+        pinned_weight=0,
+        review_status=ReviewStatus.REVIEW,
+        status=MemoryStatus.CURRENT,
+    )
+    search.index_document(
+        document_type="CHARACTER_STATE",
+        source_id="state-future",
+        chapter_id=chapters[3].id,
+        title="未来状态",
+        content="未来章节才会发生的变化。",
+        participants=("character-lan",),
+        pinned_weight=0,
+        review_status=ReviewStatus.APPROVED,
+        status=MemoryStatus.CURRENT,
+    )
+
+    hits = HistoryRetriever(search).search(
+        "unrelated lighthouse clue",
+        chapters[2].id,
+        participants=("character-lan",),
+    )
+
+    assert [hit.document_id for hit in hits] == [visible.id]
+    assert hits[0].lexical_score == 0
+    assert hits[0].retrieval_routes == ("SUBJECT",)
+
+
+def test_multi_route_recall_merges_duplicate_documents(tmp_path: Path) -> None:
+    project, _, chapters = _project_with_four_chapters(tmp_path)
+    search = SearchRepository(project)
+    document = search.index_chapter(
+        chapters[0].id,
+        "钟楼档案",
+        "林岚在钟楼档案中找到了火灾记录。",
+        participants=("character-lan",),
+    )
+
+    hits = HistoryRetriever(search).search(
+        "钟楼档案",
+        chapters[1].id,
+        participants=("character-lan",),
+    )
+
+    assert [hit.document_id for hit in hits] == [document.id]
+    assert hits[0].retrieval_routes == ("EXACT_PHRASE", "KEYWORD", "SUBJECT")
+
+
+def test_stronger_bm25_match_receives_the_higher_lexical_score(tmp_path: Path) -> None:
+    project, _, chapters = _project_with_four_chapters(tmp_path)
+    search = SearchRepository(project)
+    weaker = search.index_document(
+        document_type="CANON",
+        source_id="canon-weaker",
+        chapter_id=chapters[0].id,
+        title="archive note",
+        content=(
+            "sealed letter evidence appears once among unrelated archive filler " * 4
+        ),
+        participants=(),
+        pinned_weight=0,
+        review_status=ReviewStatus.APPROVED,
+        status=MemoryStatus.CURRENT,
+    )
+    stronger = search.index_document(
+        document_type="CANON",
+        source_id="canon-stronger",
+        chapter_id=chapters[0].id,
+        title="archive proof",
+        content="sealed letter evidence " * 3,
+        participants=(),
+        pinned_weight=0,
+        review_status=ReviewStatus.APPROVED,
+        status=MemoryStatus.CURRENT,
+    )
+
+    hits = HistoryRetriever(search).search(
+        "sealed letter evidence",
+        chapters[1].id,
+    )
+
+    assert [hit.document_id for hit in hits[:2]] == [stronger.id, weaker.id]
+    assert hits[0].lexical_score > hits[1].lexical_score

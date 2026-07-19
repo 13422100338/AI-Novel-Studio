@@ -1,12 +1,26 @@
 from __future__ import annotations
 
+import re
 import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Literal
 
 from ai_novel_studio.domain.identifiers import new_id
 from ai_novel_studio.domain.memory import MemoryStatus, ReviewStatus
 from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
+
+RetrievalRoute = Literal["EXACT_PHRASE", "KEYWORD", "SUBJECT"]
+
+_SEARCH_TERM = re.compile(r"[a-z0-9_]{3,}|[\u3400-\u4dbf\u4e00-\u9fff]+")
+_MAX_KEYWORD_TERMS = 24
+_MAX_SEARCH_QUERY_CHARS = 20_000
+_MAX_SEARCH_PARTICIPANTS = 64
+_ROUTE_ORDER: dict[RetrievalRoute, int] = {
+    "EXACT_PHRASE": 0,
+    "KEYWORD": 1,
+    "SUBJECT": 2,
+}
 
 
 def _now() -> datetime:
@@ -34,9 +48,10 @@ class SearchDocument:
 @dataclass(frozen=True, slots=True)
 class SearchRow:
     document: SearchDocument
-    lexical_rank: float
+    lexical_rank: float | None
     excerpt: str
     chapter_distance: int | None
+    retrieval_routes: tuple[RetrievalRoute, ...]
 
 
 class SearchRepository:
@@ -181,46 +196,140 @@ class SearchRepository:
         query: str,
         before_chapter_id: str,
         *,
+        participants: tuple[str, ...] = (),
         limit: int,
     ) -> tuple[SearchRow, ...]:
-        if not query.strip():
+        normalized_query = query.strip()[:_MAX_SEARCH_QUERY_CHARS]
+        normalized_participants = tuple(
+            dict.fromkeys(value.strip() for value in participants if value.strip())
+        )[:_MAX_SEARCH_PARTICIPANTS]
+        if not normalized_query and not normalized_participants:
             return ()
-        phrase = '"' + query.strip().replace('"', '""') + '"'
+        route_rows: list[SearchRow] = []
+        candidate_limit = max(limit * 5, limit)
         with self.project.database.connect() as connection:
-            rows = connection.execute(
-                """
-                WITH ordered AS (
-                    SELECT c.id, ROW_NUMBER() OVER (
-                        ORDER BY v.sort_index, c.sort_index, c.id
-                    ) AS ordinal
-                    FROM chapters c JOIN volumes v ON v.id = c.volume_id
-                    WHERE c.is_deleted = 0
-                ), target AS (
-                    SELECT ordinal FROM ordered WHERE id = ?
+            if normalized_query:
+                phrase = '"' + normalized_query.replace('"', '""') + '"'
+                route_rows.extend(
+                    self._fts_rows(
+                        connection,
+                        before_chapter_id,
+                        phrase,
+                        "EXACT_PHRASE",
+                        candidate_limit,
+                    )
                 )
-                SELECT d.*, bm25(memory_fts) AS lexical_rank,
-                    snippet(memory_fts, 2, '[', ']', '…', 32) AS excerpt,
-                    CASE WHEN source.ordinal IS NULL THEN NULL
-                         ELSE target.ordinal - source.ordinal END AS chapter_distance
-                FROM memory_fts
-                JOIN memory_documents d ON d.id = memory_fts.document_id
-                LEFT JOIN ordered source ON source.id = d.chapter_id
-                CROSS JOIN target
-                WHERE memory_fts MATCH ?
-                  AND d.review_status IN ('APPROVED', 'LOCKED')
-                  AND (d.chapter_id IS NULL OR source.ordinal < target.ordinal)
-                LIMIT ?
-                """,
-                (before_chapter_id, phrase, max(limit * 5, limit)),
-            ).fetchall()
+                keyword_query = _keyword_query(normalized_query)
+                if keyword_query:
+                    route_rows.extend(
+                        self._fts_rows(
+                            connection,
+                            before_chapter_id,
+                            keyword_query,
+                            "KEYWORD",
+                            candidate_limit,
+                        )
+                    )
+            if normalized_participants:
+                route_rows.extend(
+                    self._subject_rows(
+                        connection,
+                        before_chapter_id,
+                        normalized_participants,
+                        candidate_limit,
+                    )
+                )
+        return _merge_rows(route_rows)
+
+    def _fts_rows(
+        self,
+        connection: sqlite3.Connection,
+        before_chapter_id: str,
+        match_query: str,
+        route: RetrievalRoute,
+        limit: int,
+    ) -> tuple[SearchRow, ...]:
+        rows = connection.execute(
+            """
+            WITH ordered AS (
+                SELECT c.id, ROW_NUMBER() OVER (
+                    ORDER BY v.sort_index, c.sort_index, c.id
+                ) AS ordinal
+                FROM chapters c JOIN volumes v ON v.id = c.volume_id
+                WHERE c.is_deleted = 0
+            ), target AS (
+                SELECT ordinal FROM ordered WHERE id = ?
+            )
+            SELECT d.*, bm25(memory_fts) AS lexical_rank,
+                snippet(memory_fts, 2, '[', ']', '…', 32) AS excerpt,
+                CASE WHEN source.ordinal IS NULL THEN NULL
+                     ELSE target.ordinal - source.ordinal END AS chapter_distance
+            FROM memory_fts
+            JOIN memory_documents d ON d.id = memory_fts.document_id
+            LEFT JOIN ordered source ON source.id = d.chapter_id
+            CROSS JOIN target
+            WHERE memory_fts MATCH ?
+              AND d.review_status IN ('APPROVED', 'LOCKED')
+              AND (d.chapter_id IS NULL OR source.ordinal < target.ordinal)
+            ORDER BY lexical_rank, d.id
+            LIMIT ?
+            """,
+            (before_chapter_id, match_query, limit),
+        ).fetchall()
         return tuple(
             SearchRow(
                 self._document(row),
                 float(row["lexical_rank"]),
                 row["excerpt"],
-                int(row["chapter_distance"])
-                if row["chapter_distance"] is not None
-                else None,
+                _chapter_distance(row),
+                (route,),
+            )
+            for row in rows
+        )
+
+    def _subject_rows(
+        self,
+        connection: sqlite3.Connection,
+        before_chapter_id: str,
+        participants: tuple[str, ...],
+        limit: int,
+    ) -> tuple[SearchRow, ...]:
+        participant_match = " OR ".join(
+            "instr(' ' || d.participants || ' ', ' ' || ? || ' ') > 0"
+            for _ in participants
+        )
+        rows = connection.execute(
+            f"""
+            WITH ordered AS (
+                SELECT c.id, ROW_NUMBER() OVER (
+                    ORDER BY v.sort_index, c.sort_index, c.id
+                ) AS ordinal
+                FROM chapters c JOIN volumes v ON v.id = c.volume_id
+                WHERE c.is_deleted = 0
+            ), target AS (
+                SELECT ordinal FROM ordered WHERE id = ?
+            )
+            SELECT d.*, substr(d.content, 1, 240) AS excerpt,
+                CASE WHEN source.ordinal IS NULL THEN NULL
+                     ELSE target.ordinal - source.ordinal END AS chapter_distance
+            FROM memory_documents d
+            LEFT JOIN ordered source ON source.id = d.chapter_id
+            CROSS JOIN target
+            WHERE d.review_status IN ('APPROVED', 'LOCKED')
+              AND (d.chapter_id IS NULL OR source.ordinal < target.ordinal)
+              AND ({participant_match})
+            ORDER BY d.pinned_weight DESC, chapter_distance, d.id
+            LIMIT ?
+            """,
+            (before_chapter_id, *participants, limit),
+        ).fetchall()
+        return tuple(
+            SearchRow(
+                self._document(row),
+                None,
+                row["excerpt"],
+                _chapter_distance(row),
+                ("SUBJECT",),
             )
             for row in rows
         )
@@ -244,3 +353,58 @@ class SearchRepository:
             datetime.fromisoformat(row["updated_at"]),
         )
 
+
+def _keyword_query(query: str) -> str:
+    terms: list[str] = []
+    for match in _SEARCH_TERM.finditer(query.casefold()):
+        value = match.group(0)
+        candidates = (
+            (value,)
+            if value.isascii()
+            else tuple(value[index : index + 3] for index in range(len(value) - 2))
+        )
+        for candidate in candidates:
+            if candidate not in terms:
+                terms.append(candidate)
+            if len(terms) >= _MAX_KEYWORD_TERMS:
+                break
+        if len(terms) >= _MAX_KEYWORD_TERMS:
+            break
+    return " OR ".join(f'"{term}"' for term in terms)
+
+
+def _chapter_distance(row: sqlite3.Row) -> int | None:
+    value = row["chapter_distance"]
+    return int(value) if value is not None else None
+
+
+def _merge_rows(rows: list[SearchRow]) -> tuple[SearchRow, ...]:
+    merged: dict[str, SearchRow] = {}
+    for row in rows:
+        current = merged.get(row.document.id)
+        if current is None:
+            merged[row.document.id] = row
+            continue
+        lexical_candidates = tuple(
+            value
+            for value in (current.lexical_rank, row.lexical_rank)
+            if value is not None
+        )
+        lexical_rank = min(lexical_candidates) if lexical_candidates else None
+        routes = tuple(
+            sorted(
+                set((*current.retrieval_routes, *row.retrieval_routes)),
+                key=_ROUTE_ORDER.__getitem__,
+            )
+        )
+        excerpt = current.excerpt
+        if current.lexical_rank is None and row.lexical_rank is not None:
+            excerpt = row.excerpt
+        merged[row.document.id] = SearchRow(
+            row.document,
+            lexical_rank,
+            excerpt,
+            row.chapter_distance,
+            routes,
+        )
+    return tuple(merged[document_id] for document_id in sorted(merged))

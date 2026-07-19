@@ -3,7 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from ai_novel_studio.domain.memory import MemoryStatus
-from ai_novel_studio.infrastructure.storage.search_repository import SearchRepository
+from ai_novel_studio.infrastructure.storage.search_repository import (
+    RetrievalRoute,
+    SearchRepository,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,6 +26,7 @@ class SearchHit:
     recency_score: float
     stale_penalty: float
     total_score: float
+    retrieval_routes: tuple[RetrievalRoute, ...]
 
 
 class HistoryRetriever:
@@ -41,9 +45,18 @@ class HistoryRetriever:
             raise ValueError("检索数量必须大于零")
         participant_set = set(participants)
         hits: list[SearchHit] = []
-        for row in self.repository.search_rows(query, before_chapter_id, limit=limit):
+        for row in self.repository.search_rows(
+            query,
+            before_chapter_id,
+            participants=participants,
+            limit=limit,
+        ):
             document = row.document
-            lexical_score = 1 / (1 + abs(row.lexical_rank))
+            lexical_score = (
+                1.0 + max(0.0, -row.lexical_rank)
+                if row.lexical_rank is not None
+                else 0.0
+            )
             overlap = participant_set.intersection(document.participants)
             participant_boost = float(len(overlap) * 2)
             recency_score = (
@@ -76,6 +89,7 @@ class HistoryRetriever:
                     recency_score,
                     stale_penalty,
                     total,
+                    row.retrieval_routes,
                 )
             )
         return tuple(
