@@ -20,6 +20,7 @@ EXPECTED_TABLES = {
     "style_samples",
     "memory_dependencies",
     "memory_documents",
+    "memory_embeddings",
     "context_manifests",
     "chapter_context_pins",
     "project_guidance",

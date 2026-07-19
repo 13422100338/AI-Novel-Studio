@@ -85,7 +85,7 @@ def test_schema_v12_backfills_character_subjects_and_aliases(tmp_path) -> None: 
     ).fetchall()
     connection.close()
 
-    assert version == LATEST_SCHEMA_VERSION == 15
+    assert version == LATEST_SCHEMA_VERSION == 16
     assert [tuple(row) for row in subjects] == [
         ("character-full", "CHARACTER", "艾瑞克·温德米尔", 1),
         ("character-short", "CHARACTER", "艾瑞克", 0),
