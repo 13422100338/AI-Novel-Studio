@@ -282,6 +282,17 @@ class SearchRepository:
             source = _embedding_source(self._document(row))
             if source.content_hash != normalized_hash:
                 raise RuntimeError("embedding source changed before vector save")
+            dimensions_mismatch = connection.execute(
+                """
+                SELECT 1 FROM memory_embeddings
+                WHERE model_id = ? AND status = 'CURRENT' AND document_id != ?
+                  AND dimensions != ?
+                LIMIT 1
+                """,
+                (normalized_model_id, document_id, len(normalized_vector)),
+            ).fetchone()
+            if dimensions_mismatch is not None:
+                raise ValueError("embedding dimensions changed for the same model ID")
             connection.execute(
                 """
                 INSERT INTO memory_embeddings (

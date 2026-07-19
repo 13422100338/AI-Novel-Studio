@@ -59,6 +59,20 @@ and manually pinned rows are scanned first when a project exceeds that budget.
 This bounded portable implementation is the Phase 3 baseline, not a claim that linear scanning is
 the permanent large-project solution.
 
+`EmbeddingIndexService` orchestrates cache construction above the repository rather than teaching
+storage code to call a model. It selects at most 250 pending sources, sends them to an injected
+`DocumentEmbeddingProvider` in batches of at most 64, validates exact output cardinality and stable
+dimensions for the provider's `model_id`, then saves each vector independently with its expected
+source hash. The repository also rejects a dimension change against any other current row for that
+model, so the invariant survives process restarts and separate indexing runs.
+
+Per-document commits are intentional for this disposable cache: one invalid vector or concurrent
+source edit cannot roll back valid vectors from the same provider response. A whole-batch provider
+failure is reported for that batch and later bounded batches may continue. Failed items remain
+missing or stale and therefore stay eligible for a later retry. Provider errors are truncated in
+the structured report; no model response, credential, or manuscript content is written to logs by
+this service.
+
 The new migration lives in `schema_migrations_v16.py`; v1-v15 remains frozen. The registry now
 rejects duplicate and missing versions when modules are composed. Migration execution continues to
 use the existing single `BEGIN IMMEDIATE` transaction. Failure therefore restores schema version
@@ -73,5 +87,6 @@ the real migration.
 - Vectors are explicitly disposable derived data; `memory_documents` remains authoritative.
 - Downgrade-in-place is not introduced. Recovery uses the existing backup path or transaction
   rollback on failed migration, rather than destructive reverse migrations.
-- Persistence, source-race protection, invalidation, bounded rebuild discovery, and local cosine
-  candidate retrieval are now enabled; real model/API wiring remains disabled until later tickets.
+- Persistence, source-race protection, invalidation, bounded rebuild discovery, batch indexing
+  orchestration, and local cosine candidate retrieval are now enabled; real model/API wiring remains
+  disabled until later tickets.

@@ -96,6 +96,33 @@ def test_embedding_save_rejects_a_vector_for_changed_source_text(tmp_path: Path)
         search.get_embedding(original.id, "embedding-model")
 
 
+def test_embedding_save_rejects_dimension_drift_for_the_same_model(
+    tmp_path: Path,
+) -> None:
+    search = SearchRepository(_project(tmp_path))
+    first = _index_document(search, source_id="first")
+    second = _index_document(search, source_id="second")
+    first_source = search.embedding_source(first.id)
+    second_source = search.embedding_source(second.id)
+    search.save_embedding(
+        first.id,
+        "embedding-model",
+        (1.0, 0.0),
+        expected_content_hash=first_source.content_hash,
+    )
+
+    with pytest.raises(ValueError, match="dimensions"):
+        search.save_embedding(
+            second.id,
+            "embedding-model",
+            (1.0, 0.0, 0.0),
+            expected_content_hash=second_source.content_hash,
+        )
+
+    with pytest.raises(KeyError):
+        search.get_embedding(second.id, "embedding-model")
+
+
 def test_reindex_only_stales_vectors_when_embedding_text_changes(tmp_path: Path) -> None:
     search = SearchRepository(_project(tmp_path))
     document = _index_document(search)
@@ -204,7 +231,7 @@ def test_embedding_recall_ranks_valid_current_vectors_by_cosine_similarity(
         (awaiting_review, (0.8, 0.2)),
         (corrupted, (0.7, 0.3)),
         (mismatched_hash, (0.6, 0.4)),
-        (wrong_dimensions, (1.0, 0.0, 0.0)),
+        (wrong_dimensions, (1.0, 0.0)),
     ):
         source = search.embedding_source(document.id)
         search.save_embedding(
@@ -228,6 +255,11 @@ def test_embedding_recall_ranks_valid_current_vectors_by_cosine_similarity(
         connection.execute(
             "UPDATE memory_embeddings SET content_hash = ? WHERE document_id = ?",
             ("a" * 64, mismatched_hash.id),
+        )
+        connection.execute(
+            "UPDATE memory_embeddings SET dimensions = 3, vector_json = '[1,0,0]' "
+            "WHERE document_id = ?",
+            (wrong_dimensions.id,),
         )
 
     candidates = search.recall_embeddings(
