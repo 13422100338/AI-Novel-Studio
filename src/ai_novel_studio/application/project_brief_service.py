@@ -10,6 +10,7 @@ from ai_novel_studio.application.brief_lifecycle_service import (
     BriefValidationError,
 )
 from ai_novel_studio.application.chapter_brief_compiler import ChapterBriefCompiler
+from ai_novel_studio.core.context.history_retriever import HistoryRetriever
 from ai_novel_studio.domain.generation import BriefStatus, ChapterBrief, CreationMode
 from ai_novel_studio.infrastructure.storage.chapter_brief_repository import (
     BriefDraftData,
@@ -32,7 +33,11 @@ from ai_novel_studio.infrastructure.storage.style_repository import StyleReposit
 class ProjectBriefService:
     """Coordinates real project Brief persistence without leaking storage into UI."""
 
-    def __init__(self, project: ProjectRepository) -> None:
+    def __init__(
+        self,
+        project: ProjectRepository,
+        history: HistoryRetriever,
+    ) -> None:
         self.repository = ChapterBriefRepository(project)
         self.requirements = ChapterRequirementRepository(project)
         provider = BriefContextProvider(
@@ -43,6 +48,7 @@ class ProjectBriefService:
             StyleRepository(project),
             SearchRepository(project),
             self.repository,
+            history,
         )
         self.compiler = ChapterBriefCompiler(provider, self.repository)
         self.lifecycle = BriefLifecycleService(self.repository, provider)

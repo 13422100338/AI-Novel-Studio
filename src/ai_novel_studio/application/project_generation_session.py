@@ -24,6 +24,7 @@ from ai_novel_studio.core.context.context_manifest import (
     ContextManifest,
     ContextManifestRepository,
 )
+from ai_novel_studio.core.context.history_retriever import HistoryRetriever
 from ai_novel_studio.domain.generation import BriefStatus, CreationMode, GenerationStatus
 from ai_novel_studio.infrastructure.llm import LLMGateway, LLMMessage, TaskPurpose
 from ai_novel_studio.infrastructure.storage.audit_repository import AuditRepository
@@ -78,7 +79,12 @@ class PreAcceptAuditPlan:
 class ProjectGenerationSession:
     """Framework-neutral project generation state and synchronous use cases."""
 
-    def __init__(self, project: ProjectRepository, gateway: LLMGateway) -> None:
+    def __init__(
+        self,
+        project: ProjectRepository,
+        gateway: LLMGateway,
+        history: HistoryRetriever,
+    ) -> None:
         self.project = project
         self.gateway = gateway
         self.chapters = ChapterRepository(project)
@@ -95,6 +101,7 @@ class ProjectGenerationSession:
             self.briefs,
             self.runs,
             self.manifests,
+            history=history,
         )
         self.prose = ProseGenerationService(
             gateway,

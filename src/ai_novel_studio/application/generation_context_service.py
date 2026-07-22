@@ -17,6 +17,7 @@ from ai_novel_studio.core.context.context_manifest import (
     ContextManifestRepository,
 )
 from ai_novel_studio.core.context.context_ranking import ContextTask
+from ai_novel_studio.core.context.history_retriever import HistoryRetriever
 from ai_novel_studio.core.context.prose_prompt import (
     PROSE_PROMPT_VERSION,
     build_prose_messages,
@@ -96,6 +97,7 @@ class GenerationContextService:
         runs: GenerationRepository,
         manifests: ContextManifestRepository,
         builder: ContextBuilder | None = None,
+        history: HistoryRetriever | None = None,
     ) -> None:
         self.project = project
         self.chapters = chapters
@@ -104,7 +106,7 @@ class GenerationContextService:
         self.runs = runs
         self.manifests = manifests
         self.builder = builder or ContextBuilder()
-        self.memory_context = GenerationMemoryContextProvider(project)
+        self.memory_context = GenerationMemoryContextProvider(project, history)
         self.project_guidance = ProjectGuidanceService(
             ProjectGuidanceRepository(project)
         )

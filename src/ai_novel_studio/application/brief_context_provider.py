@@ -91,6 +91,7 @@ class BriefContextProvider:
         styles: StyleRepository,
         search: SearchRepository,
         briefs: ChapterBriefRepository,
+        history: HistoryRetriever | None = None,
     ) -> None:
         self.project = project
         self.requirements = requirements
@@ -99,6 +100,7 @@ class BriefContextProvider:
         self.styles = styles
         self.search = search
         self.briefs = briefs
+        self.history = history or HistoryRetriever(search)
         self.reader_summary = ReaderKnowledgeSummaryService(project)
 
     def collect(self, request: BriefCompilationRequest) -> BriefCompilationInputs:
@@ -234,7 +236,7 @@ class BriefContextProvider:
             )
 
         history_texts: list[str] = []
-        for hit in HistoryRetriever(self.search).search(
+        for hit in self.history.search(
             requirement.content.strip(),
             request.chapter_id,
             participants=request.participants,

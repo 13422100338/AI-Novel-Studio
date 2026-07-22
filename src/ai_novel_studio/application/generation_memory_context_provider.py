@@ -43,7 +43,11 @@ from ai_novel_studio.infrastructure.storage.style_repository import StyleReposit
 class GenerationMemoryContextProvider:
     """Builds bounded, pre-chapter memory blocks for prose generation."""
 
-    def __init__(self, project: ProjectRepository) -> None:
+    def __init__(
+        self,
+        project: ProjectRepository,
+        history: HistoryRetriever | None = None,
+    ) -> None:
         self.project = project
         self.characters = CharacterMemoryRepository(project)
         self.character_cards = CharacterCardContextService(project)
@@ -53,7 +57,7 @@ class GenerationMemoryContextProvider:
         self.pins = ChapterContextPinRepository(project)
         self.narrative = NarrativeMemoryRepository(project)
         self.styles = StyleRepository(project)
-        self.history = HistoryRetriever(SearchRepository(project))
+        self.history = history or HistoryRetriever(SearchRepository(project))
         self.summaries = PlotMemoryContextService(project)
         self.view_assertions = ViewAssertionContextProvider(project)
 
