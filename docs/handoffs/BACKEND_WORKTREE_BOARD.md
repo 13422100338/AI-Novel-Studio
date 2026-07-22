@@ -3,6 +3,7 @@
 ## Control Plane
 
 - Master controller: current pinned Codex task.
+- Master task ID: `019f87b5-ce06-7f82-bb24-871f43b98f32`.
 - Integration policy: `main`-only integration. Worker tasks never merge or push `main`.
 - Superpowers: disabled for this project workflow.
 - Initial business-code baseline: `e35b50d` (the backend code state before the governance-only dispatch commit).
@@ -60,6 +61,35 @@ Suggested integration order: `embedding-production` -> `generation-profile-audit
 - Do not introduce a second architecture, parallel service layer, replacement pipeline, or duplicate persistence path. Extend the existing boundaries with the smallest correct change.
 - Each worker changes only its assigned ticket and explicitly reports anything discovered outside scope.
 - Structured model output is untrusted and must be validated before persistence.
+
+## Proactive Worker Feedback
+
+Every worktree worker must send a cross-task report directly to the master task for these events:
+
+- `BLOCKED`: the assigned ticket cannot continue safely.
+- `SCOPE_CHANGE`: the required files or behavior exceed the approved ticket.
+- `DECISION_REQUIRED`: multiple materially different solutions require a master decision.
+- `READY_FOR_REVIEW`: the approved increment is complete and ready for master verification.
+
+Workers must not rely only on a reply in their own task. When cross-task messaging is available, send the report to master task `019f87b5-ce06-7f82-bb24-871f43b98f32` and confirm delivery locally. Use this format:
+
+```text
+MASTER REPORT
+
+Event: BLOCKED | SCOPE_CHANGE | DECISION_REQUIRED | READY_FOR_REVIEW
+Task:
+Branch:
+Baseline main SHA:
+Current commit state: uncommitted | committed-not-pushed | pushed
+Evidence:
+Impact:
+Recommendation:
+Requested master action:
+Changed files:
+Tests and checks:
+```
+
+If cross-task messaging is unavailable, output the same `MASTER REPORT` block for the user to paste into the master task.
 
 Do not copy the following local-only or sensitive workspace files into any worktree:
 
