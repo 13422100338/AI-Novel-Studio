@@ -15,6 +15,8 @@
 
 ## Worktree Startup Rules
 
+- The user makes the final decision to start, resume, or advance lanes A, B, and C, including each new increment. The master may recommend sequencing and prepare read-only tickets, but must not authorize implementation without explicit user approval.
+- Debugging and bug fixes inside an already authorized active increment may proceed without a new lane-start decision, provided they stay within the approved scope.
 - Create each new Codex Worktree task from the latest `main`.
 - A new worktree may start in detached `HEAD`; before beginning work, use **Create branch here** and confirm that the worktree is on its assigned `codex/...` branch.
 - Use an independent `.venv` or Local Environment setup in each worktree. Do not copy the main worktree's `.venv`.
