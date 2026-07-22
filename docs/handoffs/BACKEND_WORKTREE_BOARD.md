@@ -22,14 +22,16 @@
 
 All Wave 1 tasks were dispatched from `3382dd36c2a4aeb4acdab411e9211885b633e678`; their initial business-code baseline remains `e35b50d`.
 
-- Active implementation: `embedding-production` increment A1 (provider and gateway embedding contract).
-- Active schema owner: none. Increment A1 must not change the project database schema.
+- Active implementations:
+  - `embedding-production` increment A1 (provider and gateway embedding contract).
+  - `view-operations-ui` increment C1 (single-record Legacy Reader Knowledge to Reader View UI).
+- Active schema owner: none. Increments A1 and C1 must not change the project database schema.
 
 | Task | Model / reasoning | Thread | Worktree | Assigned branch | HEAD state | Status |
 | --- | --- | --- | --- | --- | --- | --- |
-| `embedding-production` | `gpt-5.6-sol` / `high` | `019f87e8-6d32-7141-b9b4-4f1142e4db4e` | `C:\Users\钟子诚\.codex\worktrees\93d7\AI-Novel-Studio` | `codex/embedding-production` | detached | increment A1 approved / starting |
+| `embedding-production` | `gpt-5.6-sol` / `high` | `019f87e8-6d32-7141-b9b4-4f1142e4db4e` | `C:\Users\钟子诚\.codex\worktrees\93d7\AI-Novel-Studio` | `codex/embedding-production` | branch | increment A1 implementation / uncommitted |
 | `generation-profile-audit-policy` | `gpt-5.6-terra` / `medium` | `019f87e8-696e-7f11-bcfe-1552f51cabc3` | `C:\Users\钟子诚\.codex\worktrees\4df4\AI-Novel-Studio` | `codex/generation-profile-audit-policy` | detached | readiness-only / not started |
-| `view-operations-ui` | `gpt-5.6-terra` / `medium` | `019f87e8-7a77-7902-b3d1-a38f32240136` | `C:\Users\钟子诚\.codex\worktrees\8802\AI-Novel-Studio` | `codex/view-operations-ui` | detached | readiness-only / not started |
+| `view-operations-ui` | `gpt-5.6-terra` / `medium` | `019f87e8-7a77-7902-b3d1-a38f32240136` | `C:\Users\钟子诚\.codex\worktrees\8802\AI-Novel-Studio` | `codex/view-operations-ui` | detached | increment C1 approved / starting |
 
 Suggested integration order: `embedding-production` -> `generation-profile-audit-policy` -> `view-operations-ui`.
 
