@@ -137,6 +137,13 @@ If `main` advanced after the worker baseline, the worker must first sync with th
 
 ## Merge Gates
 
+### Cost-aware master review
+
+- Treat the worker's evidence, narrow tests, and self-review as the primary review record. The master does not automatically repeat the worker's full investigation or reread every changed line.
+- For ordinary UI, documentation, and isolated low-risk tickets, the master checks branch/baseline, changed-file scope, commit cleanliness, reported gates, and a small integration smoke test or targeted spot-check.
+- Use deep master review only for public-contract changes, schema or migration work, security and untrusted-input boundaries, persistence semantics, cross-module refactors, merge conflicts, or contradictory/incomplete worker evidence.
+- Reuse completed read-only review findings instead of commissioning or manually duplicating the same review axis. Escalate only the concrete risk that remains unresolved.
+
 A worker branch may be integrated only when all applicable gates pass:
 
 1. The delivery uses the `READY FOR MASTER REVIEW` template and identifies an auditable final commit.
