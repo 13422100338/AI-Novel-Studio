@@ -58,6 +58,7 @@ from ai_novel_studio.application.setting_document_service import (
     SettingImportReport,
 )
 from ai_novel_studio.application.style_workspace_service import StyleWorkspaceService
+from ai_novel_studio.application.view_assertion_service import ViewAssertionService
 from ai_novel_studio.domain.agent import AgentToolCallStatus, AgentToolName
 from ai_novel_studio.domain.audit import AuditFindingStatus
 from ai_novel_studio.infrastructure.llm import LLMMessage, TaskPurpose, UsageSnapshot
@@ -1176,6 +1177,7 @@ class MainWindow(QMainWindow):
             self.memory_window.setting_save_requested.connect(self.save_setting_document)
             self.memory_window.setting_analyze_requested.connect(self.analyze_setting_document)
             self.memory_window.identity_changed.connect(self._character_identity_changed)
+            self.memory_window.reader_view_changed.connect(self._bind_memory_window)
         self._bind_memory_window()
         self._show_workspace_window(self.memory_window)
 
@@ -1195,6 +1197,11 @@ class MainWindow(QMainWindow):
             target_chapter_id=chapter_id,
             guidance_service=ProjectGuidanceService(ProjectGuidanceRepository(project)),
             identity_service=CharacterIdentityService(project),
+            reader_view_service=ViewAssertionService(project),
+            reader_view_subjects=tuple(
+                (character.id, character.canonical_name)
+                for character in CharacterMemoryRepository(project).list_characters()
+            ),
         )
 
     def _character_identity_changed(self) -> None:

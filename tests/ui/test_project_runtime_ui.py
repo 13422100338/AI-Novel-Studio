@@ -1,5 +1,7 @@
 from pathlib import Path
 
+from PySide6.QtWidgets import QMessageBox
+from pytest import MonkeyPatch
 from pytestqt.qtbot import QtBot
 
 from ai_novel_studio.application.agent_loop_service import AgentLoopResult
@@ -27,7 +29,14 @@ from ai_novel_studio.domain.agent import (
 )
 from ai_novel_studio.domain.audit import AuditFindingStatus, AuditTargetKind
 from ai_novel_studio.domain.generation import BriefStatus, CreationMode, GenerationStatus
-from ai_novel_studio.domain.memory import Authority, ReviewStatus, SourceType, SummaryLevel
+from ai_novel_studio.domain.memory import (
+    Authority,
+    KnowledgeState,
+    KnowledgeSubject,
+    ReviewStatus,
+    SourceType,
+    SummaryLevel,
+)
 from ai_novel_studio.infrastructure.storage.audit_repository import AuditRepository
 from ai_novel_studio.infrastructure.storage.chapter_brief_repository import (
     ChapterBriefRepository,
@@ -416,6 +425,48 @@ def test_memory_window_opens_character_identity_review_for_project(
     assert dialog is not None
     assert dialog.isVisible()
     assert dialog.candidate_selector.count() == 1
+
+
+def test_main_window_injects_reader_view_operation_dependencies(
+    qtbot: QtBot, tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    runtime, chapter_id = _project_with_chapter(tmp_path / "novel", tmp_path)
+    memory = CharacterMemoryRepository(runtime.project)
+    character = memory.create_character("艾瑞克")
+    item = memory.create_knowledge_item(
+        "匿名来信",
+        "读者看见守夜人投递匿名来信。",
+        Authority.USER_CONFIRMED,
+        ReviewStatus.APPROVED,
+    )
+    memory.append_knowledge_event(
+        item.id,
+        KnowledgeSubject.READER,
+        runtime.project.project.id,
+        chapter_id,
+        KnowledgeState.KNOWN,
+        "第一章正文",
+        SourceType.HUMAN,
+        ReviewStatus.APPROVED,
+    )
+    window = MainWindow(model_runtime=UiModelRuntime(tmp_path), project_runtime=runtime)
+    qtbot.addWidget(window)
+    window.load_project_chapter(chapter_id)
+
+    window.open_memory_window()
+
+    assert window.memory_window is not None
+    assert window.memory_window.reader_view_candidate_selector.count() == 1
+    assert window.memory_window.reader_view_subject_selector.currentData() == character.id
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
+    )
+
+    window.memory_window.reader_view_convert_button.click()
+
+    assert window.memory_window.reader_view_candidate_selector.count() == 0
 
 
 def test_agent_character_merge_proposal_opens_review_instead_of_mutating_memory(

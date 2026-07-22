@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from typing import Protocol
 
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
@@ -31,6 +32,9 @@ from ai_novel_studio.application.memory_workspace_service import (
     MemoryWorkspaceService,
 )
 from ai_novel_studio.application.project_guidance_service import ProjectGuidanceService
+from ai_novel_studio.application.view_assertion_service import (
+    LegacyReaderViewCandidate,
+)
 from ai_novel_studio.domain.memory import Authority, MemoryStatus, ReviewStatus
 from ai_novel_studio.ui.demo_data import WorkspaceDemoData
 from ai_novel_studio.ui.i18n import language_manager
@@ -49,10 +53,26 @@ CANON_GROUPS = (
 )
 
 
+class ReaderViewOperationService(Protocol):
+    def list_legacy_reader_view_candidates(
+        self,
+    ) -> tuple[LegacyReaderViewCandidate, ...]: ...
+
+    def replace_legacy_reader_event(
+        self,
+        *,
+        legacy_event_id: str,
+        subject_id: str,
+        content: str,
+        confirmed_by_user: bool,
+    ) -> object: ...
+
+
 class MemoryWindow(QMainWindow):
     setting_save_requested = Signal(str, str, str, object)
     setting_analyze_requested = Signal(str, str, str, object)
     identity_changed = Signal()
+    reader_view_changed = Signal()
 
     def __init__(self, data: WorkspaceDemoData, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -72,6 +92,8 @@ class MemoryWindow(QMainWindow):
         self._guidance_revision = 0
         self._identity_service: CharacterIdentityService | None = None
         self.identity_dialog: CharacterIdentityConflictDialog | None = None
+        self._reader_view_service: ReaderViewOperationService | None = None
+        self._reader_view_candidates: dict[str, LegacyReaderViewCandidate] = {}
 
         self.setWindowTitle("记忆库 · AI Novel Studio")
         self.setMinimumSize(820, 640)
@@ -163,6 +185,8 @@ class MemoryWindow(QMainWindow):
         layout.addWidget(title)
         layout.addWidget(self.explanation_label)
         layout.addWidget(self.tabs, 1)
+        self.reader_view_panel = self._reader_view_operation_panel(surface)
+        layout.addWidget(self.reader_view_panel)
         layout.addWidget(note)
         self.setCentralWidget(surface)
 
@@ -175,6 +199,8 @@ class MemoryWindow(QMainWindow):
         target_chapter_id: str | None = None,
         guidance_service: ProjectGuidanceService | None = None,
         identity_service: CharacterIdentityService | None = None,
+        reader_view_service: ReaderViewOperationService | None = None,
+        reader_view_subjects: tuple[tuple[str, str], ...] = (),
     ) -> None:
         if (
             self._promotion_coordinator is not None
@@ -202,6 +228,7 @@ class MemoryWindow(QMainWindow):
         self._pin_chapter_id = target_chapter_id
         self._identity_service = identity_service
         self.identity_review_button.setEnabled(identity_service is not None)
+        self._reader_view_service = reader_view_service
         self._promotion_coordinator = MemoryPromotionCoordinator(service, self)
         self._promotion_coordinator.progress_changed.connect(
             self._bulk_promotion_progress
@@ -233,6 +260,7 @@ class MemoryWindow(QMainWindow):
         self.setting_title_edit.setText(setting_draft[0])
         self.setting_type_combo.setCurrentText(setting_draft[1])
         self.setting_editor.setPlainText(setting_draft[2])
+        self._bind_reader_view_operation(reader_view_subjects)
         if not grouped:
             self.metadata_label.setText("该章节边界之前没有可显示的记忆记录。")
             self.save_button.setEnabled(False)
@@ -246,6 +274,163 @@ class MemoryWindow(QMainWindow):
         # remain immediately usable; the project guidance tab stays available at index 0.
         self.tabs.setCurrentIndex(1)
         self._refresh_current_record()
+
+    def _reader_view_operation_panel(self, parent: QWidget) -> QFrame:
+        panel = QFrame(parent)
+        panel.setObjectName("cardSurface")
+        layout = QVBoxLayout(panel)
+        title = QLabel("Reader View 接管", panel)
+        title.setObjectName("sectionEyebrow")
+        explanation = QLabel(
+            "仅将一条已确认的旧读者知识接管为 Reader View；不会删除原记录，也不会批量处理。",
+            panel,
+        )
+        explanation.setWordWrap(True)
+        explanation.setObjectName("mutedLabel")
+        self.reader_view_candidate_selector = QComboBox(panel)
+        self.reader_view_candidate_selector.setAccessibleName("选择待接管的旧读者知识")
+        self.reader_view_candidate_selector.currentIndexChanged.connect(
+            self._render_reader_view_candidate
+        )
+        self.reader_view_source_label = QLabel(panel)
+        self.reader_view_source_label.setWordWrap(True)
+        self.reader_view_source_label.setObjectName("mutedLabel")
+        self.reader_view_subject_selector = QComboBox(panel)
+        self.reader_view_subject_selector.setAccessibleName("选择 Reader View 目标人物")
+        self.reader_view_subject_selector.currentIndexChanged.connect(
+            self._refresh_reader_view_button
+        )
+        self.reader_view_content_editor = QPlainTextEdit(panel)
+        self.reader_view_content_editor.setAccessibleName("编辑 Reader View 内容")
+        self.reader_view_content_editor.setMaximumHeight(90)
+        self.reader_view_content_editor.textChanged.connect(
+            self._refresh_reader_view_button
+        )
+        self.reader_view_convert_button = QPushButton("确认接管为 Reader View", panel)
+        self.reader_view_convert_button.setAccessibleName("确认单条 Reader View 接管")
+        self.reader_view_convert_button.clicked.connect(self._replace_reader_view_candidate)
+        self.reader_view_status_label = QLabel("当前未绑定项目。", panel)
+        self.reader_view_status_label.setWordWrap(True)
+        self.reader_view_status_label.setObjectName("mutedLabel")
+        form = QFormLayout()
+        form.addRow("旧读者知识", self.reader_view_candidate_selector)
+        form.addRow("来源", self.reader_view_source_label)
+        form.addRow("目标人物", self.reader_view_subject_selector)
+        form.addRow("Reader View 内容", self.reader_view_content_editor)
+        layout.addWidget(title)
+        layout.addWidget(explanation)
+        layout.addLayout(form)
+        layout.addWidget(self.reader_view_convert_button)
+        layout.addWidget(self.reader_view_status_label)
+        self._set_reader_view_operation_enabled(False)
+        return panel
+
+    def _bind_reader_view_operation(
+        self, reader_view_subjects: tuple[tuple[str, str], ...]
+    ) -> None:
+        self.reader_view_subject_selector.blockSignals(True)
+        self.reader_view_subject_selector.clear()
+        for subject_id, subject_name in reader_view_subjects:
+            self.reader_view_subject_selector.addItem(subject_name, subject_id)
+        self.reader_view_subject_selector.blockSignals(False)
+        service = self._reader_view_service
+        if service is None:
+            self._reader_view_candidates = {}
+            self.reader_view_status_label.setText("当前未绑定项目，无法接管 Reader View。")
+            self._set_reader_view_operation_enabled(False)
+            return
+        candidates = service.list_legacy_reader_view_candidates()
+        self._reader_view_candidates = {candidate.event_id: candidate for candidate in candidates}
+        self.reader_view_candidate_selector.blockSignals(True)
+        self.reader_view_candidate_selector.clear()
+        for candidate in candidates:
+            self.reader_view_candidate_selector.addItem(
+                f"{candidate.title} · {candidate.source_chapter_title}", candidate.event_id
+            )
+        self.reader_view_candidate_selector.blockSignals(False)
+        if not candidates:
+            self.reader_view_source_label.clear()
+            self.reader_view_content_editor.clear()
+            self.reader_view_status_label.setText("没有可接管的旧读者知识。")
+            self._set_reader_view_operation_enabled(False)
+            return
+        if not reader_view_subjects:
+            self.reader_view_source_label.clear()
+            self.reader_view_content_editor.clear()
+            self.reader_view_status_label.setText("没有可用的人物 Subject，无法创建 Reader View。")
+            self._set_reader_view_operation_enabled(False)
+            return
+        self._set_reader_view_operation_enabled(True)
+        self._render_reader_view_candidate()
+
+    def _render_reader_view_candidate(self, _index: int = -1) -> None:
+        candidate = self._current_reader_view_candidate()
+        if candidate is None:
+            return
+        self.reader_view_source_label.setText(
+            f"{candidate.source_chapter_title} · {candidate.source_chapter_id} · "
+            f"{candidate.state.value}"
+        )
+        self.reader_view_content_editor.setPlainText(candidate.detail)
+        self.reader_view_status_label.setText("请选择目标人物并确认单条接管。")
+        self._refresh_reader_view_button()
+
+    def _current_reader_view_candidate(self) -> LegacyReaderViewCandidate | None:
+        event_id = str(self.reader_view_candidate_selector.currentData() or "")
+        return self._reader_view_candidates.get(event_id)
+
+    def _set_reader_view_operation_enabled(self, enabled: bool) -> None:
+        self.reader_view_candidate_selector.setEnabled(enabled)
+        self.reader_view_subject_selector.setEnabled(enabled)
+        self.reader_view_content_editor.setReadOnly(not enabled)
+        self.reader_view_convert_button.setEnabled(False)
+
+    def _refresh_reader_view_button(self, _index: int = -1) -> None:
+        ready = (
+            self._reader_view_service is not None
+            and self._current_reader_view_candidate() is not None
+            and bool(self.reader_view_subject_selector.currentData())
+            and bool(self.reader_view_content_editor.toPlainText().strip())
+        )
+        self.reader_view_convert_button.setEnabled(ready)
+
+    def _replace_reader_view_candidate(self) -> None:
+        service = self._reader_view_service
+        candidate = self._current_reader_view_candidate()
+        subject_id = str(self.reader_view_subject_selector.currentData() or "")
+        content = self.reader_view_content_editor.toPlainText().strip()
+        if service is None or candidate is None or not subject_id or not content:
+            self.reader_view_status_label.setText("请选择候选、目标人物，并填写 Reader View 内容。")
+            self._refresh_reader_view_button()
+            return
+        answer = QMessageBox.question(
+            self,
+            "确认 Reader View 接管",
+            "这会仅接管当前一条旧读者知识为 Reader View，不会删除原记录。是否继续？",
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            service.replace_legacy_reader_event(
+                legacy_event_id=candidate.event_id,
+                subject_id=subject_id,
+                content=content,
+                confirmed_by_user=True,
+            )
+        except (PermissionError, ValueError) as error:
+            self.reader_view_status_label.setText(f"Reader View 接管失败：{error}")
+            return
+        self._bind_reader_view_operation(
+            tuple(
+                (
+                    str(self.reader_view_subject_selector.itemData(index)),
+                    self.reader_view_subject_selector.itemText(index),
+                )
+                for index in range(self.reader_view_subject_selector.count())
+            )
+        )
+        self.reader_view_status_label.setText("已接管当前旧读者知识为 Reader View。")
+        self.reader_view_changed.emit()
 
     def open_identity_review(self) -> None:
         if self._identity_service is None:
