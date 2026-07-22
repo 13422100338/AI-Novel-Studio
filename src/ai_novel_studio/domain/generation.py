@@ -39,6 +39,13 @@ def resolve_generation_settings(
     )
 
 
+def requires_forced_pre_accept_audit(
+    mode: CreationMode,
+    audit_policy: AuditPolicy,
+) -> bool:
+    return mode == CreationMode.STRICT or audit_policy == AuditPolicy.DEEP
+
+
 class BriefStatus(StrEnum):
     DRAFT = "DRAFT"
     FROZEN = "FROZEN"

@@ -26,6 +26,7 @@ from ai_novel_studio.core.context.prose_prompt import (
 from ai_novel_studio.core.context.token_budget import TokenBudget
 from ai_novel_studio.domain.chapter import Chapter
 from ai_novel_studio.domain.generation import (
+    AuditPolicy,
     BriefStatus,
     ChapterBrief,
     ChapterRequirement,
@@ -69,6 +70,7 @@ class GenerationPreparationRequest:
     model_provider_id: str
     model_id: str
     safety_margin: int = 1024
+    audit_policy: AuditPolicy = AuditPolicy.MINIMAL
 
     def __post_init__(self) -> None:
         if not self.chapter_id.strip():
@@ -146,6 +148,7 @@ class GenerationContextService:
             model_id=request.model_id,
             output_token_limit=request.output_token_limit,
             prompt_version=PROSE_PROMPT_VERSION,
+            audit_policy=request.audit_policy,
         )
         try:
             blocks = self._blocks(request, requirement, brief)

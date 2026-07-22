@@ -13,6 +13,7 @@ from ai_novel_studio.application.project_generation_session import (
 )
 from ai_novel_studio.core.context.context_manifest import ContextManifest
 from ai_novel_studio.domain.generation import (
+    AuditPolicy,
     CreationMode,
     GenerationStatus,
 )
@@ -87,6 +88,7 @@ class QtProjectGenerationRuntime(QObject):
     def prepare_and_start(
         self,
         mode: CreationMode,
+        audit_policy: AuditPolicy,
         output_token_limit: int,
         target_words: int,
         *,
@@ -105,6 +107,7 @@ class QtProjectGenerationRuntime(QObject):
                 mode,
                 output_token_limit,
                 target_words,
+                audit_policy,
             )
             self.coordinator.start(run_id)
         except (KeyError, LookupError, RuntimeError, ValueError) as error:

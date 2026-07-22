@@ -10,10 +10,10 @@ from ai_novel_studio.domain.audit import (
 )
 from ai_novel_studio.domain.chapter import Chapter
 from ai_novel_studio.domain.generation import (
-    CreationMode,
     GenerationCheckpoint,
     GenerationRun,
     GenerationStatus,
+    requires_forced_pre_accept_audit,
 )
 from ai_novel_studio.infrastructure.storage.audit_repository import AuditRepository
 from ai_novel_studio.infrastructure.storage.chapter_repository import ChapterRepository
@@ -91,7 +91,7 @@ class GenerationAcceptanceService:
     def _validate_strict_audit(
         self, run: GenerationRun, checkpoint: GenerationCheckpoint
     ) -> None:
-        if run.mode != CreationMode.STRICT:
+        if not requires_forced_pre_accept_audit(run.mode, run.audit_policy):
             return
         runs = self.audits.list_runs_for_target(
             target_kind=AuditTargetKind.GENERATED_DRAFT,

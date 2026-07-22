@@ -20,7 +20,12 @@ from ai_novel_studio.core.context.context_builder import (
 )
 from ai_novel_studio.core.context.context_manifest import ContextManifestRepository
 from ai_novel_studio.core.context.token_budget import ModelOutputLimitError
-from ai_novel_studio.domain.generation import BriefStatus, CreationMode, GenerationStatus
+from ai_novel_studio.domain.generation import (
+    AuditPolicy,
+    BriefStatus,
+    CreationMode,
+    GenerationStatus,
+)
 from ai_novel_studio.domain.view import (
     EpistemicStatus,
     ViewAssertionDraft,
@@ -143,6 +148,22 @@ def test_basic_preparation_preserves_output_limit_and_links_manifest(
     assert prepared.run.context_manifest_id == prepared.manifest.id
     assert prepared.manifest.run_id == prepared.run.id
     assert workspace["manifests"].load(prepared.manifest.id) == prepared.manifest
+
+
+def test_preparation_persists_deep_policy_without_strict_mode(tmp_path: Path) -> None:
+    workspace = _workspace(tmp_path)
+
+    prepared = workspace["service"].prepare(
+        _request(
+            workspace,
+            mode=CreationMode.STANDARD,
+            brief_id=workspace["brief"].id,
+            audit_policy=AuditPolicy.DEEP,
+        )
+    )
+
+    assert prepared.run.mode == CreationMode.STANDARD
+    assert prepared.run.audit_policy == AuditPolicy.DEEP
 
 
 def test_standard_preparation_compiles_reviewed_pov_and_reader_assertions_with_hard_filters(

@@ -14,6 +14,7 @@ from ai_novel_studio.domain.generation import (
     GenerationProfile,
     GenerationRun,
     GenerationStatus,
+    requires_forced_pre_accept_audit,
     resolve_generation_settings,
 )
 
@@ -53,6 +54,9 @@ def test_generation_profile_and_audit_policy_decode_legacy_modes() -> None:
         GenerationProfile.NORMAL,
         AuditPolicy.DEEP,
     )
+    assert requires_forced_pre_accept_audit(CreationMode.STRICT, AuditPolicy.STANDARD)
+    assert requires_forced_pre_accept_audit(CreationMode.STANDARD, AuditPolicy.DEEP)
+    assert not requires_forced_pre_accept_audit(CreationMode.STANDARD, AuditPolicy.STANDARD)
 
 
 def test_generation_records_are_immutable_and_keep_source_provenance() -> None:

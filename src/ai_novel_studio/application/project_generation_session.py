@@ -25,7 +25,13 @@ from ai_novel_studio.core.context.context_manifest import (
     ContextManifestRepository,
 )
 from ai_novel_studio.core.context.history_retriever import HistoryRetriever
-from ai_novel_studio.domain.generation import BriefStatus, CreationMode, GenerationStatus
+from ai_novel_studio.domain.generation import (
+    AuditPolicy,
+    BriefStatus,
+    CreationMode,
+    GenerationStatus,
+    requires_forced_pre_accept_audit,
+)
 from ai_novel_studio.infrastructure.llm import LLMGateway, LLMMessage, TaskPurpose
 from ai_novel_studio.infrastructure.storage.audit_repository import AuditRepository
 from ai_novel_studio.infrastructure.storage.chapter_brief_repository import (
@@ -161,6 +167,7 @@ class ProjectGenerationSession:
         mode: CreationMode,
         output_token_limit: int,
         target_words: int,
+        audit_policy: AuditPolicy = AuditPolicy.MINIMAL,
     ) -> str:
         if self.current_chapter_id is None or self.current_chapter_revision is None:
             raise RuntimeError("请先选择要生成的章节")
@@ -181,6 +188,7 @@ class ProjectGenerationSession:
                 target_words=target_words,
                 model_provider_id=route.provider_id,
                 model_id=route.model_id,
+                audit_policy=audit_policy,
             )
         )
         self.messages.put(prepared.run.id, prepared.messages)
@@ -224,8 +232,7 @@ class ProjectGenerationSession:
         if self.current_run_id is None:
             raise RuntimeError("采用前审校缺少生成任务")
         run = self.runs.get(self.current_run_id)
-        # STRICT is retained only as the persisted encoding for pre-accept audit.
-        if run.mode != CreationMode.STRICT:
+        if not requires_forced_pre_accept_audit(run.mode, run.audit_policy):
             return None
         checkpoint = self.checkpoints.latest(run.id)
         if checkpoint is None or self.current_chapter_revision is None:
@@ -236,7 +243,8 @@ class ProjectGenerationSession:
             generation_run_id=run.id,
             draft_text=draft_text,
             base_chapter_revision=self.current_chapter_revision,
-            mode=CreationMode.STRICT,
+            mode=run.mode,
+            audit_policy=run.audit_policy,
         )
         blockers = tuple(
             finding
@@ -255,6 +263,8 @@ class ProjectGenerationSession:
             revision=self.current_chapter_revision,
             model_provider_id=route.provider_id,
             model_id=route.model_id,
+            mode=run.mode,
+            audit_policy=run.audit_policy,
         )
         return PreAcceptAuditPlan(
             0,

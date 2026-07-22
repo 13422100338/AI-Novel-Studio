@@ -12,7 +12,7 @@ from ai_novel_studio.domain.audit import (
     AuditSeverity,
     AuditTargetKind,
 )
-from ai_novel_studio.domain.generation import CreationMode
+from ai_novel_studio.domain.generation import AuditPolicy, CreationMode
 from ai_novel_studio.infrastructure.storage.audit_repository import AuditRepository
 from ai_novel_studio.infrastructure.storage.chapter_repository import ChapterRepository
 from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
@@ -43,6 +43,7 @@ def test_model_audit_service_validates_and_persists_model_findings(tmp_path: Pat
         model_provider_id="provider",
         model_id="audit-model",
         prompt_version="model-audit-v1",
+        audit_policy=AuditPolicy.DEEP,
         findings=(
             ModelAuditFindingInput(
                 category="CHARACTER",
@@ -56,6 +57,8 @@ def test_model_audit_service_validates_and_persists_model_findings(tmp_path: Pat
     )
 
     assert result.run.model_id == "audit-model"
+    assert result.run.mode == CreationMode.STANDARD
+    assert result.run.audit_policy == AuditPolicy.DEEP
     assert result.findings[0].source == AuditFindingSource.MODEL
     assert result.findings[0].category == AuditFindingCategory.CHARACTER
     assert result.findings[0].severity == AuditSeverity.ERROR
@@ -98,4 +101,3 @@ def test_model_audit_service_rejects_invalid_category_and_confidence(tmp_path: P
             explanation="explanation",
             confidence=2.0,
         )
-

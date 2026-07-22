@@ -3,7 +3,7 @@ from __future__ import annotations
 from PySide6.QtCore import QObject, Signal
 from pytestqt.qtbot import QtBot
 
-from ai_novel_studio.domain.generation import CreationMode, GenerationStatus
+from ai_novel_studio.domain.generation import AuditPolicy, CreationMode, GenerationStatus
 from ai_novel_studio.infrastructure.llm import LLMUsage
 from ai_novel_studio.ui.demo_data import WorkspaceDemoData
 from ai_novel_studio.ui.main_window import MainWindow
@@ -32,6 +32,7 @@ class FakeGenerationRuntime(QObject):
     def prepare_and_start(
         self,
         mode: CreationMode,
+        audit_policy: AuditPolicy,
         output_token_limit: int,
         target_words: int,
         *,
@@ -68,6 +69,8 @@ def test_generation_controls_follow_mode_and_brief_state(qtbot: QtBot) -> None:
     panel = ManuscriptPanel(WorkspaceDemoData.sample())
     qtbot.addWidget(panel)
 
+    assert panel.pre_accept_audit.text() == "深度审校（采用前）"
+    assert panel.pre_accept_audit.accessibleName() == "普通模式深度审校（采用前）"
     panel.set_phase5_generation_enabled(True, frozen_brief_available=False)
     assert panel.mode_combo.count() == 2
     assert [panel.mode_combo.itemText(index) for index in range(2)] == ["快速", "普通"]
@@ -83,7 +86,8 @@ def test_generation_controls_follow_mode_and_brief_state(qtbot: QtBot) -> None:
     assert panel.generate_button.isEnabled() is True
     assert panel.mode_combo.currentText() == "普通"
     assert panel.pre_accept_audit.isChecked()
-    assert panel.current_creation_mode() == CreationMode.STRICT
+    assert panel.current_creation_mode() == CreationMode.STANDARD
+    assert panel.current_audit_policy() == AuditPolicy.DEEP
     panel.set_creation_mode(CreationMode.STANDARD)
     assert not panel.pre_accept_audit.isChecked()
     assert panel.current_creation_mode() == CreationMode.STANDARD
@@ -104,7 +108,7 @@ def test_generation_request_emits_mode_token_limit_and_target_words(
     with qtbot.waitSignal(panel.generation_requested, timeout=1000) as signal:
         panel.generate_button.click()
 
-    assert signal.args == [CreationMode.BASIC, 32000, 4200]
+    assert signal.args == [CreationMode.BASIC, AuditPolicy.MINIMAL, 32000, 4200]
 
 
 def test_streaming_draft_previews_in_formal_editor_and_can_be_discarded(

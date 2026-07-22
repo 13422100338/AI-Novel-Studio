@@ -25,7 +25,7 @@ from ai_novel_studio.domain.audit import (
     RepairProposalStatus,
     RepairStrategy,
 )
-from ai_novel_studio.domain.generation import BriefStatus, CreationMode
+from ai_novel_studio.domain.generation import AuditPolicy, BriefStatus, CreationMode
 from ai_novel_studio.infrastructure.storage.audit_repository import AuditRepository
 from ai_novel_studio.infrastructure.storage.chapter_brief_repository import (
     ChapterBriefRepository,
@@ -49,6 +49,7 @@ class ModelAuditSnapshot:
     target_revision: int
     target_hash: str
     mode: CreationMode
+    audit_policy: AuditPolicy
     model_provider_id: str
     model_id: str
 
@@ -78,6 +79,7 @@ class ProjectAuditService:
         revision: int,
         requirement: str,
         mode: CreationMode,
+        audit_policy: AuditPolicy = AuditPolicy.MINIMAL,
     ) -> tuple[AuditFinding, ...]:
         chapter = self.chapters.get_chapter(chapter_id, include_deleted=False)
         saved_text = self.chapters.read_content(chapter_id)
@@ -85,6 +87,7 @@ class ProjectAuditService:
             return self.workflow.run_deterministic_for_formal_chapter(
                 chapter_id,
                 mode=mode,
+                audit_policy=audit_policy,
                 requirement_content=requirement,
             ).findings
         return self.workflow.run_deterministic_for_draft(
@@ -93,6 +96,7 @@ class ProjectAuditService:
             draft_text=text,
             base_chapter_revision=revision,
             mode=mode,
+            audit_policy=audit_policy,
             requirement_content=requirement,
         ).findings
 
@@ -133,6 +137,7 @@ class ProjectAuditService:
         mode: CreationMode,
         model_provider_id: str,
         model_id: str,
+        audit_policy: AuditPolicy = AuditPolicy.MINIMAL,
     ) -> ModelAuditSnapshot:
         chapter = self.chapters.get_chapter(chapter_id, include_deleted=False)
         formal = text == self.chapters.read_content(chapter_id) and revision == chapter.revision
@@ -147,6 +152,7 @@ class ProjectAuditService:
             target_revision=revision,
             target_hash=hashlib.sha256(text.encode("utf-8")).hexdigest(),
             mode=mode,
+            audit_policy=audit_policy,
             model_provider_id=model_provider_id,
             model_id=model_id,
         )
@@ -160,6 +166,8 @@ class ProjectAuditService:
         revision: int,
         model_provider_id: str,
         model_id: str,
+        mode: CreationMode,
+        audit_policy: AuditPolicy,
     ) -> ModelAuditSnapshot:
         return ModelAuditSnapshot(
             chapter_id=chapter_id,
@@ -167,7 +175,8 @@ class ProjectAuditService:
             target_id=generation_run_id,
             target_revision=revision,
             target_hash=hashlib.sha256(draft_text.encode("utf-8")).hexdigest(),
-            mode=CreationMode.STRICT,
+            mode=mode,
+            audit_policy=audit_policy,
             model_provider_id=model_provider_id,
             model_id=model_id,
         )
@@ -193,6 +202,7 @@ class ProjectAuditService:
             target_revision=snapshot.target_revision,
             target_hash=snapshot.target_hash,
             mode=snapshot.mode,
+            audit_policy=snapshot.audit_policy,
             model_provider_id=snapshot.model_provider_id,
             model_id=snapshot.model_id,
             prompt_version="model-audit-ui-v1",

@@ -702,6 +702,7 @@ class MainWindow(QMainWindow):
                             mode=self.manuscript_panel.current_creation_mode(),
                             model_provider_id=route.provider_id,
                             model_id=route.model_id,
+                            audit_policy=self.manuscript_panel.current_audit_policy(),
                         )
                     )
             self.model_runtime.coordinator.start_audit(
@@ -729,6 +730,7 @@ class MainWindow(QMainWindow):
                     revision=self.manuscript_panel.current_chapter_revision,
                     requirement=self.manuscript_panel.chapter_requirement.toPlainText(),
                     mode=self.manuscript_panel.current_creation_mode(),
+                    audit_policy=self.manuscript_panel.current_audit_policy(),
                 )
             else:
                 findings = self.deterministic_audit_service.run(
@@ -751,6 +753,7 @@ class MainWindow(QMainWindow):
     def request_prose_generation(
         self,
         mode: object,
+        audit_policy: object,
         output_token_limit: int,
         target_words: int,
     ) -> None:
@@ -761,6 +764,7 @@ class MainWindow(QMainWindow):
         self.manuscript_panel.begin_generation_draft()
         self.generation_runtime.prepare_and_start(
             mode,
+            audit_policy,
             output_token_limit,
             target_words,
             requirement_content=self.manuscript_panel.chapter_requirement.toPlainText(),

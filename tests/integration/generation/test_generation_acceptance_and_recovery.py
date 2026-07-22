@@ -25,7 +25,7 @@ from ai_novel_studio.domain.audit import (
     AuditSeverity,
     AuditTargetKind,
 )
-from ai_novel_studio.domain.generation import CreationMode, GenerationStatus
+from ai_novel_studio.domain.generation import AuditPolicy, CreationMode, GenerationStatus
 from ai_novel_studio.domain.memory import MemoryStatus, SummaryLevel
 from ai_novel_studio.infrastructure.storage.audit_repository import AuditRepository
 from ai_novel_studio.infrastructure.storage.chapter_repository import (
@@ -339,6 +339,22 @@ def test_strict_generation_accepts_after_clean_completed_audit(tmp_path: Path) -
     assert chapters.read_content(chapter.id) == "strict draft"
 
 
+def test_deep_generation_requires_completed_audit_without_strict_mode(tmp_path: Path) -> None:
+    project, chapters, chapter, runs, checkpoints, _ = _workspace(tmp_path)
+    audits = AuditRepository(project)
+    service = GenerationAcceptanceService(project, runs, checkpoints, chapters, audits)
+    run = _completed_run(project, runs, checkpoints, chapter.id, "deep draft")
+    with project.database.connect() as connection, connection:
+        connection.execute(
+            "UPDATE generation_runs SET audit_policy = 'DEEP' WHERE id = ?", (run.id,)
+        )
+    run = runs.get(run.id)
+    assert run.mode == CreationMode.BASIC
+    assert run.audit_policy == AuditPolicy.DEEP
+    with pytest.raises(GenerationAcceptanceError, match="audit"):
+        service.accept(run.id, expected_chapter_revision=0)
+
+
 def test_recovery_scan_returns_only_recoverable_runs_and_never_calls_model(
     tmp_path: Path,
 ) -> None:
@@ -349,6 +365,11 @@ def test_recovery_scan_returns_only_recoverable_runs_and_never_calls_model(
     checkpoints.append(streaming.id, "streaming draft")
     third = chapters.create_chapter(project.list_volumes()[0].id, "chapter 3", "3", "")
     partial = _partial_run(project, runs, checkpoints, third.id, "partial draft")
+    with project.database.connect() as connection, connection:
+        connection.execute(
+            "UPDATE generation_runs SET audit_policy = 'DEEP' WHERE id = ?",
+            (partial.id,),
+        )
     fourth = chapters.create_chapter(project.list_volumes()[0].id, "chapter 4", "4", "")
     _completed_run(project, runs, checkpoints, fourth.id, "completed draft")
 
@@ -364,6 +385,8 @@ def test_recovery_scan_returns_only_recoverable_runs_and_never_calls_model(
         "streaming draft",
         "partial draft",
     ]
+    assert recovered[-1].run.mode == CreationMode.BASIC
+    assert recovered[-1].run.audit_policy == AuditPolicy.DEEP
 
 
 def test_discard_can_clear_a_ready_active_writer_after_restart(tmp_path: Path) -> None:

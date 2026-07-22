@@ -12,7 +12,7 @@ from ai_novel_studio.domain.audit import (
     AuditSeverity,
     AuditTargetKind,
 )
-from ai_novel_studio.domain.generation import CreationMode
+from ai_novel_studio.domain.generation import AuditPolicy, CreationMode
 from ai_novel_studio.infrastructure.storage.audit_repository import AuditRepository
 
 
@@ -57,6 +57,7 @@ class ModelAuditService:
         model_id: str,
         prompt_version: str,
         findings: tuple[ModelAuditFindingInput, ...],
+        audit_policy: AuditPolicy = AuditPolicy.MINIMAL,
     ) -> ModelAuditRecordResult:
         run = self.audits.create_run(
             chapter_id=chapter_id,
@@ -65,6 +66,7 @@ class ModelAuditService:
             target_revision=target_revision,
             target_hash=target_hash,
             mode=mode,
+            audit_policy=audit_policy,
             status=AuditRunStatus.MODEL_CHECKED,
             prompt_version=prompt_version,
             model_provider_id=model_provider_id,
@@ -104,4 +106,3 @@ def _severity(value: str) -> AuditSeverity:
         return AuditSeverity(value.strip().upper())
     except ValueError as error:
         raise ValueError(f"unknown audit severity: {value}") from error
-

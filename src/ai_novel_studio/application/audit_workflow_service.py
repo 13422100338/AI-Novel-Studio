@@ -13,7 +13,7 @@ from ai_novel_studio.domain.audit import (
     AuditRunStatus,
     AuditTargetKind,
 )
-from ai_novel_studio.domain.generation import CreationMode
+from ai_novel_studio.domain.generation import AuditPolicy, CreationMode
 from ai_novel_studio.infrastructure.storage.audit_repository import AuditRepository
 from ai_novel_studio.infrastructure.storage.chapter_repository import ChapterRepository
 from ai_novel_studio.infrastructure.storage.chapter_requirement_repository import (
@@ -47,6 +47,7 @@ class AuditWorkflowService:
         chapter_id: str,
         *,
         mode: CreationMode,
+        audit_policy: AuditPolicy = AuditPolicy.MINIMAL,
         requirement_content: str | None = None,
     ) -> AuditWorkflowResult:
         chapter = self.chapters.get_chapter(chapter_id, include_deleted=False)
@@ -58,6 +59,7 @@ class AuditWorkflowService:
             target_text=text,
             target_revision=chapter.revision,
             mode=mode,
+            audit_policy=audit_policy,
             requirement_content=requirement_content,
         )
 
@@ -69,6 +71,7 @@ class AuditWorkflowService:
         draft_text: str,
         base_chapter_revision: int,
         mode: CreationMode,
+        audit_policy: AuditPolicy = AuditPolicy.MINIMAL,
         requirement_content: str | None = None,
     ) -> AuditWorkflowResult:
         return self._run_deterministic(
@@ -78,6 +81,7 @@ class AuditWorkflowService:
             target_text=draft_text,
             target_revision=base_chapter_revision,
             mode=mode,
+            audit_policy=audit_policy,
             requirement_content=requirement_content,
         )
 
@@ -90,6 +94,7 @@ class AuditWorkflowService:
         target_text: str,
         target_revision: int,
         mode: CreationMode,
+        audit_policy: AuditPolicy,
         requirement_content: str | None,
     ) -> AuditWorkflowResult:
         target_hash = _hash(target_text)
@@ -100,6 +105,7 @@ class AuditWorkflowService:
             target_revision=target_revision,
             target_hash=target_hash,
             mode=mode,
+            audit_policy=audit_policy,
             status=AuditRunStatus.PREPARING,
             prompt_version=DETERMINISTIC_AUDIT_PROMPT_VERSION,
         )

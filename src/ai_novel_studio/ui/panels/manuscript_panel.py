@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ai_novel_studio.domain.generation import CreationMode, GenerationStatus
+from ai_novel_studio.domain.generation import AuditPolicy, CreationMode, GenerationStatus
 from ai_novel_studio.ui.demo_data import WorkspaceDemoData
 
 
@@ -24,7 +24,7 @@ class ManuscriptPanel(QFrame):
     brief_requested = Signal()
     audit_requested = Signal()
     references_requested = Signal()
-    generation_requested = Signal(object, int, int)
+    generation_requested = Signal(object, object, int, int)
     generation_cancel_requested = Signal()
     draft_accept_requested = Signal()
     draft_discard_requested = Signal()
@@ -52,8 +52,8 @@ class ManuscriptPanel(QFrame):
         self.mode_combo.addItem("普通", CreationMode.STANDARD.value)
         self.mode_combo.setCurrentIndex(1)
         self.mode_combo.setAccessibleName("创作档位")
-        self.pre_accept_audit = QCheckBox("采用前强制审校", self)
-        self.pre_accept_audit.setAccessibleName("普通模式采用前强制审校")
+        self.pre_accept_audit = QCheckBox("深度审校（采用前）", self)
+        self.pre_accept_audit.setAccessibleName("普通模式深度审校（采用前）")
         self.pre_accept_audit.setToolTip(
             "开启后，草稿必须通过确定性检查和模型语义审校才能采用。"
         )
@@ -322,9 +322,15 @@ class ManuscriptPanel(QFrame):
             mode = CreationMode(data)
         else:
             mode = CreationMode.STANDARD
-        if mode == CreationMode.STANDARD and self.pre_accept_audit.isChecked():
-            return CreationMode.STRICT
-        return mode
+        return CreationMode.BASIC if mode == CreationMode.BASIC else CreationMode.STANDARD
+
+    def current_audit_policy(self) -> AuditPolicy:
+        mode = self.current_creation_mode()
+        if mode == CreationMode.BASIC:
+            return AuditPolicy.MINIMAL
+        if self.pre_accept_audit.isChecked():
+            return AuditPolicy.DEEP
+        return AuditPolicy.STANDARD
 
     def begin_generation_draft(self) -> None:
         if not self._draft_preview_active:
@@ -433,6 +439,7 @@ class ManuscriptPanel(QFrame):
         self.begin_generation_draft()
         self.generation_requested.emit(
             self.current_creation_mode(),
+            self.current_audit_policy(),
             self.output_token_limit.value(),
             self.target_words.value(),
         )
@@ -440,7 +447,7 @@ class ManuscriptPanel(QFrame):
     def _enable_draft_decision_buttons(self) -> None:
         self._flush_draft_chunks()
         has_draft = bool(self.editor.toPlainText())
-        audit_blocked = self.current_creation_mode() == CreationMode.STRICT and not getattr(
+        audit_blocked = self.current_audit_policy() == AuditPolicy.DEEP and not getattr(
             self, "_pre_accept_audit_allowed", False
         )
         self.adopt_draft_button.setEnabled(has_draft and not audit_blocked)
@@ -459,7 +466,7 @@ class ManuscriptPanel(QFrame):
             self.generate_button.setEnabled(False)
             self.generate_button.setToolTip("阶段 5：正文生成管线接入后可用")
             return
-        needs_brief = mode in {CreationMode.STANDARD, CreationMode.STRICT}
+        needs_brief = mode == CreationMode.STANDARD
         if needs_brief and not self._frozen_brief_available:
             self.generate_button.setEnabled(False)
             self.generate_button.setToolTip("普通模式需要先冻结当前章 Brief")

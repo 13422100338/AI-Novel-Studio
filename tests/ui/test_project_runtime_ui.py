@@ -29,7 +29,12 @@ from ai_novel_studio.domain.agent import (
     AgentToolName,
 )
 from ai_novel_studio.domain.audit import AuditFindingStatus, AuditTargetKind
-from ai_novel_studio.domain.generation import BriefStatus, CreationMode, GenerationStatus
+from ai_novel_studio.domain.generation import (
+    AuditPolicy,
+    BriefStatus,
+    CreationMode,
+    GenerationStatus,
+)
 from ai_novel_studio.domain.memory import (
     Authority,
     KnowledgeState,
@@ -359,7 +364,12 @@ def test_generation_synchronizes_visible_requirement_before_preparing(
     started: list[str] = []
     window.generation_runtime.coordinator.start = started.append  # type: ignore[union-attr,method-assign]
 
-    window.request_prose_generation(CreationMode.BASIC, 8000, 3500)
+    window.request_prose_generation(
+        CreationMode.BASIC,
+        AuditPolicy.MINIMAL,
+        8000,
+        3500,
+    )
 
     requirement = ChapterRequirementRepository(runtime.project).get(chapter_id)
     assert requirement.content == "生成前的新要求"
@@ -699,12 +709,15 @@ def test_pre_accept_audit_runs_before_adoption(qtbot: QtBot, tmp_path: Path) -> 
         timeout=3000,
     )
     run = GenerationRepository(runtime.project).list_by_statuses((GenerationStatus.COMPLETED,))[0]
+    assert run.mode == CreationMode.STANDARD
+    assert run.audit_policy == AuditPolicy.DEEP
     audits = AuditRepository(runtime.project).list_runs_for_target(
         target_kind=AuditTargetKind.GENERATED_DRAFT,
         target_id=run.id,
     )
     assert len(audits) == 2
-    assert all(audit.mode == CreationMode.STRICT for audit in audits)
+    assert all(audit.mode == CreationMode.STANDARD for audit in audits)
+    assert all(audit.audit_policy == AuditPolicy.DEEP for audit in audits)
     assert {audit.prompt_version for audit in audits} == {
         "deterministic-audit-v1",
         "model-audit-ui-v1",
