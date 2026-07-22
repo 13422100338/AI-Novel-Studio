@@ -8,7 +8,7 @@
 - Superpowers: disabled for this project workflow.
 - Initial business-code baseline: `e35b50d` (the backend code state before the governance-only dispatch commit).
 - Wave 1 dispatched baseline: `3382dd36c2a4aeb4acdab411e9211885b633e678`.
-- Latest integrated business commit: `0b8c4006f396ea2024cd38de7a5b2e8b5f2d055b` (C2 View Assertion review UI, including prior A1 and C1 increments).
+- Latest integrated business commit: `03b2263043262cdf371f1929a1255162decabfac` (A2 Gateway embedding provider and fail-open semantic recall, including prior A1, C1, and C2 increments).
 - Planning sources:
   - `docs/handoffs/2026-07-22-backend-refactor-handoff.md`
   - `C:\Users\钟子诚\Downloads\AI_Novel_Studio_后端改进方案_Subject_View_Time_Context_Compiler_修订版.md`
@@ -26,22 +26,22 @@
 All Wave 1 tasks were dispatched from `3382dd36c2a4aeb4acdab411e9211885b633e678`; their initial business-code baseline remains `e35b50d`.
 
 - Active implementations authorized by the user:
-  - `embedding-production` increment A2: Gateway-backed document/query embedding provider plus fail-open semantic recall; no runtime composition or rebuild entrypoint.
   - `generation-profile-audit-policy` increment B1: domain and v17 persistence compatibility foundation only; application/UI behavior remains a later increment.
 - Integrated increments:
   - `embedding-production` increment A1 (provider and gateway embedding contract), merged as `fdbfb088278c18a0efb3e062cd5f9e8a6ddd01f4`.
+  - `embedding-production` increment A2 (Gateway-backed document/query embedding provider plus fail-open semantic recall), merged as `03b2263043262cdf371f1929a1255162decabfac`.
   - `view-operations-ui` increment C1 (single-record Legacy Reader Knowledge to Reader View UI), merged as `6f19d0a180ed72b9eafca6fb57d8eb550f429845`.
   - `view-operations-ui` increment C2 (single-record model View Assertion approve/reject UI), merged as `0b8c4006f396ea2024cd38de7a5b2e8b5f2d055b`.
 - Registered A1 follow-up risk: existing HTTP classification still retries non-transient `400/401/403` responses because all non-2xx statuses map to `ProviderRequestError`. Status-specific retry classification is not part of A1.
-- Active schema owner: `generation-profile-audit-policy` increment B1 only. A2 and C2 must not change schema or migrations.
+- Active schema owner: `generation-profile-audit-policy` increment B1 only. No other active lane may change schema or migrations.
 
 | Task | Model / reasoning | Thread | Worktree | Assigned branch | HEAD state | Status |
 | --- | --- | --- | --- | --- | --- | --- |
-| `embedding-production` | `gpt-5.6-sol` / `high` | `019f87e8-6d32-7141-b9b4-4f1142e4db4e` | `C:\Users\钟子诚\.codex\worktrees\93d7\AI-Novel-Studio` | `codex/embedding-production` | branch | increment A2 authorized / sync pending |
+| `embedding-production` | `gpt-5.6-sol` / `high` | `019f87e8-6d32-7141-b9b4-4f1142e4db4e` | `C:\Users\钟子诚\.codex\worktrees\93d7\AI-Novel-Studio` | `codex/embedding-production` | branch | increment A2 merged to main at `03b2263`; A3 not authorized |
 | `generation-profile-audit-policy` | `gpt-5.6-terra` / `medium` | `019f87e8-696e-7f11-bcfe-1552f51cabc3` | `C:\Users\钟子诚\.codex\worktrees\4df4\AI-Novel-Studio` | `codex/generation-profile-audit-policy` | detached | increment B1 authorized / branch pending / schema owner |
 | `view-operations-ui` | `gpt-5.6-terra` / `medium` | `019f87e8-7a77-7902-b3d1-a38f32240136` | `C:\Users\钟子诚\.codex\worktrees\8802\AI-Novel-Studio` | `codex/view-operations-ui` | branch | increment C2 merged to main at `0b8c400`; C3 not authorized |
 
-Only A2 and B1 remain active. A3, B2, C3, and every later increment still require a new user decision.
+Only B1 remains active. A3, B2, C3, and every later increment still require a new user decision.
 
 ## Later Waves and Dependencies
 
