@@ -5,7 +5,8 @@
 - Master controller: current pinned Codex task.
 - Integration policy: `main`-only integration. Worker tasks never merge or push `main`.
 - Superpowers: disabled for this project workflow.
-- Initial code baseline: `e35b50d`.
+- Initial business-code baseline: `e35b50d` (the backend code state before the governance-only dispatch commit).
+- Wave 1 dispatched baseline: `3382dd36c2a4aeb4acdab411e9211885b633e678`.
 - Planning sources:
   - `docs/handoffs/2026-07-22-backend-refactor-handoff.md`
   - `C:\Users\钟子诚\Downloads\AI_Novel_Studio_后端改进方案_Subject_View_Time_Context_Compiler_修订版.md`
@@ -18,13 +19,13 @@
 
 ## Wave 1
 
-All Wave 1 tasks start from the initial baseline unless the master controller issues a newer baseline.
+All Wave 1 tasks were dispatched from `3382dd36c2a4aeb4acdab411e9211885b633e678`; their initial business-code baseline remains `e35b50d`.
 
-| Task | Model / reasoning | Thread | Worktree | Branch | Status |
-| --- | --- | --- | --- | --- | --- |
-| `embedding-production` | `gpt-5.6-sol` / `high` | TBD | TBD | `codex/embedding-production` | Not started |
-| `generation-profile-audit-policy` | `gpt-5.6-terra` / `medium` | TBD | TBD | `codex/generation-profile-audit-policy` | Not started |
-| `view-operations-ui` | `gpt-5.6-terra` / `medium` | TBD | TBD | `codex/view-operations-ui` | Not started |
+| Task | Model / reasoning | Thread | Worktree | Assigned branch | HEAD state | Status |
+| --- | --- | --- | --- | --- | --- | --- |
+| `embedding-production` | `gpt-5.6-sol` / `high` | `019f87e8-6d32-7141-b9b4-4f1142e4db4e` | `C:\Users\钟子诚\.codex\worktrees\93d7\AI-Novel-Studio` | `codex/embedding-production` | detached | readiness-only / not started |
+| `generation-profile-audit-policy` | `gpt-5.6-terra` / `medium` | `019f87e8-696e-7f11-bcfe-1552f51cabc3` | `C:\Users\钟子诚\.codex\worktrees\4df4\AI-Novel-Studio` | `codex/generation-profile-audit-policy` | detached | readiness-only / not started |
+| `view-operations-ui` | `gpt-5.6-terra` / `medium` | `019f87e8-7a77-7902-b3d1-a38f32240136` | `C:\Users\钟子诚\.codex\worktrees\8802\AI-Novel-Studio` | `codex/view-operations-ui` | detached | readiness-only / not started |
 
 Suggested integration order: `embedding-production` -> `generation-profile-audit-policy` -> `view-operations-ui`.
 
