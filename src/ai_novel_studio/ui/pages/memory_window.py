@@ -34,8 +34,10 @@ from ai_novel_studio.application.memory_workspace_service import (
 from ai_novel_studio.application.project_guidance_service import ProjectGuidanceService
 from ai_novel_studio.application.view_assertion_service import (
     LegacyReaderViewCandidate,
+    ViewAssertionReviewError,
 )
 from ai_novel_studio.domain.memory import Authority, MemoryStatus, ReviewStatus
+from ai_novel_studio.domain.view import ViewAssertion
 from ai_novel_studio.ui.demo_data import WorkspaceDemoData
 from ai_novel_studio.ui.i18n import language_manager
 from ai_novel_studio.ui.pages.character_identity_conflict_dialog import (
@@ -68,11 +70,24 @@ class ReaderViewOperationService(Protocol):
     ) -> object: ...
 
 
+class ViewAssertionReviewService(Protocol):
+    def list_review_candidates(self, *, limit: int = 100) -> tuple[ViewAssertion, ...]: ...
+
+    def approve_candidate(
+        self, assertion_id: str, *, confirmed_by_user: bool
+    ) -> ViewAssertion: ...
+
+    def reject_candidate(
+        self, assertion_id: str, *, confirmed_by_user: bool
+    ) -> ViewAssertion: ...
+
+
 class MemoryWindow(QMainWindow):
     setting_save_requested = Signal(str, str, str, object)
     setting_analyze_requested = Signal(str, str, str, object)
     identity_changed = Signal()
     reader_view_changed = Signal()
+    view_assertion_review_changed = Signal()
 
     def __init__(self, data: WorkspaceDemoData, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -94,6 +109,9 @@ class MemoryWindow(QMainWindow):
         self.identity_dialog: CharacterIdentityConflictDialog | None = None
         self._reader_view_service: ReaderViewOperationService | None = None
         self._reader_view_candidates: dict[str, LegacyReaderViewCandidate] = {}
+        self._view_assertion_review_service: ViewAssertionReviewService | None = None
+        self._view_assertion_review_candidates: dict[str, ViewAssertion] = {}
+        self._view_assertion_subject_names: dict[str, str] = {}
 
         self.setWindowTitle("记忆库 · AI Novel Studio")
         self.setMinimumSize(820, 640)
@@ -187,6 +205,8 @@ class MemoryWindow(QMainWindow):
         layout.addWidget(self.tabs, 1)
         self.reader_view_panel = self._reader_view_operation_panel(surface)
         layout.addWidget(self.reader_view_panel)
+        self.view_assertion_review_panel = self._view_assertion_review_panel(surface)
+        layout.addWidget(self.view_assertion_review_panel)
         layout.addWidget(note)
         self.setCentralWidget(surface)
 
@@ -201,6 +221,7 @@ class MemoryWindow(QMainWindow):
         identity_service: CharacterIdentityService | None = None,
         reader_view_service: ReaderViewOperationService | None = None,
         reader_view_subjects: tuple[tuple[str, str], ...] = (),
+        view_assertion_review_service: ViewAssertionReviewService | None = None,
     ) -> None:
         if (
             self._promotion_coordinator is not None
@@ -229,6 +250,7 @@ class MemoryWindow(QMainWindow):
         self._identity_service = identity_service
         self.identity_review_button.setEnabled(identity_service is not None)
         self._reader_view_service = reader_view_service
+        self._view_assertion_review_service = view_assertion_review_service
         self._promotion_coordinator = MemoryPromotionCoordinator(service, self)
         self._promotion_coordinator.progress_changed.connect(
             self._bulk_promotion_progress
@@ -261,6 +283,7 @@ class MemoryWindow(QMainWindow):
         self.setting_type_combo.setCurrentText(setting_draft[1])
         self.setting_editor.setPlainText(setting_draft[2])
         self._bind_reader_view_operation(reader_view_subjects)
+        self._bind_view_assertion_review_operation(reader_view_subjects)
         if not grouped:
             self.metadata_label.setText("该章节边界之前没有可显示的记忆记录。")
             self.save_button.setEnabled(False)
@@ -431,6 +454,164 @@ class MemoryWindow(QMainWindow):
         )
         self.reader_view_status_label.setText("已接管当前旧读者知识为 Reader View。")
         self.reader_view_changed.emit()
+
+    def _view_assertion_review_panel(self, parent: QWidget) -> QFrame:
+        panel = QFrame(parent)
+        panel.setObjectName("cardSurface")
+        layout = QVBoxLayout(panel)
+        title = QLabel("View Assertion 审查", panel)
+        title.setObjectName("sectionEyebrow")
+        explanation = QLabel(
+            "仅审查一条模型候选。批准或拒绝都需要明确确认，候选内容不可在此编辑。",
+            panel,
+        )
+        explanation.setWordWrap(True)
+        explanation.setObjectName("mutedLabel")
+        self.view_assertion_review_selector = QComboBox(panel)
+        self.view_assertion_review_selector.setAccessibleName("选择待审查 View Assertion 候选")
+        self.view_assertion_review_selector.currentIndexChanged.connect(
+            self._render_view_assertion_review_candidate
+        )
+        self.view_assertion_review_details = QPlainTextEdit(panel)
+        self.view_assertion_review_details.setAccessibleName("查看 View Assertion 候选详情")
+        self.view_assertion_review_details.setReadOnly(True)
+        self.view_assertion_review_details.setMaximumHeight(120)
+        actions = QHBoxLayout()
+        self.view_assertion_approve_button = QPushButton("批准候选", panel)
+        self.view_assertion_approve_button.setAccessibleName("批准当前 View Assertion 候选")
+        self.view_assertion_approve_button.clicked.connect(
+            lambda: self._review_view_assertion_candidate(ReviewStatus.APPROVED)
+        )
+        self.view_assertion_reject_button = QPushButton("拒绝候选", panel)
+        self.view_assertion_reject_button.setAccessibleName("拒绝当前 View Assertion 候选")
+        self.view_assertion_reject_button.clicked.connect(
+            lambda: self._review_view_assertion_candidate(ReviewStatus.REJECTED)
+        )
+        actions.addWidget(self.view_assertion_approve_button)
+        actions.addWidget(self.view_assertion_reject_button)
+        actions.addStretch(1)
+        self.view_assertion_review_status_label = QLabel("当前未绑定项目。", panel)
+        self.view_assertion_review_status_label.setWordWrap(True)
+        self.view_assertion_review_status_label.setObjectName("mutedLabel")
+        layout.addWidget(title)
+        layout.addWidget(explanation)
+        layout.addWidget(self.view_assertion_review_selector)
+        layout.addWidget(self.view_assertion_review_details)
+        layout.addLayout(actions)
+        layout.addWidget(self.view_assertion_review_status_label)
+        self._set_view_assertion_review_enabled(False)
+        return panel
+
+    def _bind_view_assertion_review_operation(
+        self, reader_view_subjects: tuple[tuple[str, str], ...]
+    ) -> None:
+        self._view_assertion_subject_names = dict(reader_view_subjects)
+        service = self._view_assertion_review_service
+        if service is None:
+            self._view_assertion_review_candidates = {}
+            self.view_assertion_review_selector.clear()
+            self.view_assertion_review_details.clear()
+            self.view_assertion_review_status_label.setText(
+                "当前未绑定项目，无法审查 View Assertion 候选。"
+            )
+            self._set_view_assertion_review_enabled(False)
+            return
+        candidates = service.list_review_candidates(limit=100)
+        self._view_assertion_review_candidates = {
+            candidate.id: candidate for candidate in candidates
+        }
+        self.view_assertion_review_selector.blockSignals(True)
+        self.view_assertion_review_selector.clear()
+        for candidate in candidates:
+            subject_name = self._view_assertion_subject_name(candidate.subject_id)
+            self.view_assertion_review_selector.addItem(
+                f"{candidate.view_type.value} · {subject_name}",
+                candidate.id,
+            )
+        self.view_assertion_review_selector.blockSignals(False)
+        if not candidates:
+            self.view_assertion_review_details.clear()
+            self.view_assertion_review_status_label.setText("没有待审查的 View Assertion 候选。")
+            self._set_view_assertion_review_enabled(False)
+            return
+        self._set_view_assertion_review_enabled(True)
+        self._render_view_assertion_review_candidate()
+
+    def _render_view_assertion_review_candidate(self, _index: int = -1) -> None:
+        candidate = self._current_view_assertion_review_candidate()
+        if candidate is None:
+            return
+        viewer = (
+            self._view_assertion_subject_name(candidate.viewer_subject_id)
+            if candidate.viewer_subject_id is not None
+            else "—"
+        )
+        valid_from = candidate.valid_from_sequence
+        valid_to = candidate.valid_to_sequence
+        visible_from = candidate.narrative_visible_from_sequence
+        visible_to = candidate.narrative_visible_to_sequence
+        self.view_assertion_review_details.setPlainText(
+            "\n".join(
+                (
+                    f"视图类型：{candidate.view_type.value}",
+                    f"Subject：{self._view_assertion_subject_name(candidate.subject_id)}",
+                    f"Viewer：{viewer}",
+                    f"内容：{candidate.content}",
+                    f"来源：{candidate.source_type.value} / {candidate.source_id} / "
+                    f"修订 {candidate.source_revision}",
+                    f"有效时间：{valid_from if valid_from is not None else '—'} 至 "
+                    f"{valid_to if valid_to is not None else '—'}",
+                    f"叙事可见：{visible_from if visible_from is not None else '—'} 至 "
+                    f"{visible_to if visible_to is not None else '—'}",
+                )
+            )
+        )
+        self.view_assertion_review_status_label.setText("请选择批准或拒绝；候选内容保持只读。")
+
+    def _current_view_assertion_review_candidate(self) -> ViewAssertion | None:
+        assertion_id = str(self.view_assertion_review_selector.currentData() or "")
+        return self._view_assertion_review_candidates.get(assertion_id)
+
+    def _view_assertion_subject_name(self, subject_id: str | None) -> str:
+        if subject_id is None:
+            return "—"
+        return self._view_assertion_subject_names.get(subject_id, subject_id)
+
+    def _set_view_assertion_review_enabled(self, enabled: bool) -> None:
+        self.view_assertion_review_selector.setEnabled(enabled)
+        self.view_assertion_approve_button.setEnabled(enabled)
+        self.view_assertion_reject_button.setEnabled(enabled)
+
+    def _review_view_assertion_candidate(self, decision: ReviewStatus) -> None:
+        service = self._view_assertion_review_service
+        candidate = self._current_view_assertion_review_candidate()
+        if service is None or candidate is None:
+            self.view_assertion_review_status_label.setText("没有可审查的 View Assertion 候选。")
+            self._set_view_assertion_review_enabled(False)
+            return
+        action = "批准" if decision == ReviewStatus.APPROVED else "拒绝"
+        answer = QMessageBox.question(
+            self,
+            f"确认{action} View Assertion",
+            f"将{action}当前模型候选“{candidate.view_type.value}”。是否继续？",
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            if decision == ReviewStatus.APPROVED:
+                service.approve_candidate(candidate.id, confirmed_by_user=True)
+            else:
+                service.reject_candidate(candidate.id, confirmed_by_user=True)
+        except (PermissionError, ValueError, ViewAssertionReviewError) as error:
+            self.view_assertion_review_status_label.setText(
+                f"View Assertion {action}失败：{error}"
+            )
+            return
+        self._bind_view_assertion_review_operation(
+            tuple(self._view_assertion_subject_names.items())
+        )
+        self.view_assertion_review_status_label.setText(f"已{action}当前 View Assertion 候选。")
+        self.view_assertion_review_changed.emit()
 
     def open_identity_review(self) -> None:
         if self._identity_service is None:

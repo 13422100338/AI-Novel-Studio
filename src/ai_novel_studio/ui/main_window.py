@@ -1178,6 +1178,9 @@ class MainWindow(QMainWindow):
             self.memory_window.setting_analyze_requested.connect(self.analyze_setting_document)
             self.memory_window.identity_changed.connect(self._character_identity_changed)
             self.memory_window.reader_view_changed.connect(self._bind_memory_window)
+            self.memory_window.view_assertion_review_changed.connect(
+                self._bind_memory_window
+            )
         self._bind_memory_window()
         self._show_workspace_window(self.memory_window)
 
@@ -1186,6 +1189,7 @@ class MainWindow(QMainWindow):
             return
         project = self.project_runtime.project
         chapter_id = self.current_chapter_id
+        view_assertions = ViewAssertionService(project)
         self.memory_window.bind(
             MemoryWorkspaceService(ProjectMemoryWorkspaceGateway(project)),
             "__all__",
@@ -1197,11 +1201,12 @@ class MainWindow(QMainWindow):
             target_chapter_id=chapter_id,
             guidance_service=ProjectGuidanceService(ProjectGuidanceRepository(project)),
             identity_service=CharacterIdentityService(project),
-            reader_view_service=ViewAssertionService(project),
+            reader_view_service=view_assertions,
             reader_view_subjects=tuple(
                 (character.id, character.canonical_name)
                 for character in CharacterMemoryRepository(project).list_characters()
             ),
+            view_assertion_review_service=view_assertions,
         )
 
     def _character_identity_changed(self) -> None:

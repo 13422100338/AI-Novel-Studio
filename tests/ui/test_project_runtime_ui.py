@@ -13,6 +13,7 @@ from ai_novel_studio.application.manuscript_memory_build_service import (
 )
 from ai_novel_studio.application.model_tasks import StyleAuditFinding, StyleAuditResult
 from ai_novel_studio.application.project_runtime import ProjectRuntime
+from ai_novel_studio.application.view_assertion_service import ViewAssertionService
 from ai_novel_studio.core.context.context_manifest import (
     ContextManifest,
     ContextManifestRepository,
@@ -37,6 +38,7 @@ from ai_novel_studio.domain.memory import (
     SourceType,
     SummaryLevel,
 )
+from ai_novel_studio.domain.view import ViewAssertionDraft, ViewType
 from ai_novel_studio.infrastructure.storage.audit_repository import AuditRepository
 from ai_novel_studio.infrastructure.storage.chapter_brief_repository import (
     ChapterBriefRepository,
@@ -467,6 +469,38 @@ def test_main_window_injects_reader_view_operation_dependencies(
     window.memory_window.reader_view_convert_button.click()
 
     assert window.memory_window.reader_view_candidate_selector.count() == 0
+
+
+def test_main_window_refreshes_view_assertion_review_after_approval(
+    qtbot: QtBot, tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    runtime, chapter_id = _project_with_chapter(tmp_path / "novel", tmp_path)
+    character = CharacterMemoryRepository(runtime.project).create_character("艾瑞克")
+    ViewAssertionService(runtime.project).create_model_candidate(
+        ViewAssertionDraft(
+            subject_id=character.id,
+            view_type=ViewType.WORLD_TRUTH,
+            content="国王仍然活着。",
+        ),
+        source_id=chapter_id,
+        source_revision=0,
+    )
+    window = MainWindow(model_runtime=UiModelRuntime(tmp_path), project_runtime=runtime)
+    qtbot.addWidget(window)
+    window.load_project_chapter(chapter_id)
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
+    )
+
+    window.open_memory_window()
+
+    assert window.memory_window is not None
+    assert window.memory_window.view_assertion_review_selector.count() == 1
+    window.memory_window.view_assertion_approve_button.click()
+
+    assert window.memory_window.view_assertion_review_selector.count() == 0
 
 
 def test_agent_character_merge_proposal_opens_review_instead_of_mutating_memory(
