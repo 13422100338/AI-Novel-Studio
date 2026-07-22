@@ -1,15 +1,21 @@
+import json
 from collections.abc import Iterator
+from urllib.error import HTTPError, URLError
 
 import pytest
 
+import ai_novel_studio.infrastructure.llm.provider_adapter as provider_adapter_module
 from ai_novel_studio.infrastructure.llm import (
+    EmbeddingRequest,
     LLMMessage,
     LLMRequest,
     OpenAICompatibleAdapter,
     ProviderProfile,
+    ProviderProtocolError,
     ProviderRequestError,
     StreamEventKind,
     TransportResponse,
+    UrllibTransport,
 )
 
 
@@ -116,6 +122,276 @@ def test_complete_parses_text_reasoning_and_detailed_usage() -> None:
     assert request_body is not None
     assert b'"max_tokens": 32000' in request_body
     assert b'"response_format": {"type": "json_object"}' in request_body
+
+
+def test_embeddings_post_batch_and_restore_input_order() -> None:
+    body = b'''{
+      "data":[
+        {"index":1,"embedding":[0.3,0.4]},
+        {"index":0,"embedding":[0.1,0.2]}
+      ]
+    }'''
+    transport = FakeTransport([TransportResponse(200, body)])
+
+    vectors = OpenAICompatibleAdapter(transport).embed(
+        EmbeddingRequest("embedding-model", ("first", "second")),
+        _profile(),
+        "sk-private",
+    )
+
+    assert vectors == ((0.1, 0.2), (0.3, 0.4))
+    method, url, headers, request_body, timeout = transport.calls[0]
+    assert (method, url, timeout) == (
+        "POST",
+        "https://relay.example/openai/v1/embeddings",
+        123,
+    )
+    assert headers["Authorization"] == "Bearer sk-private"
+    assert request_body is not None
+    assert json.loads(request_body) == {
+        "model": "embedding-model",
+        "input": ["first", "second"],
+    }
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"data": [{"index": 0, "embedding": [0.1, 0.2]}]},
+        {
+            "data": [
+                {"index": True, "embedding": [0.1, 0.2]},
+                {"index": 1, "embedding": [0.3, 0.4]},
+            ]
+        },
+        {
+            "data": [
+                {"index": 0, "embedding": [0.1, 0.2]},
+                {"index": 0, "embedding": [0.3, 0.4]},
+            ]
+        },
+        {
+            "data": [
+                {"index": 0, "embedding": [0.1, 0.2]},
+                {"index": 2, "embedding": [0.3, 0.4]},
+            ]
+        },
+        {
+            "data": [
+                {"index": 0, "embedding": []},
+                {"index": 1, "embedding": [0.3, 0.4]},
+            ]
+        },
+        {
+            "data": [
+                {"index": 0, "embedding": [True, 0.2]},
+                {"index": 1, "embedding": [0.3, 0.4]},
+            ]
+        },
+        {
+            "data": [
+                {"index": 0, "embedding": [float("nan"), 0.2]},
+                {"index": 1, "embedding": [0.3, 0.4]},
+            ]
+        },
+        {
+            "data": [
+                {"index": 0, "embedding": [10**400, 0.2]},
+                {"index": 1, "embedding": [0.3, 0.4]},
+            ]
+        },
+        {
+            "data": [
+                {"index": 0, "embedding": [0.1]},
+                {"index": 1, "embedding": [0.3, 0.4]},
+            ]
+        },
+    ],
+)
+def test_embeddings_reject_untrusted_response_shapes(payload: object) -> None:
+    transport = FakeTransport(
+        [TransportResponse(200, json.dumps(payload).encode("utf-8"))]
+    )
+
+    with pytest.raises(ProviderProtocolError):
+        OpenAICompatibleAdapter(transport).embed(
+            EmbeddingRequest("embedding-model", ("first", "second")),
+            _profile(),
+            "sk-private",
+        )
+
+
+@pytest.mark.parametrize("body", [b"not-json", b'{}', b'{"data":{}}'])
+def test_embeddings_normalize_damaged_json_and_fields(body: bytes) -> None:
+    transport = FakeTransport([TransportResponse(200, body)])
+
+    with pytest.raises(ProviderProtocolError):
+        OpenAICompatibleAdapter(transport).embed(
+            EmbeddingRequest("embedding-model", ("text",)),
+            _profile(),
+            "sk-private",
+        )
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        b'{"data":[{"index":0,"embedding":[' + (b"9" * 5_000) + b"]}]}",
+        (b"[" * 10_000) + b"0" + (b"]" * 10_000),
+    ],
+    ids=["oversized-integer", "recursive-json"],
+)
+def test_embeddings_normalize_extreme_json_parser_failures(body: bytes) -> None:
+    transport = FakeTransport([TransportResponse(200, body)])
+
+    with pytest.raises(ProviderProtocolError):
+        OpenAICompatibleAdapter(transport).embed(
+            EmbeddingRequest("embedding-model", ("text",)),
+            _profile(),
+            "sk-private",
+        )
+
+
+def test_embeddings_reject_vectors_over_dimension_limit(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr(provider_adapter_module, "_MAX_EMBEDDING_DIMENSIONS", 2)
+    transport = FakeTransport(
+        [TransportResponse(200, b'{"data":[{"index":0,"embedding":[1,2,3]}]}')]
+    )
+
+    with pytest.raises(ProviderProtocolError, match="维度"):
+        OpenAICompatibleAdapter(transport).embed(
+            EmbeddingRequest("embedding-model", ("text",)),
+            _profile(),
+            "sk-private",
+        )
+
+
+def test_embedding_request_rejects_empty_input_before_transport() -> None:
+    transport = FakeTransport()
+
+    with pytest.raises(ValueError, match="input"):
+        OpenAICompatibleAdapter(transport).embed(
+            EmbeddingRequest("embedding-model", ()),
+            _profile(),
+            "sk-private",
+        )
+
+    assert transport.calls == []
+
+
+@pytest.mark.parametrize("text", ["", "   ", "\t\r\n"])
+def test_embedding_request_rejects_blank_text_before_transport(text: str) -> None:
+    transport = FakeTransport()
+
+    with pytest.raises(ValueError, match="空白"):
+        OpenAICompatibleAdapter(transport).embed(
+            EmbeddingRequest("embedding-model", (text,)),
+            _profile(),
+            "sk-private",
+        )
+
+    assert transport.calls == []
+
+
+@pytest.mark.parametrize("status", [429, 503])
+def test_embedding_http_error_never_echoes_secret_or_response_body(status: int) -> None:
+    transport = FakeTransport(
+        [TransportResponse(status, b'{"error":"Bearer sk-private request first"}')]
+    )
+
+    with pytest.raises(ProviderRequestError) as captured:
+        OpenAICompatibleAdapter(transport).embed(
+            EmbeddingRequest("embedding-model", ("first",)),
+            _profile(),
+            "sk-private",
+        )
+
+    message = str(captured.value)
+    assert str(status) in message
+    assert "sk-private" not in message
+    assert "Bearer" not in message
+    assert "first" not in message
+
+
+def test_transport_connection_error_never_echoes_request_details(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    def fail_connection(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        raise URLError("Bearer sk-private request first")
+
+    monkeypatch.setattr(
+        "ai_novel_studio.infrastructure.llm.provider_adapter.urlopen",
+        fail_connection,
+    )
+
+    with pytest.raises(ProviderRequestError) as captured:
+        UrllibTransport().request(
+            "POST",
+            "https://relay.example/openai/v1/embeddings",
+            {"Authorization": "Bearer sk-private"},
+            b'{"input":["first"]}',
+            90,
+        )
+
+    message = str(captured.value)
+    assert "sk-private" not in message
+    assert "Bearer" not in message
+    assert "first" not in message
+
+
+def test_transport_rejects_oversized_non_streaming_response(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    class OversizedResponse:
+        status = 200
+        requested_size: int | None = None
+
+        def __enter__(self):  # type: ignore[no-untyped-def]
+            return self
+
+        def __exit__(self, *_args):  # type: ignore[no-untyped-def]
+            return False
+
+        def read(self, size: int = -1) -> bytes:
+            self.requested_size = size
+            return b"x" * size
+
+    response = OversizedResponse()
+    monkeypatch.setattr(provider_adapter_module, "_MAX_PROVIDER_RESPONSE_BYTES", 4)
+    monkeypatch.setattr(provider_adapter_module, "urlopen", lambda *_args, **_kwargs: response)
+
+    with pytest.raises(ProviderProtocolError, match="大小"):
+        UrllibTransport().request("GET", "https://relay.example/v1/models", {}, None, 5)
+
+    assert response.requested_size == 5
+
+
+def test_transport_closes_http_error_without_reading_body(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    class ErrorBody:
+        closed = False
+
+        def read(self, _size: int = -1) -> bytes:
+            raise AssertionError("HTTP error body must not be read")
+
+        def close(self) -> None:
+            self.closed = True
+
+    error_body = ErrorBody()
+    http_error = HTTPError(
+        "https://relay.example/v1/models",
+        503,
+        "temporary",
+        None,
+        error_body,
+    )
+
+    def fail_request(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        raise http_error
+
+    monkeypatch.setattr(provider_adapter_module, "urlopen", fail_request)
+
+    response = UrllibTransport().request(
+        "GET", "https://relay.example/v1/models", {}, None, 5
+    )
+
+    assert response == TransportResponse(503, b"")
+    assert error_body.closed is True
 
 
 def test_complete_sends_optional_sampling_parameters_when_configured() -> None:

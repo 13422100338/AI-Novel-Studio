@@ -58,6 +58,8 @@ class TaskRoutes:
         for configured_purpose, route in self.overrides:
             if configured_purpose == purpose:
                 return route
+        if purpose == TaskPurpose.MEMORY_EMBEDDING:
+            raise MissingModelRouteError("尚未配置 Embedding 模型")
         if purpose in _PLOT_PURPOSES:
             if self.plot is None:
                 raise MissingModelRouteError("尚未配置剧情商讨模型")

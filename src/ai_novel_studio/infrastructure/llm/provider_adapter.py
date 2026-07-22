@@ -3,18 +3,23 @@ from __future__ import annotations
 import json
 from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import Protocol, cast
+from math import isfinite
+from typing import Protocol, cast, runtime_checkable
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from ai_novel_studio.infrastructure.llm.provider_profile import ProviderProfile
 from ai_novel_studio.infrastructure.llm.schemas import (
+    EmbeddingRequest,
     LLMRequest,
     LLMResponse,
     LLMStreamEvent,
     LLMUsage,
     StreamEventKind,
 )
+
+_MAX_PROVIDER_RESPONSE_BYTES = 16 * 1024 * 1024
+_MAX_EMBEDDING_DIMENSIONS = 65_536
 
 
 class ProviderError(RuntimeError):
@@ -72,6 +77,17 @@ class ProviderAdapter(Protocol):
         api_key: str,
     ) -> Iterator[LLMStreamEvent]: ...
 
+
+@runtime_checkable
+class EmbeddingProviderAdapter(Protocol):
+    def embed(
+        self,
+        request: EmbeddingRequest,
+        profile: ProviderProfile,
+        api_key: str,
+    ) -> tuple[tuple[float, ...], ...]: ...
+
+
 class UrllibTransport:
     def request(
         self,
@@ -84,9 +100,14 @@ class UrllibTransport:
         request = Request(url, data=body, headers=headers, method=method)
         try:
             with urlopen(request, timeout=timeout_seconds) as response:
-                return TransportResponse(response.status, response.read())
+                response_body = response.read(_MAX_PROVIDER_RESPONSE_BYTES + 1)
+                if len(response_body) > _MAX_PROVIDER_RESPONSE_BYTES:
+                    raise ProviderProtocolError("模型服务响应超过大小限制")
+                return TransportResponse(response.status, response_body)
         except HTTPError as error:
-            return TransportResponse(error.code, error.read())
+            status = error.code
+            error.close()
+            return TransportResponse(status, b"")
         except URLError as error:
             raise ProviderRequestError("无法连接模型服务") from error
 
@@ -143,6 +164,29 @@ class OpenAICompatibleAdapter:
         )
         self._require_success(response)
         return self._response(self._json_object(response.body), request.model_id)
+
+    def embed(
+        self,
+        request: EmbeddingRequest,
+        profile: ProviderProfile,
+        api_key: str,
+    ) -> tuple[tuple[float, ...], ...]:
+        body = json.dumps(
+            {"model": request.model_id, "input": request.texts},
+            ensure_ascii=False,
+        ).encode("utf-8")
+        response = self._transport.request(
+            "POST",
+            f"{profile.base_url}/embeddings",
+            self._headers(api_key),
+            body,
+            profile.timeout_seconds,
+        )
+        self._require_success(response)
+        return self._embedding_vectors(
+            self._json_object(response.body),
+            expected_count=len(request.texts),
+        )
 
     def probe_tools(
         self, profile: ProviderProfile, api_key: str, model_id: str
@@ -332,6 +376,55 @@ class OpenAICompatibleAdapter:
             estimated=False,
         )
 
+    @classmethod
+    def _embedding_vectors(
+        cls,
+        payload: dict[str, object],
+        *,
+        expected_count: int,
+    ) -> tuple[tuple[float, ...], ...]:
+        values = cls._list(payload.get("data"), "Embedding data")
+        if len(values) != expected_count:
+            raise ProviderProtocolError("Embedding 响应数量与输入不一致")
+        ordered: list[tuple[float, ...] | None] = [None] * expected_count
+        dimensions: int | None = None
+        for value in values:
+            item = cls._mapping(value, "Embedding 条目")
+            index = item.get("index")
+            if (
+                isinstance(index, bool)
+                or not isinstance(index, int)
+                or not 0 <= index < expected_count
+                or ordered[index] is not None
+            ):
+                raise ProviderProtocolError("Embedding 响应 index 无效")
+            raw_vector = cls._list(item.get("embedding"), "Embedding 向量")
+            if not raw_vector:
+                raise ProviderProtocolError("Embedding 响应包含空向量")
+            if len(raw_vector) > _MAX_EMBEDDING_DIMENSIONS:
+                raise ProviderProtocolError("Embedding 响应向量维度超过限制")
+            vector: list[float] = []
+            for component in raw_vector:
+                if isinstance(component, bool) or not isinstance(component, (int, float)):
+                    raise ProviderProtocolError("Embedding 向量元素必须是有限数")
+                try:
+                    normalized = float(component)
+                except OverflowError as error:
+                    raise ProviderProtocolError(
+                        "Embedding 向量元素必须是有限数"
+                    ) from error
+                if not isfinite(normalized):
+                    raise ProviderProtocolError("Embedding 向量元素必须是有限数")
+                vector.append(normalized)
+            if dimensions is None:
+                dimensions = len(vector)
+            elif len(vector) != dimensions:
+                raise ProviderProtocolError("Embedding 响应向量维度不一致")
+            ordered[index] = tuple(vector)
+        if any(vector is None for vector in ordered):
+            raise ProviderProtocolError("Embedding 响应缺少 index")
+        return tuple(cast(tuple[float, ...], vector) for vector in ordered)
+
     @staticmethod
     def _require_success(response: TransportResponse) -> None:
         if not 200 <= response.status < 300:
@@ -341,7 +434,7 @@ class OpenAICompatibleAdapter:
     def _json_object(raw: bytes) -> dict[str, object]:
         try:
             value = json.loads(raw.decode("utf-8"))
-        except (UnicodeError, json.JSONDecodeError) as error:
+        except (UnicodeError, ValueError, RecursionError) as error:
             raise ProviderProtocolError("模型服务返回了无效 JSON") from error
         return OpenAICompatibleAdapter._mapping(value, "响应")
 

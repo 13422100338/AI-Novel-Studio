@@ -54,6 +54,27 @@ def test_advanced_route_precedes_default_dual_model_route() -> None:
     assert routes.resolve(TaskPurpose.STYLE_AUDIT) == audit
 
 
+def test_memory_embedding_requires_an_explicit_override() -> None:
+    routes = TaskRoutes(
+        plot=ModelRoute("provider-a", "plot-model"),
+        prose=ModelRoute("provider-b", "prose-model"),
+    )
+
+    with pytest.raises(MissingModelRouteError, match="Embedding"):
+        routes.resolve(TaskPurpose.MEMORY_EMBEDDING)
+
+
+def test_memory_embedding_resolves_only_its_explicit_override() -> None:
+    embedding = ModelRoute("provider-c", "embedding-model")
+    routes = TaskRoutes(
+        plot=ModelRoute("provider-a", "plot-model"),
+        prose=ModelRoute("provider-b", "prose-model"),
+        overrides=((TaskPurpose.MEMORY_EMBEDDING, embedding),),
+    )
+
+    assert routes.resolve(TaskPurpose.MEMORY_EMBEDDING) == embedding
+
+
 def test_missing_default_route_is_reported_instead_of_guessed() -> None:
     routes = TaskRoutes(plot=None, prose=None)
 

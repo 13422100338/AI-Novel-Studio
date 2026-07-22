@@ -4,6 +4,7 @@ import pytest
 
 from ai_novel_studio.infrastructure.llm import (
     ContractValidationError,
+    EmbeddingRequest,
     JsonField,
     JsonObjectContract,
     LLMContractRunner,
@@ -14,16 +15,21 @@ from ai_novel_studio.infrastructure.llm import (
     LLMUsage,
     MemoryCredentialStore,
     MissingCredentialError,
+    MissingProviderAdapterError,
     ModelConfiguration,
     ModelProfile,
     ModelRoute,
     ModelSamplingParameters,
+    OpenAICompatibleAdapter,
+    ProviderAdapter,
     ProviderProfile,
+    ProviderProtocolError,
     ProviderRequestError,
     RetryPolicy,
     StreamEventKind,
     TaskPurpose,
     TaskRoutes,
+    TransportResponse,
     UsageTracker,
 )
 
@@ -31,8 +37,10 @@ from ai_novel_studio.infrastructure.llm import (
 class FakeAdapter:
     def __init__(self) -> None:
         self.complete_results: list[LLMResponse | Exception] = []
+        self.embedding_results: list[tuple[tuple[float, ...], ...] | Exception] = []
         self.stream_events: list[LLMStreamEvent] = []
         self.complete_calls = []
+        self.embedding_calls: list[tuple[EmbeddingRequest, ProviderProfile, str]] = []
         self.stream_calls = 0
 
     def list_models(self, profile, api_key):  # type: ignore[no-untyped-def]
@@ -45,9 +53,58 @@ class FakeAdapter:
             raise result
         return result
 
+    def embed(self, request, profile, api_key):  # type: ignore[no-untyped-def]
+        self.embedding_calls.append((request, profile, api_key))
+        result = self.embedding_results.pop(0)
+        if isinstance(result, Exception):
+            raise result
+        return result
+
     def stream(self, request, profile, api_key) -> Iterator[LLMStreamEvent]:  # type: ignore[no-untyped-def]
         self.stream_calls += 1
         yield from self.stream_events
+
+
+class LegacyTextAdapter:
+    def __init__(self) -> None:
+        self.complete_calls = 0
+
+    def list_models(self, profile, api_key):  # type: ignore[no-untyped-def]
+        return ()
+
+    def complete(self, request, profile, api_key):  # type: ignore[no-untyped-def]
+        self.complete_calls += 1
+        return LLMResponse("legacy-ok", request.model_id, LLMUsage(2, 1))
+
+    def stream(self, request, profile, api_key) -> Iterator[LLMStreamEvent]:  # type: ignore[no-untyped-def]
+        yield LLMStreamEvent(StreamEventKind.COMPLETED)
+
+
+class SequencedTransport:
+    def __init__(self, responses: list[TransportResponse]) -> None:
+        self.responses = list(responses)
+        self.request_calls = 0
+
+    def request(
+        self,
+        method: str,
+        url: str,
+        headers: dict[str, str],
+        body: bytes | None,
+        timeout_seconds: int,
+    ) -> TransportResponse:
+        self.request_calls += 1
+        return self.responses.pop(0)
+
+    def stream(
+        self,
+        method: str,
+        url: str,
+        headers: dict[str, str],
+        body: bytes | None,
+        timeout_seconds: int,
+    ) -> Iterator[bytes]:
+        return iter(())
 
 
 def _configuration() -> ModelConfiguration:
@@ -62,11 +119,18 @@ def _configuration() -> ModelConfiguration:
     return ModelConfiguration(
         providers=(provider,),
         models=(model,),
-        routes=TaskRoutes(plot=route, prose=route),
+        routes=TaskRoutes(
+            plot=route,
+            prose=route,
+            overrides=((TaskPurpose.MEMORY_EMBEDDING, route),),
+        ),
     )
 
 
-def _gateway(adapter: FakeAdapter, credentials: MemoryCredentialStore | None = None) -> LLMGateway:
+def _gateway(
+    adapter: ProviderAdapter,
+    credentials: MemoryCredentialStore | None = None,
+) -> LLMGateway:
     secrets = credentials or MemoryCredentialStore()
     if secrets.get("credential-relay") is None:
         secrets.set("credential-relay", "secret")
@@ -96,6 +160,169 @@ def test_gateway_resolves_exact_route_and_passes_secret_only_to_adapter() -> Non
     assert request.output_token_limit == 12_345
     assert profile.id == "relay"
     assert api_key == "secret"
+
+
+def test_legacy_text_adapter_remains_usable_for_completion() -> None:
+    adapter = LegacyTextAdapter()
+    gateway = _gateway(adapter)
+
+    response = gateway.complete(
+        TaskPurpose.PROSE_GENERATION,
+        (LLMMessage("user", "request"),),
+        100,
+    )
+
+    assert response.text == "legacy-ok"
+    assert adapter.complete_calls == 1
+
+
+def test_embedding_route_rejects_legacy_text_adapter_before_provider_call() -> None:
+    adapter = LegacyTextAdapter()
+    gateway = _gateway(adapter)
+
+    with pytest.raises(MissingProviderAdapterError, match="Embedding"):
+        gateway.embed(TaskPurpose.MEMORY_EMBEDDING, ("text",))
+
+    assert adapter.complete_calls == 0
+
+
+def test_gateway_embeds_with_the_explicit_route_without_recording_completion_usage() -> None:
+    adapter = FakeAdapter()
+    adapter.embedding_results = [((0.1, 0.2), (0.3, 0.4))]
+    gateway = _gateway(adapter)
+
+    vectors = gateway.embed(
+        TaskPurpose.MEMORY_EMBEDDING,
+        ("first", "second"),
+    )
+
+    assert vectors == ((0.1, 0.2), (0.3, 0.4))
+    request, profile, api_key = adapter.embedding_calls[0]
+    assert request == EmbeddingRequest("novel-pro", ("first", "second"))
+    assert profile.id == "relay"
+    assert api_key == "secret"
+    assert gateway.usage_tracker.records == ()
+
+
+def test_gateway_retries_embedding_provider_request_errors_only() -> None:
+    adapter = FakeAdapter()
+    adapter.embedding_results = [
+        ProviderRequestError("temporary"),
+        ((0.1, 0.2),),
+    ]
+    gateway = _gateway(adapter)
+
+    vectors = gateway.embed(TaskPurpose.MEMORY_EMBEDDING, ("text",))
+
+    assert vectors == ((0.1, 0.2),)
+    assert len(adapter.embedding_calls) == 2
+    assert gateway.usage_tracker.records == ()
+
+
+@pytest.mark.parametrize("status", [429, 503])
+def test_gateway_retries_retryable_http_embedding_failures(status: int) -> None:
+    transport = SequencedTransport(
+        [
+            TransportResponse(status, b""),
+            TransportResponse(200, b'{"data":[{"index":0,"embedding":[0.1]}]}'),
+        ]
+    )
+    gateway = _gateway(OpenAICompatibleAdapter(transport))
+
+    vectors = gateway.embed(TaskPurpose.MEMORY_EMBEDDING, ("text",))
+
+    assert vectors == ((0.1,),)
+    assert transport.request_calls == 2
+
+
+def test_gateway_raises_the_final_embedding_request_error_after_retries() -> None:
+    adapter = FakeAdapter()
+    error = ProviderRequestError("safe final error")
+    adapter.embedding_results = [error, error]
+    gateway = _gateway(adapter)
+
+    with pytest.raises(ProviderRequestError) as captured:
+        gateway.embed(TaskPurpose.MEMORY_EMBEDDING, ("text",))
+
+    assert captured.value is error
+    assert len(adapter.embedding_calls) == 2
+    assert gateway.usage_tracker.records == ()
+
+
+def test_gateway_does_not_retry_embedding_protocol_errors() -> None:
+    adapter = FakeAdapter()
+    error = ProviderProtocolError("damaged embedding response")
+    adapter.embedding_results = [error]
+    gateway = _gateway(adapter)
+
+    with pytest.raises(ProviderProtocolError) as captured:
+        gateway.embed(TaskPurpose.MEMORY_EMBEDDING, ("text",))
+
+    assert captured.value is error
+    assert len(adapter.embedding_calls) == 1
+
+
+def test_gateway_rejects_empty_embedding_input_before_resolution_or_network() -> None:
+    adapter = FakeAdapter()
+    gateway = LLMGateway(
+        ModelConfiguration.empty(),
+        MemoryCredentialStore(),
+        {"openai_compatible": adapter},
+        UsageTracker(),
+    )
+
+    with pytest.raises(ValueError, match="input"):
+        gateway.embed(TaskPurpose.MEMORY_EMBEDDING, ())
+
+    assert adapter.embedding_calls == []
+
+
+def test_gateway_embedding_rejects_non_embedding_purposes() -> None:
+    adapter = FakeAdapter()
+    gateway = _gateway(adapter)
+
+    with pytest.raises(ValueError, match="MEMORY_EMBEDDING"):
+        gateway.embed(TaskPurpose.PROSE_GENERATION, ("text",))
+
+    assert adapter.embedding_calls == []
+
+
+def test_gateway_embedding_requires_an_explicit_route() -> None:
+    adapter = FakeAdapter()
+    configuration = _configuration()
+    gateway = LLMGateway(
+        ModelConfiguration(
+            providers=configuration.providers,
+            models=configuration.models,
+            routes=TaskRoutes(
+                plot=configuration.routes.plot,
+                prose=configuration.routes.prose,
+            ),
+        ),
+        MemoryCredentialStore(),
+        {"openai_compatible": adapter},
+        UsageTracker(),
+    )
+
+    with pytest.raises(LookupError, match="Embedding"):
+        gateway.embed(TaskPurpose.MEMORY_EMBEDDING, ("text",))
+
+    assert adapter.embedding_calls == []
+
+
+def test_gateway_embedding_reports_missing_credential_without_calling_adapter() -> None:
+    adapter = FakeAdapter()
+    gateway = LLMGateway(
+        _configuration(),
+        MemoryCredentialStore(),
+        {"openai_compatible": adapter},
+        UsageTracker(),
+    )
+
+    with pytest.raises(MissingCredentialError, match="API Key"):
+        gateway.embed(TaskPurpose.MEMORY_EMBEDDING, ("text",))
+
+    assert adapter.embedding_calls == []
 
 
 def test_gateway_applies_per_model_sampling_overrides() -> None:

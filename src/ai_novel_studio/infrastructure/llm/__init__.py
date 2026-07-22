@@ -26,6 +26,7 @@ from ai_novel_studio.infrastructure.llm.model_catalog import (
     ModelCatalog,
 )
 from ai_novel_studio.infrastructure.llm.provider_adapter import (
+    EmbeddingProviderAdapter,
     HttpTransport,
     OpenAICompatibleAdapter,
     ProviderAdapter,
@@ -42,6 +43,7 @@ from ai_novel_studio.infrastructure.llm.provider_profile import (
 )
 from ai_novel_studio.infrastructure.llm.retry_policy import RetryPolicy
 from ai_novel_studio.infrastructure.llm.schemas import (
+    EmbeddingRequest,
     LLMMessage,
     LLMRequest,
     LLMResponse,
@@ -66,6 +68,8 @@ __all__ = [
     "ContractValidationError",
     "CredentialStore",
     "CredentialStoreError",
+    "EmbeddingRequest",
+    "EmbeddingProviderAdapter",
     "HttpTransport",
     "JsonField",
     "JsonObjectContract",

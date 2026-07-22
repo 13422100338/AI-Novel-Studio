@@ -6,12 +6,14 @@ from collections.abc import Iterator, Mapping
 from ai_novel_studio.infrastructure.llm.config_repository import ModelConfiguration
 from ai_novel_studio.infrastructure.llm.credential_store import CredentialStore
 from ai_novel_studio.infrastructure.llm.provider_adapter import (
+    EmbeddingProviderAdapter,
     ProviderAdapter,
     ProviderRequestError,
 )
 from ai_novel_studio.infrastructure.llm.provider_profile import ProviderProfile
 from ai_novel_studio.infrastructure.llm.retry_policy import RetryPolicy
 from ai_novel_studio.infrastructure.llm.schemas import (
+    EmbeddingRequest,
     LLMMessage,
     LLMRequest,
     LLMResponse,
@@ -96,6 +98,30 @@ class LLMGateway:
                         duration_ms=self._elapsed_ms(started),
                         retry_count=attempt - 1,
                     )
+                    raise
+                self._wait(attempt + 1)
+        raise AssertionError("unreachable")
+
+    def embed(
+        self,
+        purpose: TaskPurpose,
+        texts: tuple[str, ...],
+    ) -> tuple[tuple[float, ...], ...]:
+        if purpose != TaskPurpose.MEMORY_EMBEDDING:
+            raise ValueError("Embedding 调用只接受 MEMORY_EMBEDDING 任务")
+        if not texts:
+            raise ValueError("Embedding input 不能为空")
+        route, _model, profile, adapter, api_key = self._resolve(purpose)
+        if not isinstance(adapter, EmbeddingProviderAdapter):
+            raise MissingProviderAdapterError(
+                f"当前接口适配器不支持 Embedding：{profile.interface_type}"
+            )
+        request = EmbeddingRequest(route.model_id, texts)
+        for attempt in range(1, self.retry_policy.max_attempts + 1):
+            try:
+                return adapter.embed(request, profile, api_key)
+            except ProviderRequestError:
+                if attempt >= self.retry_policy.max_attempts:
                     raise
                 self._wait(attempt + 1)
         raise AssertionError("unreachable")

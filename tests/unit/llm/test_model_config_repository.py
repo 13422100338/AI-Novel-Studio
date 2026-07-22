@@ -49,7 +49,10 @@ def _configuration() -> ModelConfiguration:
         routes=TaskRoutes(
             plot=route,
             prose=route,
-            overrides=((TaskPurpose.STYLE_AUDIT, route),),
+            overrides=(
+                (TaskPurpose.STYLE_AUDIT, route),
+                (TaskPurpose.MEMORY_EMBEDDING, route),
+            ),
         ),
     )
 

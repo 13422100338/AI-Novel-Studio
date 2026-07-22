@@ -12,6 +12,7 @@ class TaskPurpose(StrEnum):
     PROSE_GENERATION = "prose_generation"
     STYLE_AUDIT = "style_audit"
     MEMORY_EXTRACTION = "memory_extraction"
+    MEMORY_EMBEDDING = "memory_embedding"
     LOCAL_REPAIR = "local_repair"
 
 
@@ -129,6 +130,22 @@ class LLMRequest:
             frequency_penalty=self.frequency_penalty,
             presence_penalty=self.presence_penalty,
         )
+
+
+@dataclass(frozen=True, slots=True)
+class EmbeddingRequest:
+    model_id: str
+    texts: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if not self.model_id.strip():
+            raise ValueError("Embedding 模型 ID 不能为空")
+        if not isinstance(self.texts, tuple) or not self.texts:
+            raise ValueError("Embedding input 不能为空")
+        if any(not isinstance(text, str) for text in self.texts):
+            raise ValueError("Embedding input 必须全部是文本")
+        if any(not text.strip() for text in self.texts):
+            raise ValueError("Embedding input 不能包含空白文本")
 
 
 @dataclass(frozen=True, slots=True)
