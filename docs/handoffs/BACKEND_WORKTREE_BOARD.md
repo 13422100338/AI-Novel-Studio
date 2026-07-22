@@ -8,7 +8,7 @@
 - Superpowers: disabled for this project workflow.
 - Initial business-code baseline: `e35b50d` (the backend code state before the governance-only dispatch commit).
 - Wave 1 dispatched baseline: `3382dd36c2a4aeb4acdab411e9211885b633e678`.
-- Latest integrated business commit: `1c1d26bafa78cc95d0251bfc88d9b5d88bcb3453` (A3 production embedding composition and bounded manual rebuild, including prior A1, A2, B1, C1, C2, and C3 increments).
+- Latest integrated business commit: `840fcbdfff94e9c81073ba95e4a92065b7988259` (B2 application/UI generation-profile and audit-policy migration, including prior A1-A3, B1, and C1-C3 increments).
 - Planning sources:
   - `docs/handoffs/2026-07-22-backend-refactor-handoff.md`
   - `C:\Users\钟子诚\Downloads\AI_Novel_Studio_后端改进方案_Subject_View_Time_Context_Compiler_修订版.md`
@@ -17,6 +17,8 @@
 
 - The user makes the final decision to start, resume, or advance lanes A, B, and C, including each new increment. The master may recommend sequencing and prepare read-only tickets, but must not authorize implementation without explicit user approval.
 - Debugging and bug fixes inside an already authorized active increment may proceed without a new lane-start decision, provided they stay within the approved scope.
+- Before dispatching each new A/B/C increment, the master selects and records its model and reasoning effort according to task type and risk, with cost-performance as the priority. Prefer `gpt-5.6-luna` for mechanical documentation, test-only, copy, and other low-risk work; `gpt-5.6-terra` for bounded application/UI/refactoring work; and reserve `gpt-5.6-sol / high` for schema or migration ownership, security or untrusted external-input boundaries, concurrency, public contracts, and high-risk cross-module architecture. Never exceed `gpt-5.6-sol / high`.
+- The master may also change its own model when the current surface supports it, using the same cost-first ceiling. Model selection never bypasses the user's lane-start decision.
 - Create each new Codex Worktree task from the latest `main`.
 - A new worktree may start in detached `HEAD`; before beginning work, use **Create branch here** and confirm that the worktree is on its assigned `codex/...` branch.
 - Use an independent `.venv` or Local Environment setup in each worktree. Do not copy the main worktree's `.venv`.
@@ -25,13 +27,13 @@
 
 All Wave 1 tasks were dispatched from `3382dd36c2a4aeb4acdab411e9211885b633e678`; their initial business-code baseline remains `e35b50d`.
 
-- Active implementations authorized by the user:
-  - `generation-profile-audit-policy` increment B2: application/UI migration from new `STRICT` creation to explicit generation profile and audit policy; now active on the A3-integrated baseline.
+- Active implementations authorized by the user: none.
 - Integrated increments:
   - `embedding-production` increment A1 (provider and gateway embedding contract), merged as `fdbfb088278c18a0efb3e062cd5f9e8a6ddd01f4`.
   - `embedding-production` increment A2 (Gateway-backed document/query embedding provider plus fail-open semantic recall), merged as `03b2263043262cdf371f1929a1255162decabfac`.
   - `embedding-production` increment A3 (production embedding composition and bounded backend manual rebuild), merged as `1c1d26bafa78cc95d0251bfc88d9b5d88bcb3453`.
   - `generation-profile-audit-policy` increment B1 (domain and v17 persistence compatibility foundation), merged as `7802d8d9c5f2a9e2f16884b0c24de6199e8f2537`.
+  - `generation-profile-audit-policy` increment B2 (application/UI migration from new `STRICT` creation to explicit generation profile and audit policy), merged as `840fcbdfff94e9c81073ba95e4a92065b7988259`.
   - `view-operations-ui` increment C1 (single-record Legacy Reader Knowledge to Reader View UI), merged as `6f19d0a180ed72b9eafca6fb57d8eb550f429845`.
   - `view-operations-ui` increment C2 (single-record model View Assertion approve/reject UI), merged as `0b8c4006f396ea2024cd38de7a5b2e8b5f2d055b`.
   - `view-operations-ui` increment C3 (confirmed single-record pending model-candidate content editing with optimistic concurrency), merged as `4d2465f00173a6ffb758f7e4e5a3c493fa33e5a1`.
@@ -41,10 +43,10 @@ All Wave 1 tasks were dispatched from `3382dd36c2a4aeb4acdab411e9211885b633e678`
 | Task | Model / reasoning | Thread | Worktree | Assigned branch | HEAD state | Status |
 | --- | --- | --- | --- | --- | --- | --- |
 | `embedding-production` | `gpt-5.6-sol` / `high` | `019f87e8-6d32-7141-b9b4-4f1142e4db4e` | `C:\Users\钟子诚\.codex\worktrees\93d7\AI-Novel-Studio` | `codex/embedding-production` | branch | increment A3 merged to main at `1c1d26b`; A4 not authorized |
-| `generation-profile-audit-policy` | `gpt-5.6-terra` / `medium` | `019f87e8-696e-7f11-bcfe-1552f51cabc3` | `C:\Users\钟子诚\.codex\worktrees\4df4\AI-Novel-Studio` | `codex/generation-profile-audit-policy` | branch | increment B2 authorized / implementation active |
+| `generation-profile-audit-policy` | `gpt-5.6-terra` / `medium` | `019f87e8-696e-7f11-bcfe-1552f51cabc3` | `C:\Users\钟子诚\.codex\worktrees\4df4\AI-Novel-Studio` | `codex/generation-profile-audit-policy` | branch | increment B2 merged to main at `840fcbd`; B3 not authorized |
 | `view-operations-ui` | `gpt-5.6-terra` / `medium` | `019f87e8-7a77-7902-b3d1-a38f32240136` | `C:\Users\钟子诚\.codex\worktrees\8802\AI-Novel-Studio` | `codex/view-operations-ui` | branch | increment C3 merged to main at `4d2465f`; C4 not authorized |
 
-B2 is active. A4, B3, C4, and every later increment still require a new user decision.
+No implementation increment is active. A4, B3, C4, and every later increment still require a new user decision.
 
 ## Later Waves and Dependencies
 
