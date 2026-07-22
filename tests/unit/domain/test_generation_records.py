@@ -4,14 +4,17 @@ from datetime import UTC, datetime
 import pytest
 
 from ai_novel_studio.domain.generation import (
+    AuditPolicy,
     BriefSource,
     BriefStatus,
     ChapterBrief,
     ChapterRequirement,
     CreationMode,
     GenerationCheckpoint,
+    GenerationProfile,
     GenerationRun,
     GenerationStatus,
+    resolve_generation_settings,
 )
 
 
@@ -26,6 +29,30 @@ def test_phase_five_enums_expose_stable_storage_values() -> None:
     assert BriefStatus.FROZEN.value == "FROZEN"
     assert GenerationStatus.PARTIAL.value == "PARTIAL"
     assert GenerationStatus.ACCEPTED.value == "ACCEPTED"
+
+
+def test_generation_profile_and_audit_policy_decode_legacy_modes() -> None:
+    assert GenerationProfile.QUICK.value == "QUICK"
+    assert GenerationProfile.NORMAL.value == "NORMAL"
+    assert AuditPolicy.MINIMAL.value == "MINIMAL"
+    assert AuditPolicy.STANDARD.value == "STANDARD"
+    assert AuditPolicy.DEEP.value == "DEEP"
+    assert resolve_generation_settings(CreationMode.BASIC, None) == (
+        GenerationProfile.QUICK,
+        AuditPolicy.MINIMAL,
+    )
+    assert resolve_generation_settings(CreationMode.STANDARD, None) == (
+        GenerationProfile.NORMAL,
+        AuditPolicy.MINIMAL,
+    )
+    assert resolve_generation_settings(CreationMode.STRICT, None) == (
+        GenerationProfile.NORMAL,
+        AuditPolicy.STANDARD,
+    )
+    assert resolve_generation_settings(CreationMode.STRICT, AuditPolicy.DEEP) == (
+        GenerationProfile.NORMAL,
+        AuditPolicy.DEEP,
+    )
 
 
 def test_generation_records_are_immutable_and_keep_source_provenance() -> None:

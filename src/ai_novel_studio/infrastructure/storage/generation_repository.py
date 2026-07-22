@@ -3,7 +3,13 @@ from __future__ import annotations
 import sqlite3
 from datetime import UTC, datetime
 
-from ai_novel_studio.domain.generation import CreationMode, GenerationRun, GenerationStatus
+from ai_novel_studio.domain.generation import (
+    AuditPolicy,
+    CreationMode,
+    GenerationRun,
+    GenerationStatus,
+    resolve_generation_settings,
+)
 from ai_novel_studio.domain.identifiers import new_id
 from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
 
@@ -78,9 +84,11 @@ class GenerationRepository:
         model_id: str,
         output_token_limit: int,
         prompt_version: str,
+        audit_policy: AuditPolicy | None = None,
     ) -> GenerationRun:
         run_id = new_id()
         now = _now().isoformat()
+        _, resolved_policy = resolve_generation_settings(mode, audit_policy)
         try:
             with self.project.database.connect() as connection, connection:
                 connection.execute(
@@ -90,10 +98,10 @@ class GenerationRepository:
                         context_manifest_id, model_provider_id, model_id,
                         output_token_limit, prompt_version, accepted_chapter_revision,
                         input_tokens, output_tokens, cached_input_tokens, reasoning_tokens,
-                        failure_code, failure_message, started_at, updated_at,
+                        failure_code, failure_message, audit_policy, started_at, updated_at,
                         completed_at, accepted_at
                     ) VALUES (?, ?, ?, 'PREPARING', ?, ?, NULL, ?, ?, ?, ?,
-                              NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?, NULL, NULL)
+                              NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?, ?, NULL, NULL)
                     """,
                     (
                         run_id,
@@ -105,6 +113,7 @@ class GenerationRepository:
                         model_id,
                         output_token_limit,
                         prompt_version,
+                        resolved_policy.value,
                         now,
                         now,
                     ),
@@ -241,4 +250,8 @@ class GenerationRepository:
             accepted_at=(
                 datetime.fromisoformat(row["accepted_at"]) if row["accepted_at"] else None
             ),
+            audit_policy=resolve_generation_settings(
+                CreationMode(row["mode"]),
+                AuditPolicy(row["audit_policy"]) if row["audit_policy"] else None,
+            )[1],
         )

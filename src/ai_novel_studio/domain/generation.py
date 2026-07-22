@@ -11,6 +11,34 @@ class CreationMode(StrEnum):
     STRICT = "STRICT"
 
 
+class GenerationProfile(StrEnum):
+    QUICK = "QUICK"
+    NORMAL = "NORMAL"
+
+
+class AuditPolicy(StrEnum):
+    MINIMAL = "MINIMAL"
+    STANDARD = "STANDARD"
+    DEEP = "DEEP"
+
+
+def resolve_generation_settings(
+    mode: CreationMode,
+    audit_policy: AuditPolicy | None,
+) -> tuple[GenerationProfile, AuditPolicy]:
+    profile = (
+        GenerationProfile.QUICK
+        if mode == CreationMode.BASIC
+        else GenerationProfile.NORMAL
+    )
+    if audit_policy is not None:
+        return profile, audit_policy
+    return (
+        profile,
+        AuditPolicy.STANDARD if mode == CreationMode.STRICT else AuditPolicy.MINIMAL,
+    )
+
+
 class BriefStatus(StrEnum):
     DRAFT = "DRAFT"
     FROZEN = "FROZEN"
@@ -168,6 +196,7 @@ class GenerationRun:
     updated_at: datetime
     completed_at: datetime | None
     accepted_at: datetime | None
+    audit_policy: AuditPolicy = AuditPolicy.MINIMAL
 
     def __post_init__(self) -> None:
         for field, value in (
@@ -189,6 +218,10 @@ class GenerationRun:
             "reasoning_tokens",
         ):
             _non_negative(getattr(self, field), f"{field} Token" if "tokens" in field else field)
+
+    @property
+    def generation_profile(self) -> GenerationProfile:
+        return resolve_generation_settings(self.mode, self.audit_policy)[0]
 
 
 @dataclass(frozen=True, slots=True)

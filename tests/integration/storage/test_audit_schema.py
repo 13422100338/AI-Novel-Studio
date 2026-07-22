@@ -98,7 +98,7 @@ def test_schema_v4_adds_audit_tables_and_preserves_v3_data(tmp_path) -> None:  #
     finally:
         connection.close()
 
-    assert version == LATEST_SCHEMA_VERSION == 16
+    assert version == LATEST_SCHEMA_VERSION == 17
     assert title == "Old Chapter"
     assert {
         "audit_runs",

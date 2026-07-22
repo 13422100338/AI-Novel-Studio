@@ -104,7 +104,7 @@ def test_schema_v16_adds_constrained_embedding_cache(tmp_path: Path) -> None:
             ).fetchone()[0]
         )
 
-    assert version == migration_module.LATEST_SCHEMA_VERSION == 16
+    assert version == migration_module.LATEST_SCHEMA_VERSION == 17
     assert columns == {
         "document_id",
         "model_id",

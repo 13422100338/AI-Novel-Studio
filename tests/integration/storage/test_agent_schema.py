@@ -37,7 +37,7 @@ def test_schema_v5_adds_agent_trace_tables() -> None:
         ).fetchall()
     }
 
-    assert version == LATEST_SCHEMA_VERSION == 16
+    assert version == LATEST_SCHEMA_VERSION == 17
     assert {"agent_runs", "agent_turns", "agent_tool_calls"} <= tables
     assert "agent_runs_chapter" in indexes
     assert "agent_tool_calls_run" in indexes

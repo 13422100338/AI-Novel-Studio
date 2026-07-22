@@ -5,6 +5,7 @@ from ai_novel_studio.infrastructure.storage.schema_migrations_v1_to_v15 import (
     MIGRATIONS_V1_TO_V15,
 )
 from ai_novel_studio.infrastructure.storage.schema_migrations_v16 import MIGRATIONS_V16
+from ai_novel_studio.infrastructure.storage.schema_migrations_v17 import MIGRATIONS_V17
 
 
 def _compose_migrations(
@@ -27,7 +28,11 @@ def _compose_migrations(
     return migrations
 
 
-MIGRATIONS = _compose_migrations(MIGRATIONS_V1_TO_V15, MIGRATIONS_V16)
+MIGRATIONS = _compose_migrations(
+    MIGRATIONS_V1_TO_V15,
+    MIGRATIONS_V16,
+    MIGRATIONS_V17,
+)
 LATEST_SCHEMA_VERSION = max(MIGRATIONS)
 
 __all__ = ["LATEST_SCHEMA_VERSION", "MIGRATIONS"]

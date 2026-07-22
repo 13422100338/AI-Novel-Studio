@@ -4,7 +4,12 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 
-from ai_novel_studio.domain.generation import CreationMode
+from ai_novel_studio.domain.generation import (
+    AuditPolicy,
+    CreationMode,
+    GenerationProfile,
+    resolve_generation_settings,
+)
 
 
 class AuditTargetKind(StrEnum):
@@ -118,6 +123,7 @@ class AuditRun:
     failure_message: str | None
     started_at: datetime
     completed_at: datetime | None
+    audit_policy: AuditPolicy = AuditPolicy.MINIMAL
 
     def __post_init__(self) -> None:
         for field, value in (
@@ -140,6 +146,10 @@ class AuditRun:
         object.__setattr__(self, "model_id", _optional_text(self.model_id))
         object.__setattr__(self, "failure_code", _optional_text(self.failure_code))
         object.__setattr__(self, "failure_message", _optional_text(self.failure_message))
+
+    @property
+    def generation_profile(self) -> GenerationProfile:
+        return resolve_generation_settings(self.mode, self.audit_policy)[0]
 
 
 @dataclass(frozen=True, slots=True)
@@ -239,4 +249,3 @@ class ProvenanceEvent:
         object.__setattr__(self, "source_audit_run_id", _optional_text(self.source_audit_run_id))
         object.__setattr__(self, "source_finding_id", _optional_text(self.source_finding_id))
         object.__setattr__(self, "source_repair_id", _optional_text(self.source_repair_id))
-

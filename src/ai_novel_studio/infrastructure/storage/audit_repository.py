@@ -18,7 +18,11 @@ from ai_novel_studio.domain.audit import (
     RepairProposalStatus,
     RepairStrategy,
 )
-from ai_novel_studio.domain.generation import CreationMode
+from ai_novel_studio.domain.generation import (
+    AuditPolicy,
+    CreationMode,
+    resolve_generation_settings,
+)
 from ai_novel_studio.domain.identifiers import new_id
 from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
 
@@ -44,17 +48,19 @@ class AuditRepository:
         prompt_version: str,
         model_provider_id: str | None = None,
         model_id: str | None = None,
+        audit_policy: AuditPolicy | None = None,
     ) -> AuditRun:
         run_id = new_id()
         now = _now().isoformat()
+        _, resolved_policy = resolve_generation_settings(mode, audit_policy)
         with self.project.database.connect() as connection, connection:
             connection.execute(
                 """
                 INSERT INTO audit_runs(
                     id, chapter_id, target_kind, target_id, target_revision, target_hash,
-                    mode, status, model_provider_id, model_id, prompt_version,
+                    mode, audit_policy, status, model_provider_id, model_id, prompt_version,
                     started_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     run_id,
@@ -64,6 +70,7 @@ class AuditRepository:
                     target_revision,
                     target_hash,
                     mode.value,
+                    resolved_policy.value,
                     status.value,
                     model_provider_id,
                     model_id,
@@ -318,6 +325,10 @@ class AuditRepository:
             row["failure_message"],
             datetime.fromisoformat(row["started_at"]),
             datetime.fromisoformat(row["completed_at"]) if row["completed_at"] else None,
+            resolve_generation_settings(
+                CreationMode(row["mode"]),
+                AuditPolicy(row["audit_policy"]) if row["audit_policy"] else None,
+            )[1],
         )
 
     @staticmethod
