@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 
 from ai_novel_studio.application.reader_knowledge_summary_service import (
     READER_SUMMARY_OVERRIDE_TITLE,
@@ -226,6 +227,25 @@ class ViewAssertionService:
             decision=ReviewStatus.REJECTED,
             confirmed_by_user=confirmed_by_user,
         )
+
+    def edit_model_candidate_content(
+        self,
+        assertion_id: str,
+        content: str,
+        *,
+        expected_updated_at: datetime,
+        confirmed_by_user: bool,
+    ) -> ViewAssertion:
+        if confirmed_by_user is not True:
+            raise PermissionError("模型候选编辑必须由用户明确确认")
+        try:
+            return self.repository.update_model_candidate_content(
+                assertion_id,
+                content=content,
+                expected_updated_at=expected_updated_at.isoformat(),
+            )
+        except ViewAssertionRepositoryError as error:
+            raise ViewAssertionReviewError(str(error)) from error
 
     def list_for_context(
         self,

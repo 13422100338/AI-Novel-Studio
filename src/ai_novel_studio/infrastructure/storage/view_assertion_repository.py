@@ -211,6 +211,28 @@ class ViewAssertionRepository:
                 raise ViewAssertionRepositoryError("候选在审查期间发生变化，请重新载入")
         return self.get(assertion_id)
 
+    def update_model_candidate_content(
+        self, assertion_id: str, *, content: str, expected_updated_at: str
+    ) -> ViewAssertion:
+        normalized = content.strip()
+        if not normalized or len(normalized) > 20_000:
+            raise ValueError("content must contain 1 to 20000 characters")
+        now = datetime.now(UTC).isoformat()
+        with self.project.database.connect() as connection, connection:
+            cursor = connection.execute(
+                """
+                UPDATE view_assertions
+                SET content = ?, updated_at = ?
+                WHERE id = ? AND authority = 'MODEL_EXTRACTED' AND source_type = 'MODEL'
+                  AND review_status = 'REVIEW' AND stale = 0 AND source_changed = 0
+                  AND updated_at = ?
+                """,
+                (normalized, now, assertion_id, expected_updated_at),
+            )
+            if cursor.rowcount != 1:
+                raise ViewAssertionRepositoryError("候选已变化或不可编辑，请重新载入")
+        return self.get(assertion_id)
+
     def list_visible_at(
         self,
         *,

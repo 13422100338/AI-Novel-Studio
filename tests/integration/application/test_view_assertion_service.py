@@ -431,6 +431,51 @@ def test_model_candidate_stays_out_of_context_until_explicit_approval(
     ) == (approved,)
 
 
+def test_user_can_edit_only_pending_model_candidate_content_with_concurrency(
+    tmp_path: Path,
+) -> None:
+    project, eric, _christine = _project_with_characters(tmp_path)
+    service = ViewAssertionService(project)
+    candidate = service.create_model_candidate(
+        ViewAssertionDraft(
+            subject_id=eric.id,
+            view_type=ViewType.WORLD_TRUTH,
+            content="旧候选内容。",
+            valid_from_sequence=2,
+        ),
+        source_id="chapter-8",
+        source_revision=3,
+    )
+
+    with pytest.raises(PermissionError):
+        service.edit_model_candidate_content(
+            candidate.id,
+            "新候选内容。",
+            expected_updated_at=candidate.updated_at,
+            confirmed_by_user=False,
+        )
+    edited = service.edit_model_candidate_content(
+        candidate.id,
+        "新候选内容。",
+        expected_updated_at=candidate.updated_at,
+        confirmed_by_user=True,
+    )
+
+    assert edited.content == "新候选内容。"
+    assert edited.subject_id == candidate.subject_id
+    assert edited.view_type == candidate.view_type
+    assert edited.valid_from_sequence == 2
+    assert edited.source_id == candidate.source_id
+    assert edited.source_revision == candidate.source_revision
+    with pytest.raises(ViewAssertionReviewError, match="重新载入"):
+        service.edit_model_candidate_content(
+            candidate.id,
+            "并发覆盖。",
+            expected_updated_at=candidate.updated_at,
+            confirmed_by_user=True,
+        )
+
+
 def test_rejected_model_candidate_cannot_be_approved_later(tmp_path: Path) -> None:
     project, eric, _christine = _project_with_characters(tmp_path)
     service = ViewAssertionService(project)

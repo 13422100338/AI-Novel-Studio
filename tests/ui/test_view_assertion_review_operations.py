@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import cast
 
@@ -70,6 +70,17 @@ class _ReviewService:
     ) -> ViewAssertion:
         return self._review("reject", assertion_id, confirmed_by_user)
 
+    def edit_model_candidate_content(
+        self, assertion_id: str, content: str, *, expected_updated_at: datetime,
+        confirmed_by_user: bool,
+    ) -> ViewAssertion:
+        self.calls.append(("edit", assertion_id, confirmed_by_user))
+        if self.error is not None:
+            raise self.error
+        candidate = self.candidates[0]
+        self.candidates = (replace(candidate, content=content, updated_at=datetime.now()),)
+        return self.candidates[0]
+
     def _review(
         self, action: str, assertion_id: str, confirmed_by_user: bool
     ) -> ViewAssertion:
@@ -132,6 +143,9 @@ def test_view_assertion_review_binds_one_candidate_with_safe_subject_names(
     assert "克莉丝汀" in window.view_assertion_review_details.toPlainText()
     assert "chapter-1" in window.view_assertion_review_details.toPlainText()
     assert window.view_assertion_review_details.isReadOnly()
+    assert "可选" in window.view_assertion_review_status_label.text()
+    assert "保存" in window.view_assertion_review_status_label.text()
+    assert "批准或拒绝" in window.view_assertion_review_status_label.text()
     assert window.view_assertion_approve_button.isEnabled()
     assert window.view_assertion_reject_button.isEnabled()
 
@@ -211,3 +225,23 @@ def test_view_assertion_review_handles_error_and_empty_state(
     qtbot.mouseClick(window.view_assertion_approve_button, Qt.MouseButton.LeftButton)
 
     assert "候选已被审查" in window.view_assertion_review_status_label.text()
+
+
+def test_view_assertion_review_edit_requires_confirmation(
+    qtbot: QtBot, monkeypatch: MonkeyPatch
+) -> None:
+    window = MemoryWindow(WorkspaceDemoData.sample())
+    qtbot.addWidget(window)
+    service = _ReviewService((_candidate(),))
+    _bind(window, service)
+    window.view_assertion_content_editor.setPlainText("修订后的候选内容")
+    monkeypatch.setattr(
+        QMessageBox, "question", lambda *args, **kwargs: QMessageBox.StandardButton.No
+    )
+    qtbot.mouseClick(window.view_assertion_save_edit_button, Qt.MouseButton.LeftButton)
+    assert service.calls == []
+    monkeypatch.setattr(
+        QMessageBox, "question", lambda *args, **kwargs: QMessageBox.StandardButton.Yes
+    )
+    qtbot.mouseClick(window.view_assertion_save_edit_button, Qt.MouseButton.LeftButton)
+    assert service.calls == [("edit", "assertion-1", True)]

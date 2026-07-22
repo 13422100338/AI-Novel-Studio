@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from datetime import datetime
 from typing import Protocol
 
 from PySide6.QtCore import Signal
@@ -79,6 +80,11 @@ class ViewAssertionReviewService(Protocol):
 
     def reject_candidate(
         self, assertion_id: str, *, confirmed_by_user: bool
+    ) -> ViewAssertion: ...
+
+    def edit_model_candidate_content(
+        self, assertion_id: str, content: str, *, expected_updated_at: datetime,
+        confirmed_by_user: bool,
     ) -> ViewAssertion: ...
 
 
@@ -476,6 +482,9 @@ class MemoryWindow(QMainWindow):
         self.view_assertion_review_details.setAccessibleName("查看 View Assertion 候选详情")
         self.view_assertion_review_details.setReadOnly(True)
         self.view_assertion_review_details.setMaximumHeight(120)
+        self.view_assertion_content_editor = QPlainTextEdit(panel)
+        self.view_assertion_content_editor.setAccessibleName("编辑 View Assertion 候选内容")
+        self.view_assertion_content_editor.setMaximumHeight(90)
         actions = QHBoxLayout()
         self.view_assertion_approve_button = QPushButton("批准候选", panel)
         self.view_assertion_approve_button.setAccessibleName("批准当前 View Assertion 候选")
@@ -487,6 +496,9 @@ class MemoryWindow(QMainWindow):
         self.view_assertion_reject_button.clicked.connect(
             lambda: self._review_view_assertion_candidate(ReviewStatus.REJECTED)
         )
+        self.view_assertion_save_edit_button = QPushButton("保存内容修订", panel)
+        self.view_assertion_save_edit_button.clicked.connect(self._save_view_assertion_edit)
+        actions.addWidget(self.view_assertion_save_edit_button)
         actions.addWidget(self.view_assertion_approve_button)
         actions.addWidget(self.view_assertion_reject_button)
         actions.addStretch(1)
@@ -497,6 +509,7 @@ class MemoryWindow(QMainWindow):
         layout.addWidget(explanation)
         layout.addWidget(self.view_assertion_review_selector)
         layout.addWidget(self.view_assertion_review_details)
+        layout.addWidget(self.view_assertion_content_editor)
         layout.addLayout(actions)
         layout.addWidget(self.view_assertion_review_status_label)
         self._set_view_assertion_review_enabled(False)
@@ -511,6 +524,7 @@ class MemoryWindow(QMainWindow):
             self._view_assertion_review_candidates = {}
             self.view_assertion_review_selector.clear()
             self.view_assertion_review_details.clear()
+            self.view_assertion_content_editor.clear()
             self.view_assertion_review_status_label.setText(
                 "当前未绑定项目，无法审查 View Assertion 候选。"
             )
@@ -531,6 +545,7 @@ class MemoryWindow(QMainWindow):
         self.view_assertion_review_selector.blockSignals(False)
         if not candidates:
             self.view_assertion_review_details.clear()
+            self.view_assertion_content_editor.clear()
             self.view_assertion_review_status_label.setText("没有待审查的 View Assertion 候选。")
             self._set_view_assertion_review_enabled(False)
             return
@@ -566,7 +581,10 @@ class MemoryWindow(QMainWindow):
                 )
             )
         )
-        self.view_assertion_review_status_label.setText("请选择批准或拒绝；候选内容保持只读。")
+        self.view_assertion_content_editor.setPlainText(candidate.content)
+        self.view_assertion_review_status_label.setText(
+            "可选编辑候选内容并单独保存；批准或拒绝仍是独立操作。"
+        )
 
     def _current_view_assertion_review_candidate(self) -> ViewAssertion | None:
         assertion_id = str(self.view_assertion_review_selector.currentData() or "")
@@ -581,6 +599,33 @@ class MemoryWindow(QMainWindow):
         self.view_assertion_review_selector.setEnabled(enabled)
         self.view_assertion_approve_button.setEnabled(enabled)
         self.view_assertion_reject_button.setEnabled(enabled)
+        self.view_assertion_save_edit_button.setEnabled(enabled)
+        self.view_assertion_content_editor.setReadOnly(not enabled)
+
+    def _save_view_assertion_edit(self) -> None:
+        service = self._view_assertion_review_service
+        candidate = self._current_view_assertion_review_candidate()
+        content = self.view_assertion_content_editor.toPlainText().strip()
+        if service is None or candidate is None or not content:
+            self.view_assertion_review_status_label.setText("请输入候选内容后再保存。")
+            return
+        answer = QMessageBox.question(
+            self, "确认保存候选修订", "仅更新当前候选内容，是否继续？"
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            service.edit_model_candidate_content(
+                candidate.id,
+                content,
+                expected_updated_at=candidate.updated_at,
+                confirmed_by_user=True,
+            )
+        except (PermissionError, ValueError, ViewAssertionReviewError) as error:
+            self.view_assertion_review_status_label.setText(f"候选内容保存失败：{error}")
+            return
+        self._bind_view_assertion_review_operation(tuple(self._view_assertion_subject_names.items()))
+        self.view_assertion_review_changed.emit()
 
     def _review_view_assertion_candidate(self, decision: ReviewStatus) -> None:
         service = self._view_assertion_review_service
