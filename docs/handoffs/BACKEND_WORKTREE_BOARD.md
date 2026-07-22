@@ -60,6 +60,8 @@ Remaining suggested integration order: `embedding-production` -> `generation-pro
 ## Worker Guardrails
 
 - Workers must not merge into or push `main`.
+- Workers run only ticket-specific narrow tests, lint for changed files, and type checks for the affected package. Do not run the full repository test suite unless the master explicitly requests it for a concrete cross-cutting risk.
+- The master owns full-suite validation at wave boundaries and other explicit consolidation gates; workers should report their exact narrow scope instead of duplicating that cost.
 - Workers must not modify manuscripts, databases, backups, exports, API keys, or secrets.
 - Only one active worktree may own schema changes at a time. The master controller records and assigns the schema owner before work begins.
 - Do not introduce a second architecture, parallel service layer, replacement pipeline, or duplicate persistence path. Extend the existing boundaries with the smallest correct change.
