@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from ai_novel_studio.core.context.history_retriever import (
+    EmbeddingUnavailableError,
     HistoryRetriever,
     StoredEmbeddingRecallProvider,
 )
@@ -28,6 +29,16 @@ class _RejectsLongEmbeddingQuery:
         if len(query) > 20_000:
             raise AssertionError("embedding query was not bounded")
         return ()
+
+
+class _UnavailableEmbeddingRecall:
+    def recall(self, query: str, *, limit: int) -> tuple[EmbeddingCandidate, ...]:
+        raise EmbeddingUnavailableError("Embedding 暂不可用")
+
+
+class _BrokenEmbeddingRecall:
+    def recall(self, query: str, *, limit: int) -> tuple[EmbeddingCandidate, ...]:
+        raise RuntimeError("programming bug")
 
 
 class _StaticQueryEmbeddings:
@@ -417,6 +428,55 @@ def test_embedding_route_merges_with_existing_recall_routes(tmp_path: Path) -> N
 
     assert [hit.document_id for hit in hits] == [document.id]
     assert hits[0].retrieval_routes == ("EXACT_PHRASE", "KEYWORD", "EMBEDDING")
+
+
+def test_embedding_unavailable_falls_open_to_lexical_and_subject_routes(
+    tmp_path: Path,
+) -> None:
+    project, _, chapters = _project_with_four_chapters(tmp_path)
+    search = SearchRepository(project)
+    lexical = search.index_chapter(
+        chapters[0].id,
+        "钟楼档案",
+        "钟楼档案记录了蓝色火焰。",
+    )
+    subject = search.index_document(
+        document_type="CHARACTER_STATE",
+        source_id="state-lan-injury",
+        chapter_id=chapters[1].id,
+        title="林岚的旧伤",
+        content="她在雨夜里再次感觉到左肩疼痛。",
+        participants=("character-lan",),
+        pinned_weight=0,
+        review_status=ReviewStatus.APPROVED,
+        status=MemoryStatus.CURRENT,
+    )
+
+    expected = HistoryRetriever(search).search(
+        "钟楼档案",
+        chapters[2].id,
+        participants=("character-lan",),
+    )
+    actual = HistoryRetriever(search, _UnavailableEmbeddingRecall()).search(
+        "钟楼档案",
+        chapters[2].id,
+        participants=("character-lan",),
+    )
+
+    assert actual == expected
+    routes = {hit.document_id: hit.retrieval_routes for hit in actual}
+    assert routes[lexical.id] == ("EXACT_PHRASE", "KEYWORD")
+    assert routes[subject.id] == ("SUBJECT",)
+
+
+def test_embedding_recall_does_not_swallow_unknown_errors(tmp_path: Path) -> None:
+    project, _, chapters = _project_with_four_chapters(tmp_path)
+
+    with pytest.raises(RuntimeError, match="programming bug"):
+        HistoryRetriever(
+            SearchRepository(project),
+            _BrokenEmbeddingRecall(),
+        ).search("钟楼档案", chapters[1].id)
 
 
 @pytest.mark.parametrize("score", [True, float("nan"), float("inf"), -0.01, 1.01])

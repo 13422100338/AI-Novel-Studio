@@ -13,6 +13,10 @@ from ai_novel_studio.infrastructure.storage.search_repository import (
 )
 
 
+class EmbeddingUnavailableError(RuntimeError):
+    pass
+
+
 class EmbeddingRecallProvider(Protocol):
     def recall(
         self,
@@ -92,14 +96,15 @@ class HistoryRetriever:
         if limit <= 0:
             raise ValueError("检索数量必须大于零")
         normalized_query = query.strip()[:MAX_SEARCH_QUERY_CHARS]
-        embedding_candidates = (
-            self.embedding_recall.recall(
-                normalized_query,
-                limit=min(max(limit * 5, limit), MAX_RECALL_CANDIDATES),
-            )
-            if self.embedding_recall is not None and normalized_query
-            else ()
-        )
+        embedding_candidates: tuple[EmbeddingCandidate, ...] = ()
+        if self.embedding_recall is not None and normalized_query:
+            try:
+                embedding_candidates = self.embedding_recall.recall(
+                    normalized_query,
+                    limit=min(max(limit * 5, limit), MAX_RECALL_CANDIDATES),
+                )
+            except EmbeddingUnavailableError:
+                pass
         participant_set = set(participants)
         hits: list[SearchHit] = []
         for row in self.repository.search_rows(
