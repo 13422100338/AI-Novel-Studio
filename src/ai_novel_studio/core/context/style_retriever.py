@@ -5,11 +5,14 @@ from dataclasses import dataclass
 from ai_novel_studio.domain.memory import StyleRule, StyleSample, StyleScope
 from ai_novel_studio.infrastructure.storage.style_repository import StyleRepository
 
+MAX_INELIGIBLE_STYLE_RULES = 100
+
 
 @dataclass(frozen=True, slots=True)
 class CompiledStyle:
     rules: tuple[StyleRule, ...]
     samples: tuple[StyleSample, ...]
+    ineligible_rules: tuple[StyleRule, ...] = ()
 
 
 class StyleRetriever:
@@ -22,6 +25,8 @@ class StyleRetriever:
         scene_scope: str | None,
         character_ids: tuple[str, ...],
         chapter_id: str,
+        *,
+        include_ineligible_rules: bool = False,
     ) -> CompiledStyle:
         scopes: list[tuple[StyleScope, str]] = [(StyleScope.BOOK, book_id)]
         if scene_scope:
@@ -30,7 +35,21 @@ class StyleRetriever:
         scopes.append((StyleScope.CHAPTER, chapter_id))
         rules: list[StyleRule] = []
         samples: list[StyleSample] = []
+        ineligible_rules: list[StyleRule] = []
         for scope_type, scope_id in scopes:
             rules.extend(self.repository.rules(scope_type, scope_id))
             samples.extend(self.repository.samples(scope_type, scope_id))
-        return CompiledStyle(tuple(rules), tuple(samples))
+            remaining = MAX_INELIGIBLE_STYLE_RULES - len(ineligible_rules)
+            if include_ineligible_rules and remaining > 0:
+                ineligible_rules.extend(
+                    self.repository.ineligible_rules(
+                        scope_type,
+                        scope_id,
+                        limit=remaining,
+                    )
+                )
+        return CompiledStyle(
+            tuple(rules),
+            tuple(samples),
+            tuple(ineligible_rules),
+        )

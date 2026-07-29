@@ -99,6 +99,28 @@ class StyleRepository:
         rules = [self._rule(row) for row in rows]
         return tuple(sorted(rules, key=lambda rule: (-rule.authority.rank, rule.id)))
 
+    def ineligible_rules(
+        self,
+        scope_type: StyleScope,
+        scope_id: str,
+        *,
+        limit: int,
+    ) -> tuple[StyleRule, ...]:
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
+            raise ValueError("文风规则候选数量必须为正整数")
+        with self.project.database.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM style_rules
+                WHERE scope_type = ? AND scope_id = ? AND status = 'CURRENT'
+                  AND review_status NOT IN ('APPROVED', 'LOCKED')
+                ORDER BY id
+                LIMIT ?
+                """,
+                (scope_type.value, scope_id, limit),
+            ).fetchall()
+        return tuple(self._rule(row) for row in rows)
+
     def list_all_rules(self) -> tuple[StyleRule, ...]:
         with self.project.database.connect() as connection:
             rows = connection.execute(

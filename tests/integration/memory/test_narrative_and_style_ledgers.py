@@ -159,7 +159,7 @@ def test_style_retriever_compiles_layers_and_keeps_human_samples_immutable(
         Authority.OUTLINE,
         ReviewStatus.APPROVED,
     )
-    repository.add_rule(
+    candidate_rule = repository.add_rule(
         StyleScope.BOOK,
         project.project.id,
         "候选",
@@ -187,7 +187,20 @@ def test_style_retriever_compiles_layers_and_keeps_human_samples_immutable(
 
     assert compiled.rules == (book_rule, scene_rule, character_rule, chapter_rule)
     assert compiled.samples == (sample,)
+    assert compiled.ineligible_rules == ()
     assert compiled.rules[0].limit_per_book == 1
+
+    audited = StyleRetriever(repository).for_task(
+        project.project.id,
+        "mystery",
+        ("character-lan",),
+        chapters[1].id,
+        include_ineligible_rules=True,
+    )
+
+    assert audited.rules == compiled.rules
+    assert audited.samples == compiled.samples
+    assert audited.ineligible_rules == (candidate_rule,)
     with pytest.raises(ProtectedMemoryError, match="不可修改"):
         repository.update_sample(sample.id, "被模型改写", SourceType.MODEL)
     with pytest.raises(ValueError, match="次数"):
@@ -201,3 +214,35 @@ def test_style_retriever_compiles_layers_and_keeps_human_samples_immutable(
             limit_per_chapter=-1,
         )
 
+
+def test_style_retriever_bounds_ineligible_rules_across_scopes(
+    tmp_path: Path,
+) -> None:
+    project, chapters = _project_with_chapters(tmp_path)
+    repository = StyleRepository(project)
+    for index in range(120):
+        scope_type, scope_id = (
+            (StyleScope.BOOK, project.project.id)
+            if index < 60
+            else (StyleScope.CHAPTER, chapters[1].id)
+        )
+        repository.add_rule(
+            scope_type,
+            scope_id,
+            f"候选-{index:03d}",
+            f"未批准文风规则-{index:03d}",
+            Authority.MODEL_EXTRACTED,
+            ReviewStatus.REVIEW,
+        )
+
+    compiled = StyleRetriever(repository).for_task(
+        project.project.id,
+        None,
+        (),
+        chapters[1].id,
+        include_ineligible_rules=True,
+    )
+
+    assert compiled.rules == ()
+    assert compiled.samples == ()
+    assert len(compiled.ineligible_rules) == 100

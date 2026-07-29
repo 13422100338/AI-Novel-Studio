@@ -327,6 +327,7 @@ class GenerationMemoryContextProvider:
             None,
             tuple(character.id for character in participants),
             chapter_id,
+            include_ineligible_rules=True,
         )
         blocks: list[ContextBlock] = []
         for index, rule in enumerate(compiled.rules):
@@ -361,6 +362,24 @@ class GenerationMemoryContextProvider:
                     0,
                     sample.content_hash,
                     f"适用于当前写作任务的人工文风样章：{sample.title}",
+                )
+            )
+        for index, rule in enumerate(compiled.ineligible_rules):
+            content = f"文风规则/{rule.rule_type}：{rule.rule_text}"
+            blocks.append(
+                ContextBlock(
+                    f"style-rule-{rule.id}",
+                    "MEMORY",
+                    content,
+                    20 + len(compiled.rules) + index,
+                    False,
+                    "STYLE_RULE",
+                    rule.id,
+                    None,
+                    0,
+                    _hash(content),
+                    f"未通过审查的文风规则候选：{rule.rule_type}",
+                    eligibility=ContextEligibility(authority_allowed=False),
                 )
             )
         return tuple(blocks)

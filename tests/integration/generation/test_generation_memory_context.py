@@ -40,6 +40,7 @@ from ai_novel_studio.domain.memory import (
     KnowledgeSubject,
     ReviewStatus,
     SourceType,
+    StyleScope,
     SummaryLevel,
 )
 from ai_novel_studio.domain.view import ViewAssertionDraft, ViewType
@@ -63,6 +64,7 @@ from ai_novel_studio.infrastructure.storage.narrative_memory_repository import (
 )
 from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
 from ai_novel_studio.infrastructure.storage.search_repository import SearchRepository
+from ai_novel_studio.infrastructure.storage.style_repository import StyleRepository
 from ai_novel_studio.infrastructure.storage.summary_repository import SummaryRepository
 
 
@@ -201,6 +203,104 @@ def test_stale_history_is_manifested_but_never_reaches_writer_prompt(
     assert stale_omission.reason == "HARD_FILTER:STALE"
     assert "STALE_HISTORY_MARKER" not in writer_prompt
     assert "CURRENT_HISTORY_MARKER" in writer_prompt
+
+
+def test_unapproved_style_rules_are_manifested_but_never_reach_writer_prompt(
+    tmp_path: Path,
+) -> None:
+    project = ProjectRepository.create(tmp_path / "novel", "Novel")
+    volume = project.list_volumes()[0]
+    chapters = ChapterRepository(project)
+    target = chapters.create_chapter(volume.id, "Target", "1")
+    requirements = ChapterRequirementRepository(project)
+    initial = requirements.get_or_create(target.id)
+    requirements.update(
+        target.id,
+        "Continue the scene.",
+        is_locked=True,
+        expected_revision=initial.revision,
+    )
+    styles = StyleRepository(project)
+    approved = styles.add_rule(
+        StyleScope.BOOK,
+        project.project.id,
+        "approved",
+        "APPROVED_STYLE_MARKER",
+        Authority.USER_CONFIRMED,
+        ReviewStatus.APPROVED,
+    )
+    review = styles.add_rule(
+        StyleScope.BOOK,
+        project.project.id,
+        "review",
+        "REVIEW_STYLE_MARKER",
+        Authority.MODEL_EXTRACTED,
+        ReviewStatus.REVIEW,
+    )
+    rejected = styles.add_rule(
+        StyleScope.BOOK,
+        project.project.id,
+        "rejected",
+        "REJECTED_STYLE_MARKER",
+        Authority.MODEL_EXTRACTED,
+        ReviewStatus.REJECTED,
+    )
+    service = GenerationContextService(
+        project,
+        chapters,
+        requirements,
+        ChapterBriefRepository(project),
+        GenerationRepository(project),
+        ContextManifestRepository(project),
+    )
+
+    style_blocks = tuple(
+        block
+        for block in service.memory_context.blocks(
+            target.id,
+            "Continue the scene.",
+            (),
+        )
+        if block.source_type == "STYLE_RULE"
+    )
+
+    assert next(block for block in style_blocks if block.source_id == approved.id).priority == 20
+    assert {
+        block.source_id
+        for block in style_blocks
+        if not block.eligibility.authority_allowed
+    } == {review.id, rejected.id}
+
+    prepared = service.prepare(
+        GenerationPreparationRequest(
+            chapter_id=target.id,
+            mode=CreationMode.BASIC,
+            brief_id=None,
+            output_token_limit=2_000,
+            model_capabilities=ModelCapabilities(
+                context_window=32_000,
+                max_output_tokens=4_000,
+            ),
+            target_words=1_000,
+            model_provider_id="provider",
+            model_id="writer",
+        )
+    )
+
+    assert any(item.source_id == approved.id for item in prepared.manifest.selected)
+    omissions = {
+        item.source_id: item.reason
+        for item in prepared.manifest.omitted
+        if item.source_type == "STYLE_RULE"
+    }
+    assert omissions == {
+        review.id: "HARD_FILTER:AUTHORITY_REJECTED",
+        rejected.id: "HARD_FILTER:AUTHORITY_REJECTED",
+    }
+    writer_prompt = "\n".join(message.content for message in prepared.messages)
+    assert "APPROVED_STYLE_MARKER" in writer_prompt
+    assert "REVIEW_STYLE_MARKER" not in writer_prompt
+    assert "REJECTED_STYLE_MARKER" not in writer_prompt
 
 
 def test_plot_and_prose_share_the_same_time_bounded_character_card_context(
