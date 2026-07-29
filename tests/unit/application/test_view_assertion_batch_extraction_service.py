@@ -165,4 +165,3 @@ def test_cancel_during_current_chapter_keeps_result_and_stops_before_next(
     assert report.chapters[0].status == ViewAssertionBatchChapterStatus.CREATED
     assert report.chapters[0].created_count == 1
     assert report.cancelled is True
-
