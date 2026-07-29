@@ -29,6 +29,10 @@ class ViewAssertionReviewError(RuntimeError):
     pass
 
 
+class ViewAssertionExtractionError(RuntimeError):
+    pass
+
+
 @dataclass(frozen=True, slots=True)
 class LegacyReaderViewCandidate:
     event_id: str
@@ -83,6 +87,24 @@ class ViewAssertionService:
             source_id=source_id,
             source_revision=source_revision,
         )
+
+    def create_model_candidates_for_chapter(
+        self,
+        drafts: tuple[ViewAssertionDraft, ...],
+        *,
+        source_id: str,
+        source_revision: int,
+    ) -> tuple[ViewAssertion, ...]:
+        try:
+            return self.repository.create_model_candidates_for_chapter(
+                drafts,
+                source_id=source_id,
+                source_revision=source_revision,
+            )
+        except (ViewAssertionRepositoryError, KeyError) as error:
+            raise ViewAssertionExtractionError(
+                "来源章节或人物已变化，请重新提取 View Assertion 候选"
+            ) from error
 
     def create_user_reader_view_from_legacy_event(
         self,

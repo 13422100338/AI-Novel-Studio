@@ -58,6 +58,9 @@ from ai_novel_studio.application.setting_document_service import (
     SettingImportReport,
 )
 from ai_novel_studio.application.style_workspace_service import StyleWorkspaceService
+from ai_novel_studio.application.view_assertion_extraction_service import (
+    ViewAssertionExtractionService,
+)
 from ai_novel_studio.application.view_assertion_service import ViewAssertionService
 from ai_novel_studio.domain.agent import AgentToolCallStatus, AgentToolName
 from ai_novel_studio.domain.audit import AuditFindingStatus
@@ -1207,6 +1210,12 @@ class MainWindow(QMainWindow):
         project = self.project_runtime.project
         chapter_id = self.current_chapter_id
         view_assertions = ViewAssertionService(project)
+        gateway = getattr(self.model_runtime, "gateway", None)
+        extraction_service = (
+            ViewAssertionExtractionService(LLMContractRunner(gateway), project)
+            if gateway is not None
+            else None
+        )
         self.memory_window.bind(
             MemoryWorkspaceService(ProjectMemoryWorkspaceGateway(project)),
             "__all__",
@@ -1224,6 +1233,7 @@ class MainWindow(QMainWindow):
                 for character in CharacterMemoryRepository(project).list_characters()
             ),
             view_assertion_review_service=view_assertions,
+            view_assertion_extraction_service=extraction_service,
         )
 
     def _character_identity_changed(self) -> None:

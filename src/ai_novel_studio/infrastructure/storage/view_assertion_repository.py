@@ -98,6 +98,107 @@ class ViewAssertionRepository:
             )
         return self.get(assertion_id)
 
+    def create_model_candidates_for_chapter(
+        self,
+        drafts: tuple[ViewAssertionDraft, ...],
+        *,
+        source_id: str,
+        source_revision: int,
+    ) -> tuple[ViewAssertion, ...]:
+        normalized_source_id = source_id.strip()
+        if not normalized_source_id or len(normalized_source_id) > 500:
+            raise ValueError("source_id must contain 1 to 500 characters")
+        if (
+            isinstance(source_revision, bool)
+            or not isinstance(source_revision, int)
+            or source_revision < 0
+        ):
+            raise ValueError("source_revision must be a non-negative integer")
+        assertion_ids = tuple(new_id() for _ in drafts)
+        now = datetime.now(UTC).isoformat()
+        try:
+            with self.project.database.connect() as connection, connection:
+                connection.execute("BEGIN IMMEDIATE")
+                chapter = connection.execute(
+                    "SELECT revision FROM chapters "
+                    "WHERE id = ? AND is_deleted = 0 AND revision = ?",
+                    (normalized_source_id, source_revision),
+                ).fetchone()
+                if chapter is None:
+                    raise ViewAssertionRepositoryError(
+                        "view assertion extraction source changed"
+                    )
+                for draft in drafts:
+                    self._require_active_character(
+                        connection, draft.subject_id, "subject_id"
+                    )
+                    if draft.viewer_subject_id is not None:
+                        self._require_active_character(
+                            connection,
+                            draft.viewer_subject_id,
+                            "viewer_subject_id",
+                        )
+                for assertion_id, draft in zip(assertion_ids, drafts, strict=True):
+                    self._insert_model_candidate(
+                        connection,
+                        assertion_id=assertion_id,
+                        draft=draft,
+                        source_id=normalized_source_id,
+                        source_revision=source_revision,
+                        created_at=now,
+                    )
+        except ViewAssertionRepositoryError:
+            raise
+        except (KeyError, sqlite3.Error) as error:
+            raise ViewAssertionRepositoryError(
+                "view assertion extraction batch could not be saved"
+            ) from error
+        return tuple(self.get(assertion_id) for assertion_id in assertion_ids)
+
+    @staticmethod
+    def _insert_model_candidate(
+        connection: sqlite3.Connection,
+        *,
+        assertion_id: str,
+        draft: ViewAssertionDraft,
+        source_id: str,
+        source_revision: int,
+        created_at: str,
+    ) -> None:
+        connection.execute(
+            """
+            INSERT INTO view_assertions (
+                id, subject_id, view_type, viewer_subject_id,
+                epistemic_status, content, valid_from_sequence,
+                valid_to_sequence, story_time_label,
+                narrative_visible_from_sequence,
+                narrative_visible_to_sequence, authority, review_status,
+                source_type, source_id, source_revision, stale,
+                source_changed, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'MODEL_EXTRACTED',
+                      'REVIEW', 'MODEL', ?, ?, 0, 0, ?, ?)
+            """,
+            (
+                assertion_id,
+                draft.subject_id,
+                draft.view_type.value,
+                draft.viewer_subject_id,
+                draft.epistemic_status.value
+                if draft.epistemic_status is not None
+                else None,
+                draft.content,
+                draft.valid_from_sequence,
+                draft.valid_to_sequence,
+                draft.story_time_label,
+                draft.narrative_visible_from_sequence,
+                draft.narrative_visible_to_sequence,
+                source_id,
+                source_revision,
+                created_at,
+                created_at,
+            ),
+        )
+
     @staticmethod
     def invalidate_source_revision_in_connection(
         connection: sqlite3.Connection,

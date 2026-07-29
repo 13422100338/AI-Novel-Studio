@@ -513,6 +513,21 @@ def test_main_window_refreshes_view_assertion_review_after_approval(
     assert window.memory_window.view_assertion_review_selector.count() == 0
 
 
+def test_main_window_binds_current_chapter_view_assertion_extraction(
+    qtbot: QtBot, tmp_path: Path
+) -> None:
+    runtime, chapter_id = _project_with_chapter(tmp_path / "novel", tmp_path)
+    CharacterMemoryRepository(runtime.project).create_character("艾瑞克")
+    window = MainWindow(model_runtime=UiModelRuntime(tmp_path), project_runtime=runtime)
+    qtbot.addWidget(window)
+    window.load_project_chapter(chapter_id)
+
+    window.open_memory_window()
+
+    assert window.memory_window is not None
+    assert window.memory_window.view_assertion_extract_button.isEnabled()
+
+
 def test_agent_character_merge_proposal_opens_review_instead_of_mutating_memory(
     qtbot: QtBot, tmp_path: Path
 ) -> None:

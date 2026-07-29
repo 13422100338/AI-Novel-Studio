@@ -36,6 +36,7 @@ from ai_novel_studio.application.memory_workspace_service import (
 from ai_novel_studio.application.project_guidance_service import ProjectGuidanceService
 from ai_novel_studio.application.view_assertion_service import (
     LegacyReaderViewCandidate,
+    ViewAssertionExtractionError,
     ViewAssertionReviewError,
 )
 from ai_novel_studio.domain.memory import Authority, MemoryStatus, ReviewStatus
@@ -89,6 +90,10 @@ class ViewAssertionReviewService(Protocol):
     ) -> ViewAssertion: ...
 
 
+class ViewAssertionExtractionService(Protocol):
+    def extract_current_chapter(self, chapter_id: str) -> tuple[ViewAssertion, ...]: ...
+
+
 class MemoryWindow(QMainWindow):
     setting_save_requested = Signal(str, str, str, object)
     setting_analyze_requested = Signal(str, str, str, object)
@@ -117,6 +122,8 @@ class MemoryWindow(QMainWindow):
         self._reader_view_service: ReaderViewOperationService | None = None
         self._reader_view_candidates: dict[str, LegacyReaderViewCandidate] = {}
         self._view_assertion_review_service: ViewAssertionReviewService | None = None
+        self._view_assertion_extraction_service: ViewAssertionExtractionService | None = None
+        self._view_assertion_extraction_chapter_id: str | None = None
         self._view_assertion_review_candidates: dict[str, ViewAssertion] = {}
         self._view_assertion_subject_names: dict[str, str] = {}
         self._view_assertion_review_selected_id: str | None = None
@@ -215,6 +222,10 @@ class MemoryWindow(QMainWindow):
         layout.addWidget(self.tabs, 1)
         self.reader_view_panel = self._reader_view_operation_panel(surface)
         layout.addWidget(self.reader_view_panel)
+        self.view_assertion_extraction_panel = self._view_assertion_extraction_panel(
+            surface
+        )
+        layout.addWidget(self.view_assertion_extraction_panel)
         self.view_assertion_review_panel = self._view_assertion_review_panel(surface)
         layout.addWidget(self.view_assertion_review_panel)
         layout.addWidget(note)
@@ -232,6 +243,7 @@ class MemoryWindow(QMainWindow):
         reader_view_service: ReaderViewOperationService | None = None,
         reader_view_subjects: tuple[tuple[str, str], ...] = (),
         view_assertion_review_service: ViewAssertionReviewService | None = None,
+        view_assertion_extraction_service: ViewAssertionExtractionService | None = None,
     ) -> None:
         if (
             self._promotion_coordinator is not None
@@ -261,6 +273,8 @@ class MemoryWindow(QMainWindow):
         self.identity_review_button.setEnabled(identity_service is not None)
         self._reader_view_service = reader_view_service
         self._view_assertion_review_service = view_assertion_review_service
+        self._view_assertion_extraction_service = view_assertion_extraction_service
+        self._view_assertion_extraction_chapter_id = target_chapter_id
         self._promotion_coordinator = MemoryPromotionCoordinator(service, self)
         self._promotion_coordinator.progress_changed.connect(
             self._bulk_promotion_progress
@@ -293,6 +307,7 @@ class MemoryWindow(QMainWindow):
         self.setting_type_combo.setCurrentText(setting_draft[1])
         self.setting_editor.setPlainText(setting_draft[2])
         self._bind_reader_view_operation(reader_view_subjects)
+        self._bind_view_assertion_extraction_operation()
         self._bind_view_assertion_review_operation(reader_view_subjects)
         if not grouped:
             self.metadata_label.setText("该章节边界之前没有可显示的记忆记录。")
@@ -464,6 +479,77 @@ class MemoryWindow(QMainWindow):
         )
         self.reader_view_status_label.setText("已接管当前旧读者知识为 Reader View。")
         self.reader_view_changed.emit()
+
+    def _view_assertion_extraction_panel(self, parent: QWidget) -> QFrame:
+        panel = QFrame(parent)
+        panel.setObjectName("cardSurface")
+        layout = QVBoxLayout(panel)
+        title = QLabel("View Assertion 候选提取", panel)
+        title.setObjectName("sectionEyebrow")
+        explanation = QLabel(
+            "仅对当前章节发起一次模型提取。结果仅进入待审查队列，不会自动批准或进入正文上下文。",
+            panel,
+        )
+        explanation.setWordWrap(True)
+        explanation.setObjectName("mutedLabel")
+        self.view_assertion_extract_button = QPushButton("提取当前章节候选", panel)
+        self.view_assertion_extract_button.setAccessibleName("提取当前章节 View Assertion 候选")
+        self.view_assertion_extract_button.clicked.connect(
+            self._extract_view_assertion_candidates
+        )
+        self.view_assertion_extract_status_label = QLabel("当前未绑定可提取章节。", panel)
+        self.view_assertion_extract_status_label.setWordWrap(True)
+        self.view_assertion_extract_status_label.setObjectName("mutedLabel")
+        layout.addWidget(title)
+        layout.addWidget(explanation)
+        layout.addWidget(self.view_assertion_extract_button)
+        layout.addWidget(self.view_assertion_extract_status_label)
+        self.view_assertion_extract_button.setEnabled(False)
+        return panel
+
+    def _bind_view_assertion_extraction_operation(self) -> None:
+        service = self._view_assertion_extraction_service
+        chapter_id = self._view_assertion_extraction_chapter_id
+        enabled = service is not None and chapter_id is not None
+        self.view_assertion_extract_button.setEnabled(enabled)
+        self.view_assertion_extract_status_label.setText(
+            "可提取当前章节的待审查 View Assertion 候选。"
+            if enabled
+            else "当前未绑定可提取章节或模型服务。"
+        )
+
+    def _extract_view_assertion_candidates(self) -> None:
+        service = self._view_assertion_extraction_service
+        chapter_id = self._view_assertion_extraction_chapter_id
+        if service is None or chapter_id is None:
+            self.view_assertion_extract_status_label.setText(
+                "当前未绑定可提取章节或模型服务。"
+            )
+            self.view_assertion_extract_button.setEnabled(False)
+            return
+        answer = QMessageBox.question(
+            self,
+            "确认提取 View Assertion 候选",
+            "将对当前章节发起一次模型请求，并仅创建待审查候选。是否继续？",
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            candidates = service.extract_current_chapter(chapter_id)
+        except (
+            PermissionError,
+            ValueError,
+            ViewAssertionExtractionError,
+            ViewAssertionReviewError,
+        ):
+            self.view_assertion_extract_status_label.setText(
+                "View Assertion 候选提取失败。请确认章节、人物和模型配置后重试。"
+            )
+            return
+        self.view_assertion_extract_status_label.setText(
+            f"已创建 {len(candidates)} 条待审查 View Assertion 候选。"
+        )
+        self.view_assertion_review_changed.emit()
 
     def _view_assertion_review_panel(self, parent: QWidget) -> QFrame:
         panel = QFrame(parent)

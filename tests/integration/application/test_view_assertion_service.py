@@ -1,8 +1,10 @@
+import sqlite3
 from pathlib import Path
 
 import pytest
 
 from ai_novel_studio.application.view_assertion_service import (
+    ViewAssertionExtractionError,
     ViewAssertionReviewError,
     ViewAssertionService,
 )
@@ -23,6 +25,9 @@ from ai_novel_studio.infrastructure.storage.character_memory_repository import (
     CharacterMemoryRepository,
 )
 from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
+from ai_novel_studio.infrastructure.storage.view_assertion_repository import (
+    ViewAssertionRepository,
+)
 
 
 def _project_with_characters(tmp_path: Path):  # type: ignore[no-untyped-def]
@@ -75,6 +80,84 @@ def test_character_view_requires_explicit_user_confirmation_and_viewer(
         view_type=ViewType.CHARACTER_VIEW,
         viewer_subject_id=christine.id,
     ) == (assertion,)
+
+
+def test_model_candidate_batch_rolls_back_when_any_subject_is_inactive(
+    tmp_path: Path,
+) -> None:
+    project, eric, christine = _project_with_characters(tmp_path)
+    chapter = ChapterRepository(project).create_chapter(
+        project.list_volumes()[0].id, "Source", "1", "Source chapter"
+    )
+    drafts = (
+        ViewAssertionDraft(
+            subject_id=eric.id,
+            view_type=ViewType.READER_VIEW,
+            content="Valid first candidate",
+            narrative_visible_from_sequence=2,
+        ),
+        ViewAssertionDraft(
+            subject_id=christine.id,
+            view_type=ViewType.READER_VIEW,
+            content="Inactive second candidate",
+            narrative_visible_from_sequence=2,
+        ),
+    )
+    with project.database.connect() as connection, connection:
+        connection.execute(
+            "UPDATE subjects SET active = 0 WHERE id = ?", (christine.id,)
+        )
+
+    with pytest.raises(ViewAssertionExtractionError):
+        ViewAssertionService(project).create_model_candidates_for_chapter(
+            drafts, source_id=chapter.id, source_revision=chapter.revision
+        )
+
+    with project.database.connect() as connection:
+        count = connection.execute("SELECT COUNT(*) FROM view_assertions").fetchone()[0]
+    assert count == 0
+
+
+def test_model_candidate_batch_rolls_back_when_second_insert_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project, eric, _christine = _project_with_characters(tmp_path)
+    chapter = ChapterRepository(project).create_chapter(
+        project.list_volumes()[0].id, "Source", "1", "Source chapter"
+    )
+    drafts = tuple(
+        ViewAssertionDraft(
+            subject_id=eric.id,
+            view_type=ViewType.READER_VIEW,
+            content=f"Candidate {index}",
+            narrative_visible_from_sequence=2,
+        )
+        for index in range(2)
+    )
+    original = ViewAssertionRepository._insert_model_candidate
+    calls = 0
+
+    def fail_second_insert(*args, **kwargs):  # type: ignore[no-untyped-def]
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise sqlite3.IntegrityError("forced second insert failure")
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(
+        ViewAssertionRepository,
+        "_insert_model_candidate",
+        staticmethod(fail_second_insert),
+    )
+
+    with pytest.raises(ViewAssertionExtractionError):
+        ViewAssertionService(project).create_model_candidates_for_chapter(
+            drafts, source_id=chapter.id, source_revision=chapter.revision
+        )
+
+    with project.database.connect() as connection:
+        count = connection.execute("SELECT COUNT(*) FROM view_assertions").fetchone()[0]
+    assert count == 0
 
 
 def test_reader_view_stays_sparse_and_blocks_premature_reveal(tmp_path: Path) -> None:
