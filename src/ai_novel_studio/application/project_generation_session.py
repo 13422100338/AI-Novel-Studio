@@ -276,7 +276,43 @@ class ProjectGenerationSession:
             ),
         )
 
-    def record_pre_accept_model_audit(
+    def prepare_deep_audit(self) -> PreAcceptModelAuditRequest:
+        if self.current_run_id is None:
+            raise RuntimeError("深度审校缺少生成任务")
+        run = self.runs.get(self.current_run_id)
+        if run.status not in {GenerationStatus.COMPLETED, GenerationStatus.PARTIAL}:
+            raise RuntimeError("当前生成草稿尚不能进行深度审校")
+        checkpoint = self.checkpoints.latest(run.id)
+        if checkpoint is None or self.current_chapter_revision is None:
+            raise RuntimeError("草稿缺少可审校的检查点或章节修订")
+        draft_text = self.checkpoints.read(checkpoint.id)
+        self.audit_workflow.run_deterministic_for_draft(
+            chapter_id=run.chapter_id,
+            generation_run_id=run.id,
+            draft_text=draft_text,
+            base_chapter_revision=self.current_chapter_revision,
+            mode=run.mode,
+            audit_policy=AuditPolicy.DEEP,
+        )
+        route = self.gateway.configuration.routes.resolve(TaskPurpose.STYLE_AUDIT)
+        snapshot = self.project_audits.generated_model_snapshot(
+            chapter_id=run.chapter_id,
+            generation_run_id=run.id,
+            draft_text=draft_text,
+            revision=self.current_chapter_revision,
+            model_provider_id=route.provider_id,
+            model_id=route.model_id,
+            mode=run.mode,
+            audit_policy=AuditPolicy.DEEP,
+        )
+        return PreAcceptModelAuditRequest(
+            snapshot=snapshot,
+            draft_text=draft_text,
+            rules=self.project_audits.model_context_rules(run.chapter_id),
+            output_token_limit=run.output_token_limit,
+        )
+
+    def record_model_audit(
         self,
         snapshot: ModelAuditSnapshot,
         value: object,
@@ -290,3 +326,10 @@ class ProjectGenerationSession:
             if finding.status.value == "OPEN"
             and finding.severity.value in {"ERROR", "BLOCKER"}
         )
+
+    def record_pre_accept_model_audit(
+        self,
+        snapshot: ModelAuditSnapshot,
+        value: object,
+    ) -> int:
+        return self.record_model_audit(snapshot, value)

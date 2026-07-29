@@ -244,6 +244,7 @@ class MainWindow(QMainWindow):
         self.manuscript_panel.save_requested.connect(self.save_current_chapter)
         self.manuscript_panel.generation_requested.connect(self.request_prose_generation)
         self.manuscript_panel.generation_cancel_requested.connect(self.cancel_prose_generation)
+        self.manuscript_panel.deep_audit_requested.connect(self.run_deep_generation_audit)
         self.manuscript_panel.draft_accept_requested.connect(self.accept_prose_generation)
         self.manuscript_panel.draft_discard_requested.connect(self.discard_prose_generation)
         self.manuscript_panel.recovery_requested.connect(self.recover_prose_generation)
@@ -774,6 +775,15 @@ class MainWindow(QMainWindow):
             requirement_locked=self.manuscript_panel.requirement_locked(),
         )
 
+    def run_deep_generation_audit(self) -> None:
+        if self.generation_runtime is None:
+            self.manuscript_panel.set_deep_audit_status(
+                False,
+                "深度审校运行时尚未连接",
+            )
+            return
+        self.generation_runtime.run_deep_audit()
+
     def open_generation_process_dialog(self) -> None:
         if self.generation_process_dialog is None:
             self.generation_process_dialog = GenerationProcessDialog(self)
@@ -880,6 +890,9 @@ class MainWindow(QMainWindow):
             pre_accept_audit_changed.connect(
                 self.manuscript_panel.set_pre_accept_audit_result
             )
+        deep_audit_changed = getattr(self.generation_runtime, "deep_audit_changed", None)
+        if deep_audit_changed is not None:
+            deep_audit_changed.connect(self.manuscript_panel.set_deep_audit_status)
 
     def apply_accepted_generation(self, text: str) -> None:
         self.manuscript_panel.apply_accepted_generation(text)

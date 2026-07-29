@@ -729,6 +729,96 @@ def test_pre_accept_audit_runs_before_adoption(qtbot: QtBot, tmp_path: Path) -> 
     assert ChapterRepository(runtime.project).read_content(chapter_id) == "模型生成正文"
 
 
+def test_standard_generation_can_run_independent_deep_audit(
+    qtbot: QtBot, tmp_path: Path
+) -> None:
+    runtime, chapter_id = _project_with_chapter(tmp_path / "novel", tmp_path)
+    window = MainWindow(model_runtime=UiModelRuntime(tmp_path), project_runtime=runtime)
+    qtbot.addWidget(window)
+    window.load_project_chapter(chapter_id)
+    window.open_brief_dialog()
+    assert window.brief_dialog is not None
+    window.brief_dialog.freeze_button.click()
+    window.manuscript_panel.set_creation_mode(CreationMode.STANDARD)
+
+    window.manuscript_panel.generate_button.click()
+
+    qtbot.waitUntil(
+        lambda: window.manuscript_panel.editor.toPlainText() == "模型生成正文",
+        timeout=3000,
+    )
+    run = GenerationRepository(runtime.project).list_by_statuses(
+        (GenerationStatus.COMPLETED,)
+    )[0]
+    assert run.mode == CreationMode.STANDARD
+    assert run.audit_policy == AuditPolicy.STANDARD
+    assert window.manuscript_panel.adopt_draft_button.isEnabled()
+
+    window.manuscript_panel.deep_audit_button.click()
+
+    qtbot.waitUntil(
+        lambda: len(
+            AuditRepository(runtime.project).list_runs_for_target(
+                target_kind=AuditTargetKind.GENERATED_DRAFT,
+                target_id=run.id,
+            )
+        )
+        == 2,
+        timeout=3000,
+    )
+    audits = AuditRepository(runtime.project).list_runs_for_target(
+        target_kind=AuditTargetKind.GENERATED_DRAFT,
+        target_id=run.id,
+    )
+    assert all(audit.mode == CreationMode.STANDARD for audit in audits)
+    assert all(audit.audit_policy == AuditPolicy.DEEP for audit in audits)
+    assert window.manuscript_panel.adopt_draft_button.isEnabled()
+
+    window.manuscript_panel.adopt_draft_button.click()
+
+    assert ChapterRepository(runtime.project).read_content(chapter_id) == "模型生成正文"
+
+
+def test_deep_audit_does_not_start_while_pre_accept_audit_is_pending(
+    qtbot: QtBot, tmp_path: Path
+) -> None:
+    runtime, chapter_id = _project_with_chapter(tmp_path / "novel", tmp_path)
+    window = MainWindow(model_runtime=UiModelRuntime(tmp_path), project_runtime=runtime)
+    qtbot.addWidget(window)
+    window.load_project_chapter(chapter_id)
+    window.open_brief_dialog()
+    assert window.brief_dialog is not None
+    window.brief_dialog.freeze_button.click()
+    window.manuscript_panel.set_creation_mode(CreationMode.STANDARD)
+    window.manuscript_panel.pre_accept_audit.setChecked(True)
+
+    class PendingAuditCoordinator:
+        def __init__(self) -> None:
+            self.calls: list[tuple[object, object, object]] = []
+
+        def start_audit(self, manuscript, rules, output_token_limit):  # type: ignore[no-untyped-def]
+            self.calls.append((manuscript, rules, output_token_limit))
+
+    pending = PendingAuditCoordinator()
+    assert window.generation_runtime is not None
+    window.generation_runtime.audit_coordinator = pending  # type: ignore[assignment]
+    window.manuscript_panel.generate_button.click()
+
+    qtbot.waitUntil(lambda: len(pending.calls) == 1, timeout=3000)
+    run = GenerationRepository(runtime.project).list_by_statuses(
+        (GenerationStatus.COMPLETED,)
+    )[0]
+    window.manuscript_panel.deep_audit_button.click()
+
+    assert len(pending.calls) == 1
+    audits = AuditRepository(runtime.project).list_runs_for_target(
+        target_kind=AuditTargetKind.GENERATED_DRAFT,
+        target_id=run.id,
+    )
+    assert len(audits) == 1
+    assert "已有模型审校正在进行" in window.manuscript_panel.pipeline_status_label.text()
+
+
 def test_pre_accept_audit_stays_locked_when_model_audit_reports_error(
     qtbot: QtBot, tmp_path: Path
 ) -> None:

@@ -37,6 +37,7 @@ class QtProjectGenerationRuntime(QObject):
     recovered = Signal(object)
     usage_changed = Signal(object)
     pre_accept_audit_changed = Signal(bool, str)
+    deep_audit_changed = Signal(bool, str)
 
     def __init__(
         self,
@@ -51,10 +52,11 @@ class QtProjectGenerationRuntime(QObject):
             ModelTaskService(session.gateway),
             self,
         )
-        self.audit_coordinator.audit_ready.connect(self._finish_pre_accept_model_audit)
-        self.audit_coordinator.task_failed.connect(self._fail_pre_accept_model_audit)
+        self.audit_coordinator.audit_ready.connect(self._finish_model_audit)
+        self.audit_coordinator.task_failed.connect(self._fail_model_audit)
         self.audit_coordinator.usage_changed.connect(self.usage_changed.emit)
         self._pending_pre_accept_snapshot: ModelAuditSnapshot | None = None
+        self._pending_deep_audit_snapshot: ModelAuditSnapshot | None = None
 
         self.coordinator.draft_chunk.connect(self.draft_chunk.emit)
         self.coordinator.reasoning_chunk.connect(self.reasoning_chunk.emit)
@@ -144,6 +146,27 @@ class QtProjectGenerationRuntime(QObject):
             return
         self.recovered.emit(selected)
 
+    def run_deep_audit(self) -> None:
+        if (
+            self._pending_pre_accept_snapshot is not None
+            or self._pending_deep_audit_snapshot is not None
+        ):
+            self.deep_audit_changed.emit(False, "已有模型审校正在进行，请等待完成")
+            return
+        try:
+            request = self.session.prepare_deep_audit()
+        except (KeyError, RuntimeError, ValueError) as error:
+            self.deep_audit_changed.emit(False, f"深度审校失败：{error}")
+            self.failed.emit(str(error))
+            return
+        self._pending_deep_audit_snapshot = request.snapshot
+        self.deep_audit_changed.emit(True, "正在执行深度审校")
+        self.audit_coordinator.start_audit(
+            request.draft_text,
+            request.rules,
+            request.output_token_limit,
+        )
+
     def _emit_usage_snapshot(self, _usage: object) -> None:
         self.usage_changed.emit(self.gateway.usage_tracker.snapshot())
 
@@ -200,6 +223,38 @@ class QtProjectGenerationRuntime(QObject):
             self._fail_pre_accept_model_audit(str(error))
         finally:
             self._pending_pre_accept_snapshot = None
+
+    def _finish_model_audit(self, value: object) -> None:
+        if self._pending_pre_accept_snapshot is not None:
+            self._finish_pre_accept_model_audit(value)
+            return
+        snapshot = self._pending_deep_audit_snapshot
+        if snapshot is None:
+            return
+        try:
+            blocker_count = self.session.record_model_audit(snapshot, value)
+            self.deep_audit_changed.emit(
+                False,
+                (
+                    "深度审校完成，未发现阻断问题"
+                    if blocker_count == 0
+                    else f"深度审校发现 {blocker_count} 个阻断问题，请人工处理"
+                ),
+            )
+        except (KeyError, RuntimeError, ValueError) as error:
+            self._fail_deep_audit(str(error))
+        finally:
+            self._pending_deep_audit_snapshot = None
+
+    def _fail_model_audit(self, message: str) -> None:
+        if self._pending_pre_accept_snapshot is not None:
+            self._fail_pre_accept_model_audit(message)
+        elif self._pending_deep_audit_snapshot is not None:
+            self._fail_deep_audit(message)
+
+    def _fail_deep_audit(self, message: str) -> None:
+        self._pending_deep_audit_snapshot = None
+        self.deep_audit_changed.emit(False, f"深度审校失败：{message}")
 
     def _fail_pre_accept_model_audit(self, message: str) -> None:
         self._pending_pre_accept_snapshot = None

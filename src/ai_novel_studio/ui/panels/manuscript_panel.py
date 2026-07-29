@@ -26,6 +26,7 @@ class ManuscriptPanel(QFrame):
     references_requested = Signal()
     generation_requested = Signal(object, object, int, int)
     generation_cancel_requested = Signal()
+    deep_audit_requested = Signal()
     draft_accept_requested = Signal()
     draft_discard_requested = Signal()
     recovery_requested = Signal()
@@ -161,6 +162,10 @@ class ManuscriptPanel(QFrame):
         self.discard_draft_button.setAccessibleName("放弃当前 AI 生成草稿")
         self.discard_draft_button.setEnabled(False)
         self.discard_draft_button.clicked.connect(self.draft_discard_requested)
+        self.deep_audit_button = QPushButton("深度审校", self)
+        self.deep_audit_button.setAccessibleName("深度审校当前 AI 生成草稿")
+        self.deep_audit_button.setEnabled(False)
+        self.deep_audit_button.clicked.connect(self.deep_audit_requested)
         self.adopt_draft_button = QPushButton("采用草稿", self)
         self.adopt_draft_button.setAccessibleName("采用当前 AI 生成草稿为正式正文")
         self.adopt_draft_button.setEnabled(False)
@@ -168,6 +173,7 @@ class ManuscriptPanel(QFrame):
         draft_header.addWidget(draft_title)
         draft_header.addWidget(self.draft_status_label)
         draft_header.addStretch(1)
+        draft_header.addWidget(self.deep_audit_button)
         draft_header.addWidget(self.discard_draft_button)
         draft_header.addWidget(self.adopt_draft_button)
 
@@ -348,6 +354,7 @@ class ManuscriptPanel(QFrame):
         self.adopt_draft_button.setText("采用草稿")
         self.adopt_draft_button.setEnabled(False)
         self.discard_draft_button.setEnabled(False)
+        self.deep_audit_button.setEnabled(False)
         self.generate_button.setEnabled(False)
 
     def append_generation_draft(self, text: str) -> None:
@@ -422,6 +429,7 @@ class ManuscriptPanel(QFrame):
         self.adopt_draft_button.setText("采用草稿")
         self.adopt_draft_button.setEnabled(False)
         self.discard_draft_button.setEnabled(False)
+        self.deep_audit_button.setEnabled(False)
         self.cancel_generation_button.setEnabled(False)
         self.save_button.setEnabled(True)
         self.editor.setReadOnly(False)
@@ -452,10 +460,18 @@ class ManuscriptPanel(QFrame):
         )
         self.adopt_draft_button.setEnabled(has_draft and not audit_blocked)
         self.discard_draft_button.setEnabled(has_draft)
+        self.deep_audit_button.setEnabled(
+            has_draft and not getattr(self, "_deep_audit_running", False)
+        )
 
     def set_pre_accept_audit_result(self, allowed: bool, message: str) -> None:
         self._pre_accept_audit_allowed = allowed
         self._pre_accept_audit_message = message
+        self.pipeline_status_label.setText(message)
+        self._enable_draft_decision_buttons()
+
+    def set_deep_audit_status(self, running: bool, message: str) -> None:
+        self._deep_audit_running = running
         self.pipeline_status_label.setText(message)
         self._enable_draft_decision_buttons()
 
