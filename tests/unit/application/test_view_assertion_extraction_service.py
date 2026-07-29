@@ -7,6 +7,7 @@ from ai_novel_studio.application.view_assertion_extraction_service import (
     ViewAssertionExtractionService,
 )
 from ai_novel_studio.application.view_assertion_service import (
+    ViewAssertionExtractionAlreadyExistsError,
     ViewAssertionExtractionError,
 )
 from ai_novel_studio.domain.memory import Authority, ReviewStatus, SourceType
@@ -100,6 +101,25 @@ def test_extracts_validated_model_candidates_with_deterministic_provenance(
     assert {item.source_id for item in result} == {chapter_id}
     assert {item.source_revision for item in result} == {0}
     assert {item.narrative_visible_from_sequence for item in result} == {3}
+
+
+def test_rejects_existing_current_revision_before_another_model_call(
+    tmp_path: Path,
+) -> None:
+    project, chapter_id, subject_id, viewer_id = _project(tmp_path)
+    first_gateway = _Gateway([_payload(subject_id=subject_id, viewer_id=viewer_id)])
+    ViewAssertionExtractionService(LLMContractRunner(first_gateway)).extract(
+        project, chapter_id
+    )
+    second_gateway = _Gateway([_payload(subject_id=subject_id, viewer_id=viewer_id)])
+
+    with pytest.raises(ViewAssertionExtractionAlreadyExistsError):
+        ViewAssertionExtractionService(LLMContractRunner(second_gateway)).extract(
+            project, chapter_id
+        )
+
+    assert second_gateway.calls == []
+    assert len(ViewAssertionRepository(project).list_model_review_candidates()) == 2
 
 
 def test_rejects_source_revision_change_during_model_call_without_writing(

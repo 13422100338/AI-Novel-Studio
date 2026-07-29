@@ -20,6 +20,7 @@ from ai_novel_studio.infrastructure.storage.character_memory_repository import (
 )
 from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
 from ai_novel_studio.infrastructure.storage.view_assertion_repository import (
+    ViewAssertionCandidatesAlreadyExistError,
     ViewAssertionRepository,
     ViewAssertionRepositoryError,
 )
@@ -30,6 +31,10 @@ class ViewAssertionReviewError(RuntimeError):
 
 
 class ViewAssertionExtractionError(RuntimeError):
+    pass
+
+
+class ViewAssertionExtractionAlreadyExistsError(ViewAssertionExtractionError):
     pass
 
 
@@ -101,10 +106,25 @@ class ViewAssertionService:
                 source_id=source_id,
                 source_revision=source_revision,
             )
+        except ViewAssertionCandidatesAlreadyExistError as error:
+            raise ViewAssertionExtractionAlreadyExistsError(
+                "该章节当前修订已有有效的模型 View Assertion 候选"
+            ) from error
         except (ViewAssertionRepositoryError, KeyError) as error:
             raise ViewAssertionExtractionError(
                 "来源章节或人物已变化，请重新提取 View Assertion 候选"
             ) from error
+
+    def has_current_model_candidates(
+        self,
+        *,
+        source_id: str,
+        source_revision: int,
+    ) -> bool:
+        return self.repository.has_current_model_candidates(
+            source_id=source_id,
+            source_revision=source_revision,
+        )
 
     def create_user_reader_view_from_legacy_event(
         self,

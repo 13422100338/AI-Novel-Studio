@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from typing import cast
 
-from ai_novel_studio.application.view_assertion_service import ViewAssertionService
+from ai_novel_studio.application.view_assertion_service import (
+    ViewAssertionExtractionAlreadyExistsError,
+    ViewAssertionService,
+)
 from ai_novel_studio.domain.view import EpistemicStatus, ViewAssertion, ViewAssertionDraft, ViewType
 from ai_novel_studio.infrastructure.llm.contract_runner import (
     ContractValidationError,
@@ -45,6 +48,14 @@ class ViewAssertionExtractionService:
         content = chapters.read_content(chapter.id)
         if not content.strip():
             raise ValueError("当前章节没有可提取的正文")
+        assertions = ViewAssertionService(project)
+        if assertions.has_current_model_candidates(
+            source_id=chapter.id,
+            source_revision=chapter.revision,
+        ):
+            raise ViewAssertionExtractionAlreadyExistsError(
+                "该章节当前修订已有有效的模型 View Assertion 候选"
+            )
         characters = CharacterMemoryRepository(project).list_characters()
         active_ids = frozenset(character.id for character in characters)
         if not active_ids:
@@ -71,7 +82,6 @@ class ViewAssertionExtractionService:
             ),
         )
         drafts = cast(tuple[ViewAssertionDraft, ...], payload["drafts"])
-        assertions = ViewAssertionService(project)
         return assertions.create_model_candidates_for_chapter(
             drafts,
             source_id=chapter.id,

@@ -1,9 +1,12 @@
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Barrier
 
 import pytest
 
 from ai_novel_studio.application.view_assertion_service import (
+    ViewAssertionExtractionAlreadyExistsError,
     ViewAssertionExtractionError,
     ViewAssertionReviewError,
     ViewAssertionService,
@@ -158,6 +161,131 @@ def test_model_candidate_batch_rolls_back_when_second_insert_fails(
     with project.database.connect() as connection:
         count = connection.execute("SELECT COUNT(*) FROM view_assertions").fetchone()[0]
     assert count == 0
+
+
+@pytest.mark.parametrize(
+    "review_status",
+    [ReviewStatus.REVIEW, ReviewStatus.APPROVED, ReviewStatus.LOCKED],
+)
+def test_model_candidate_batch_blocks_existing_current_model_candidates(
+    tmp_path: Path,
+    review_status: ReviewStatus,
+) -> None:
+    project, eric, _christine = _project_with_characters(tmp_path)
+    chapter = ChapterRepository(project).create_chapter(
+        project.list_volumes()[0].id, "Source", "1", "Source chapter"
+    )
+    service = ViewAssertionService(project)
+    draft = ViewAssertionDraft(
+        subject_id=eric.id,
+        view_type=ViewType.READER_VIEW,
+        content="Existing candidate",
+        narrative_visible_from_sequence=2,
+    )
+    existing = service.create_model_candidate(
+        draft,
+        source_id=chapter.id,
+        source_revision=chapter.revision,
+    )
+    with project.database.connect() as connection, connection:
+        connection.execute(
+            "UPDATE view_assertions SET review_status = ? WHERE id = ?",
+            (review_status.value, existing.id),
+        )
+
+    with pytest.raises(ViewAssertionExtractionAlreadyExistsError):
+        service.create_model_candidates_for_chapter(
+            (draft,),
+            source_id=chapter.id,
+            source_revision=chapter.revision,
+        )
+
+    with project.database.connect() as connection:
+        count = connection.execute("SELECT COUNT(*) FROM view_assertions").fetchone()[0]
+    assert count == 1
+
+
+@pytest.mark.parametrize(
+    ("review_status", "stale", "source_changed"),
+    [
+        (ReviewStatus.REJECTED, 0, 0),
+        (ReviewStatus.REVIEW, 1, 0),
+        (ReviewStatus.APPROVED, 0, 1),
+    ],
+)
+def test_model_candidate_batch_allows_rejected_or_expired_candidates(
+    tmp_path: Path,
+    review_status: ReviewStatus,
+    stale: int,
+    source_changed: int,
+) -> None:
+    project, eric, _christine = _project_with_characters(tmp_path)
+    chapter = ChapterRepository(project).create_chapter(
+        project.list_volumes()[0].id, "Source", "1", "Source chapter"
+    )
+    service = ViewAssertionService(project)
+    draft = ViewAssertionDraft(
+        subject_id=eric.id,
+        view_type=ViewType.READER_VIEW,
+        content="Candidate",
+        narrative_visible_from_sequence=2,
+    )
+    existing = service.create_model_candidate(
+        draft,
+        source_id=chapter.id,
+        source_revision=chapter.revision,
+    )
+    with project.database.connect() as connection, connection:
+        connection.execute(
+            "UPDATE view_assertions "
+            "SET review_status = ?, stale = ?, source_changed = ? WHERE id = ?",
+            (review_status.value, stale, source_changed, existing.id),
+        )
+
+    created = service.create_model_candidates_for_chapter(
+        (draft,),
+        source_id=chapter.id,
+        source_revision=chapter.revision,
+    )
+
+    assert len(created) == 1
+    assert created[0].review_status == ReviewStatus.REVIEW
+
+
+def test_concurrent_model_candidate_batches_create_only_one_current_set(
+    tmp_path: Path,
+) -> None:
+    project, eric, _christine = _project_with_characters(tmp_path)
+    chapter = ChapterRepository(project).create_chapter(
+        project.list_volumes()[0].id, "Source", "1", "Source chapter"
+    )
+    draft = ViewAssertionDraft(
+        subject_id=eric.id,
+        view_type=ViewType.READER_VIEW,
+        content="Concurrent candidate",
+        narrative_visible_from_sequence=2,
+    )
+    barrier = Barrier(2)
+
+    def create_batch() -> str:
+        barrier.wait()
+        try:
+            ViewAssertionService(project).create_model_candidates_for_chapter(
+                (draft,),
+                source_id=chapter.id,
+                source_revision=chapter.revision,
+            )
+        except ViewAssertionExtractionAlreadyExistsError:
+            return "skipped"
+        return "created"
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = tuple(executor.map(lambda _index: create_batch(), range(2)))
+
+    assert sorted(results) == ["created", "skipped"]
+    with project.database.connect() as connection:
+        count = connection.execute("SELECT COUNT(*) FROM view_assertions").fetchone()[0]
+    assert count == 1
 
 
 def test_reader_view_stays_sparse_and_blocks_premature_reveal(tmp_path: Path) -> None:

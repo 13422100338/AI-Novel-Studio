@@ -18,6 +18,10 @@ class ViewAssertionRepositoryError(RuntimeError):
     pass
 
 
+class ViewAssertionCandidatesAlreadyExistError(ViewAssertionRepositoryError):
+    pass
+
+
 class ViewAssertionRepository:
     def __init__(self, project: ProjectRepository) -> None:
         self.project = project
@@ -128,6 +132,14 @@ class ViewAssertionRepository:
                     raise ViewAssertionRepositoryError(
                         "view assertion extraction source changed"
                     )
+                if self._has_current_model_candidates(
+                    connection,
+                    source_id=normalized_source_id,
+                    source_revision=source_revision,
+                ):
+                    raise ViewAssertionCandidatesAlreadyExistError(
+                        "current model candidates already exist for source revision"
+                    )
                 for draft in drafts:
                     self._require_active_character(
                         connection, draft.subject_id, "subject_id"
@@ -154,6 +166,52 @@ class ViewAssertionRepository:
                 "view assertion extraction batch could not be saved"
             ) from error
         return tuple(self.get(assertion_id) for assertion_id in assertion_ids)
+
+    def has_current_model_candidates(
+        self,
+        *,
+        source_id: str,
+        source_revision: int,
+    ) -> bool:
+        normalized_source_id = source_id.strip()
+        if not normalized_source_id or len(normalized_source_id) > 500:
+            raise ValueError("source_id must contain 1 to 500 characters")
+        if (
+            isinstance(source_revision, bool)
+            or not isinstance(source_revision, int)
+            or source_revision < 0
+        ):
+            raise ValueError("source_revision must be a non-negative integer")
+        with self.project.database.connect() as connection:
+            return self._has_current_model_candidates(
+                connection,
+                source_id=normalized_source_id,
+                source_revision=source_revision,
+            )
+
+    @staticmethod
+    def _has_current_model_candidates(
+        connection: sqlite3.Connection,
+        *,
+        source_id: str,
+        source_revision: int,
+    ) -> bool:
+        row = connection.execute(
+            """
+            SELECT 1
+            FROM view_assertions
+            WHERE source_id = ?
+              AND source_revision = ?
+              AND authority = 'MODEL_EXTRACTED'
+              AND source_type = 'MODEL'
+              AND review_status IN ('REVIEW', 'APPROVED', 'LOCKED')
+              AND stale = 0
+              AND source_changed = 0
+            LIMIT 1
+            """,
+            (source_id, source_revision),
+        ).fetchone()
+        return row is not None
 
     @staticmethod
     def _insert_model_candidate(
