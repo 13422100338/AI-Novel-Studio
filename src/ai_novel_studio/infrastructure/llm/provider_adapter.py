@@ -22,12 +22,20 @@ _MAX_PROVIDER_RESPONSE_BYTES = 16 * 1024 * 1024
 _MAX_EMBEDDING_DIMENSIONS = 65_536
 
 
+def _is_retryable_http_status(status: int) -> bool:
+    return status in {408, 429} or 500 <= status <= 599
+
+
 class ProviderError(RuntimeError):
     pass
 
 
 class ProviderRequestError(ProviderError):
-    pass
+    retryable: bool = True
+
+    def __init__(self, message: str, *, retryable: bool = True) -> None:
+        super().__init__(message)
+        self.retryable = retryable
 
 
 class ProviderProtocolError(ProviderError):
@@ -124,7 +132,12 @@ class UrllibTransport:
             with urlopen(request, timeout=timeout_seconds) as response:
                 yield from response
         except HTTPError as error:
-            raise ProviderRequestError(f"模型服务请求失败（HTTP {error.code}）") from error
+            status = error.code
+            error.close()
+            raise ProviderRequestError(
+                f"模型服务请求失败（HTTP {status}）",
+                retryable=_is_retryable_http_status(status),
+            ) from error
         except URLError as error:
             raise ProviderRequestError("模型流式连接中断") from error
 
@@ -280,7 +293,13 @@ class OpenAICompatibleAdapter:
                     error="流式连接中断，已保留收到的部分内容",
                 )
                 return
-            raise ProviderRequestError("流式请求失败，尚未收到内容") from error
+            retryable = (
+                error.retryable if isinstance(error, ProviderRequestError) else True
+            )
+            raise ProviderRequestError(
+                "流式请求失败，尚未收到内容",
+                retryable=retryable,
+            ) from error
 
     @staticmethod
     def _headers(api_key: str) -> dict[str, str]:
@@ -428,7 +447,10 @@ class OpenAICompatibleAdapter:
     @staticmethod
     def _require_success(response: TransportResponse) -> None:
         if not 200 <= response.status < 300:
-            raise ProviderRequestError(f"模型服务请求失败（HTTP {response.status}）")
+            raise ProviderRequestError(
+                f"模型服务请求失败（HTTP {response.status}）",
+                retryable=_is_retryable_http_status(response.status),
+            )
 
     @staticmethod
     def _json_object(raw: bytes) -> dict[str, object]:

@@ -39,6 +39,7 @@ class FakeAdapter:
         self.complete_results: list[LLMResponse | Exception] = []
         self.embedding_results: list[tuple[tuple[float, ...], ...] | Exception] = []
         self.stream_events: list[LLMStreamEvent] = []
+        self.stream_results: list[tuple[LLMStreamEvent, ...] | Exception] = []
         self.complete_calls = []
         self.embedding_calls: list[tuple[EmbeddingRequest, ProviderProfile, str]] = []
         self.stream_calls = 0
@@ -62,6 +63,12 @@ class FakeAdapter:
 
     def stream(self, request, profile, api_key) -> Iterator[LLMStreamEvent]:  # type: ignore[no-untyped-def]
         self.stream_calls += 1
+        if self.stream_results:
+            result = self.stream_results.pop(0)
+            if isinstance(result, Exception):
+                raise result
+            yield from result
+            return
         yield from self.stream_events
 
 
@@ -235,6 +242,26 @@ def test_gateway_retries_retryable_http_embedding_failures(status: int) -> None:
     assert transport.request_calls == 2
 
 
+@pytest.mark.parametrize("status", [400, 401, 403])
+def test_gateway_does_not_retry_non_retryable_http_embedding_failures(
+    status: int,
+) -> None:
+    transport = SequencedTransport(
+        [
+            TransportResponse(status, b""),
+            TransportResponse(200, b'{"data":[{"index":0,"embedding":[0.1]}]}'),
+        ]
+    )
+    gateway = _gateway(OpenAICompatibleAdapter(transport))
+
+    with pytest.raises(ProviderRequestError) as captured:
+        gateway.embed(TaskPurpose.MEMORY_EMBEDDING, ("text",))
+
+    assert captured.value.retryable is False
+    assert transport.request_calls == 1
+    assert gateway.usage_tracker.records == ()
+
+
 def test_gateway_raises_the_final_embedding_request_error_after_retries() -> None:
     adapter = FakeAdapter()
     error = ProviderRequestError("safe final error")
@@ -378,6 +405,71 @@ def test_gateway_retries_once_only_before_any_content() -> None:
 
     assert len(adapter.complete_calls) == 2
     assert gateway.usage_tracker.snapshot().retry_count == 1
+
+
+def test_gateway_does_not_retry_non_retryable_completion_failures() -> None:
+    adapter = FakeAdapter()
+    error = ProviderRequestError("safe client error", retryable=False)
+    adapter.complete_results = [
+        error,
+        LLMResponse("unexpected", "novel-pro", LLMUsage(10, 4)),
+    ]
+    gateway = _gateway(adapter)
+
+    with pytest.raises(ProviderRequestError) as captured:
+        gateway.complete(
+            TaskPurpose.PLOT_DISCUSSION,
+            (LLMMessage("user", "request"),),
+            100,
+        )
+
+    assert captured.value is error
+    assert len(adapter.complete_calls) == 1
+    assert gateway.usage_tracker.snapshot().retry_count == 0
+
+
+def test_gateway_retries_default_stream_request_errors_before_content() -> None:
+    adapter = FakeAdapter()
+    adapter.stream_results = [
+        ProviderRequestError("temporary"),
+        (LLMStreamEvent(StreamEventKind.COMPLETED),),
+    ]
+    gateway = _gateway(adapter)
+
+    events = tuple(
+        gateway.stream(
+            TaskPurpose.PLOT_DISCUSSION,
+            (LLMMessage("user", "request"),),
+            100,
+        )
+    )
+
+    assert events[-1].kind == StreamEventKind.COMPLETED
+    assert adapter.stream_calls == 2
+    assert gateway.usage_tracker.snapshot().retry_count == 1
+
+
+def test_gateway_does_not_retry_non_retryable_stream_failures() -> None:
+    adapter = FakeAdapter()
+    error = ProviderRequestError("safe client error", retryable=False)
+    adapter.stream_results = [
+        error,
+        (LLMStreamEvent(StreamEventKind.COMPLETED),),
+    ]
+    gateway = _gateway(adapter)
+
+    with pytest.raises(ProviderRequestError) as captured:
+        tuple(
+            gateway.stream(
+                TaskPurpose.PLOT_DISCUSSION,
+                (LLMMessage("user", "request"),),
+                100,
+            )
+        )
+
+    assert captured.value is error
+    assert adapter.stream_calls == 1
+    assert gateway.usage_tracker.snapshot().retry_count == 0
 
 
 def test_gateway_does_not_retry_stream_after_partial_content() -> None:

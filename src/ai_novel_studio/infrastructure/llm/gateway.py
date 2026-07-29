@@ -88,8 +88,11 @@ class LLMGateway:
                     retry_count=attempt - 1,
                 )
                 return response
-            except ProviderRequestError:
-                if attempt >= self.retry_policy.max_attempts:
+            except ProviderRequestError as error:
+                if (
+                    not error.retryable
+                    or attempt >= self.retry_policy.max_attempts
+                ):
                     self.usage_tracker.record_failure(
                         purpose,
                         route,
@@ -120,8 +123,11 @@ class LLMGateway:
         for attempt in range(1, self.retry_policy.max_attempts + 1):
             try:
                 return adapter.embed(request, profile, api_key)
-            except ProviderRequestError:
-                if attempt >= self.retry_policy.max_attempts:
+            except ProviderRequestError as error:
+                if (
+                    not error.retryable
+                    or attempt >= self.retry_policy.max_attempts
+                ):
                     raise
                 self._wait(attempt + 1)
         raise AssertionError("unreachable")
@@ -181,8 +187,12 @@ class LLMGateway:
                     retry_count=attempt - 1,
                 )
                 return
-            except ProviderRequestError:
-                if emitted_content or attempt >= self.retry_policy.max_attempts:
+            except ProviderRequestError as error:
+                if (
+                    not error.retryable
+                    or emitted_content
+                    or attempt >= self.retry_policy.max_attempts
+                ):
                     self.usage_tracker.record_failure(
                         purpose,
                         route,

@@ -311,6 +311,47 @@ def test_embedding_http_error_never_echoes_secret_or_response_body(status: int) 
     assert "sk-private" not in message
     assert "Bearer" not in message
     assert "first" not in message
+    assert captured.value.retryable is True
+
+
+@pytest.mark.parametrize(
+    ("status", "retryable"),
+    [
+        (-1, False),
+        (400, False),
+        (401, False),
+        (403, False),
+        (404, False),
+        (408, True),
+        (409, False),
+        (422, False),
+        (429, True),
+        (500, True),
+        (599, True),
+        (600, False),
+    ],
+)
+def test_non_streaming_http_status_has_explicit_retry_classification(
+    status: int,
+    retryable: bool,
+) -> None:
+    transport = FakeTransport(
+        [TransportResponse(status, b'{"error":"Bearer sk-private request first"}')]
+    )
+
+    with pytest.raises(ProviderRequestError) as captured:
+        OpenAICompatibleAdapter(transport).embed(
+            EmbeddingRequest("embedding-model", ("first",)),
+            _profile(),
+            "sk-private",
+        )
+
+    assert captured.value.retryable is retryable
+    message = str(captured.value)
+    assert str(status) in message
+    assert "sk-private" not in message
+    assert "Bearer" not in message
+    assert "first" not in message
 
 
 def test_transport_connection_error_never_echoes_request_details(monkeypatch) -> None:  # type: ignore[no-untyped-def]
@@ -392,6 +433,84 @@ def test_transport_closes_http_error_without_reading_body(monkeypatch) -> None: 
 
     assert response == TransportResponse(503, b"")
     assert error_body.closed is True
+
+
+@pytest.mark.parametrize(
+    ("status", "retryable"),
+    [(400, False), (408, True), (429, True), (503, True), (600, False)],
+)
+def test_stream_transport_classifies_and_closes_http_error_without_reading_body(
+    monkeypatch,
+    status: int,
+    retryable: bool,
+) -> None:  # type: ignore[no-untyped-def]
+    class ErrorBody:
+        closed = False
+
+        def read(self, _size: int = -1) -> bytes:
+            raise AssertionError("HTTP error body must not be read")
+
+        def close(self) -> None:
+            self.closed = True
+
+    error_body = ErrorBody()
+    http_error = HTTPError(
+        "https://relay.example/v1/chat/completions",
+        status,
+        "Bearer sk-private request first",
+        None,
+        error_body,
+    )
+
+    def fail_request(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        raise http_error
+
+    monkeypatch.setattr(provider_adapter_module, "urlopen", fail_request)
+
+    with pytest.raises(ProviderRequestError) as captured:
+        tuple(
+            UrllibTransport().stream(
+                "POST",
+                "https://relay.example/v1/chat/completions",
+                {"Authorization": "Bearer sk-private"},
+                b'{"messages":[{"content":"first"}]}',
+                5,
+            )
+        )
+
+    assert captured.value.retryable is retryable
+    assert error_body.closed is True
+    message = str(captured.value)
+    assert str(status) in message
+    assert "sk-private" not in message
+    assert "Bearer" not in message
+    assert "first" not in message
+
+
+@pytest.mark.parametrize("retryable", [False, True])
+def test_stream_sanitization_preserves_request_error_retryability(
+    retryable: bool,
+) -> None:
+    transport = FakeTransport()
+    transport.stream_error = ProviderRequestError(
+        "Bearer sk-private request first",
+        retryable=retryable,
+    )
+
+    with pytest.raises(ProviderRequestError) as captured:
+        tuple(
+            OpenAICompatibleAdapter(transport).stream(
+                _request(stream=True),
+                _profile(),
+                "sk-private",
+            )
+        )
+
+    assert captured.value.retryable is retryable
+    message = str(captured.value)
+    assert "sk-private" not in message
+    assert "Bearer" not in message
+    assert "first" not in message
 
 
 def test_complete_sends_optional_sampling_parameters_when_configured() -> None:
