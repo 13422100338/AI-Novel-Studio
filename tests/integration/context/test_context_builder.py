@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,7 @@ from ai_novel_studio.core.context.context_filter import ContextEligibility
 from ai_novel_studio.core.context.context_manifest import ContextManifestRepository
 from ai_novel_studio.core.context.context_ranking import ContextTask
 from ai_novel_studio.core.context.token_budget import TokenBudget
+from ai_novel_studio.domain.identifiers import new_id
 from ai_novel_studio.infrastructure.storage.chapter_repository import ChapterRepository
 from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
 
@@ -400,6 +402,8 @@ def test_context_manifest_persists_sources_omissions_and_dependency(tmp_path: Pa
             run_id="run-context",
             budget=TokenBudget(100, 20, 10),
             blocks=(block, _block("too-large", "X" * 100, 50)),
+            target_chapter_revision=current.revision,
+            requirement_revision=12,
         )
     )
 
@@ -407,6 +411,10 @@ def test_context_manifest_persists_sources_omissions_and_dependency(tmp_path: Pa
     payload = json.loads(path.read_text(encoding="utf-8"))
 
     assert payload["chapter_id"] == current.id
+    assert payload["schema_version"] == 2
+    assert payload["compiler_version"] == "context-compiler/2.0"
+    assert payload["target_chapter_revision"] == current.revision
+    assert payload["requirement_revision"] == 12
     assert payload["selected"][0]["source_id"] == source.id
     assert payload["omitted"][0]["block_id"] == "too-large"
     with project.database.connect() as connection:
@@ -419,3 +427,98 @@ def test_context_manifest_persists_sources_omissions_and_dependency(tmp_path: Pa
         ).fetchone()
     assert manifest_row["status"] == "CURRENT"
     assert dependency["memory_type"] == "MANIFEST"
+
+
+def test_context_manifest_loads_legacy_v1_json_with_explicit_metadata(
+    tmp_path: Path,
+) -> None:
+    project = ProjectRepository.create(tmp_path / "project", "legacy manifest")
+    chapter = ChapterRepository(project).create_chapter(
+        project.list_volumes()[0].id,
+        "current",
+    )
+    manifest = ContextBuilder(CharacterEstimator()).build(
+        ContextBuildRequest(
+            chapter_id=chapter.id,
+            run_id="run-legacy",
+            budget=TokenBudget(100, 20, 10),
+            blocks=(_block("source", "visible", 10),),
+        )
+    ).manifest
+    repository = ContextManifestRepository(project)
+    path = repository.save(manifest)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    for field in (
+        "schema_version",
+        "compiler_version",
+        "target_chapter_revision",
+        "requirement_revision",
+    ):
+        payload.pop(field, None)
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    loaded = repository.load(manifest.id)
+
+    assert loaded.schema_version == 1
+    assert loaded.compiler_version is None
+    assert loaded.target_chapter_revision is None
+    assert loaded.requirement_revision is None
+    with pytest.raises(ValueError, match="new context manifest"):
+        repository.save(replace(loaded, id=new_id()))
+
+
+@pytest.mark.parametrize("schema_version", [None, 3])
+def test_context_manifest_rejects_explicit_invalid_schema(
+    tmp_path: Path,
+    schema_version: int | None,
+) -> None:
+    project = ProjectRepository.create(tmp_path / "project", "future manifest")
+    chapter = ChapterRepository(project).create_chapter(
+        project.list_volumes()[0].id,
+        "current",
+    )
+    manifest = ContextBuilder(CharacterEstimator()).build(
+        ContextBuildRequest(
+            chapter_id=chapter.id,
+            run_id="run-future",
+            budget=TokenBudget(100, 20, 10),
+            blocks=(_block("source", "visible", 10),),
+        )
+    ).manifest
+    repository = ContextManifestRepository(project)
+    path = repository.save(manifest)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["schema_version"] = schema_version
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="schema version"):
+        repository.load(manifest.id)
+
+
+@pytest.mark.parametrize(
+    ("schema_version", "compiler_version"),
+    [
+        (3, None),
+        (2, None),
+        (2, "context-compiler/other"),
+    ],
+)
+def test_context_manifest_rejects_direct_invalid_version_contract(
+    schema_version: int,
+    compiler_version: str | None,
+) -> None:
+    manifest = ContextBuilder(CharacterEstimator()).build(
+        ContextBuildRequest(
+            chapter_id="chapter-current",
+            run_id="run-invalid",
+            budget=TokenBudget(100, 20, 10),
+            blocks=(_block("source", "visible", 10),),
+        )
+    ).manifest
+
+    with pytest.raises(ValueError, match="context manifest"):
+        replace(
+            manifest,
+            schema_version=schema_version,
+            compiler_version=compiler_version,
+        )

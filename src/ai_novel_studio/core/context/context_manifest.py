@@ -9,6 +9,10 @@ from ai_novel_studio.domain.identifiers import new_id
 from ai_novel_studio.infrastructure.storage.atomic_file import atomic_write_text
 from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
 
+LEGACY_CONTEXT_MANIFEST_SCHEMA_VERSION = 1
+CONTEXT_MANIFEST_SCHEMA_VERSION = 2
+CONTEXT_COMPILER_VERSION = "context-compiler/2.0"
+
 
 @dataclass(frozen=True, slots=True)
 class SelectedManifestItem:
@@ -48,12 +52,55 @@ class ContextManifest:
     omitted: tuple[OmittedManifestItem, ...]
     warnings: tuple[str, ...]
     created_at: datetime
+    schema_version: int = CONTEXT_MANIFEST_SCHEMA_VERSION
+    compiler_version: str | None = CONTEXT_COMPILER_VERSION
+    target_chapter_revision: int | None = None
+    requirement_revision: int | None = None
+
+    def __post_init__(self) -> None:
+        if (
+            isinstance(self.schema_version, bool)
+            or not isinstance(self.schema_version, int)
+            or self.schema_version
+            not in {
+                LEGACY_CONTEXT_MANIFEST_SCHEMA_VERSION,
+                CONTEXT_MANIFEST_SCHEMA_VERSION,
+            }
+        ):
+            raise ValueError("context manifest schema version is invalid")
+
+        if self.schema_version == LEGACY_CONTEXT_MANIFEST_SCHEMA_VERSION:
+            if (
+                self.compiler_version is not None
+                or self.target_chapter_revision is not None
+                or self.requirement_revision is not None
+            ):
+                raise ValueError("context manifest legacy metadata is invalid")
+            return
+
+        if self.compiler_version != CONTEXT_COMPILER_VERSION:
+            raise ValueError("context manifest compiler version is invalid")
+
+        for revision_name, revision_value in (
+            ("target chapter", self.target_chapter_revision),
+            ("requirement", self.requirement_revision),
+        ):
+            if revision_value is not None and (
+                isinstance(revision_value, bool)
+                or not isinstance(revision_value, int)
+                or revision_value < 0
+            ):
+                raise ValueError(f"context manifest {revision_name} revision is invalid")
 
     def to_dict(self) -> dict[str, object]:
         return {
+            "schema_version": self.schema_version,
+            "compiler_version": self.compiler_version,
             "id": self.id,
             "chapter_id": self.chapter_id,
             "run_id": self.run_id,
+            "target_chapter_revision": self.target_chapter_revision,
+            "requirement_revision": self.requirement_revision,
             "input_token_limit": self.input_token_limit,
             "output_token_limit": self.output_token_limit,
             "estimated_input_tokens": self.estimated_input_tokens,
@@ -73,6 +120,8 @@ class ContextManifestRepository:
         self.project = project
 
     def save(self, manifest: ContextManifest) -> Path:
+        if manifest.schema_version != CONTEXT_MANIFEST_SCHEMA_VERSION:
+            raise ValueError("new context manifest must use schema version 2")
         path = self.project.layout.pipeline / "manifests" / f"context_{manifest.id}.json"
         if path.exists():
             raise FileExistsError(f"上下文清单已存在：{manifest.id}")
@@ -135,6 +184,12 @@ class ContextManifestRepository:
         if not path.is_relative_to(root):
             raise ValueError("上下文清单路径越出项目目录")
         payload = json.loads(path.read_text(encoding="utf-8"))
+        (
+            schema_version,
+            compiler_version,
+            target_chapter_revision,
+            requirement_revision,
+        ) = self._schema_metadata(payload)
         return ContextManifest(
             id=payload["id"],
             chapter_id=payload["chapter_id"],
@@ -146,7 +201,49 @@ class ContextManifestRepository:
             omitted=tuple(OmittedManifestItem(**item) for item in payload["omitted"]),
             warnings=tuple(payload["warnings"]),
             created_at=datetime.fromisoformat(payload["created_at"]),
+            schema_version=schema_version,
+            compiler_version=compiler_version,
+            target_chapter_revision=target_chapter_revision,
+            requirement_revision=requirement_revision,
         )
+
+    @staticmethod
+    def _schema_metadata(
+        payload: dict[str, object],
+    ) -> tuple[int, str | None, int | None, int | None]:
+        if "schema_version" not in payload:
+            return (LEGACY_CONTEXT_MANIFEST_SCHEMA_VERSION, None, None, None)
+        schema_value = payload["schema_version"]
+        if isinstance(schema_value, bool) or not isinstance(schema_value, int):
+            raise ValueError("context manifest schema version is invalid")
+        if schema_value == LEGACY_CONTEXT_MANIFEST_SCHEMA_VERSION:
+            return (LEGACY_CONTEXT_MANIFEST_SCHEMA_VERSION, None, None, None)
+        if schema_value != CONTEXT_MANIFEST_SCHEMA_VERSION:
+            raise ValueError("unsupported context manifest schema version")
+        compiler_version = payload.get("compiler_version")
+        if not isinstance(compiler_version, str) or not compiler_version.strip():
+            raise ValueError("context manifest compiler version is invalid")
+        return (
+            schema_value,
+            compiler_version,
+            ContextManifestRepository._optional_revision(
+                payload,
+                "target_chapter_revision",
+            ),
+            ContextManifestRepository._optional_revision(
+                payload,
+                "requirement_revision",
+            ),
+        )
+
+    @staticmethod
+    def _optional_revision(payload: dict[str, object], field: str) -> int | None:
+        value = payload.get(field)
+        if value is None:
+            return None
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValueError(f"context manifest {field} is invalid")
+        return value
 
     def latest_for_chapter(self, chapter_id: str) -> ContextManifest | None:
         with self.project.database.connect() as connection:

@@ -49,6 +49,8 @@ class ContextBuildRequest:
     task: ContextTask | None = None
     deduplicate: bool = False
     minimum_category_coverage: tuple[str, ...] = ()
+    target_chapter_revision: int | None = None
+    requirement_revision: int | None = None
 
     def __post_init__(self) -> None:
         normalized: list[str] = []
@@ -62,6 +64,18 @@ class ContextBuildRequest:
         if len(normalized) != len(set(normalized)):
             raise ValueError("minimum category coverage cannot contain duplicates")
         object.__setattr__(self, "minimum_category_coverage", tuple(normalized))
+        for revision_name, revision_value in (
+            ("target chapter revision", self.target_chapter_revision),
+            ("requirement revision", self.requirement_revision),
+        ):
+            if revision_value is not None and (
+                isinstance(revision_value, bool)
+                or not isinstance(revision_value, int)
+                or revision_value < 0
+            ):
+                raise ValueError(
+                    f"{revision_name} must be a non-negative integer or None"
+                )
 
 
 @dataclass(frozen=True, slots=True)
@@ -196,6 +210,8 @@ class ContextBuilder:
             omitted=tuple(omitted),
             warnings=tuple(warnings),
             created_at=utc_now(),
+            target_chapter_revision=request.target_chapter_revision,
+            requirement_revision=request.requirement_revision,
         )
         return BuiltContext("".join(contents), manifest)
 

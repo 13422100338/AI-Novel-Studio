@@ -117,6 +117,7 @@ class GenerationContextService:
         requirement = self.requirements.get(request.chapter_id)
         if not requirement.content.strip():
             raise ValueError("当前章要求不能为空")
+        chapter = self.chapters.get_chapter(request.chapter_id, include_deleted=False)
         brief = self._validated_brief(request)
         context_window = request.model_capabilities.context_window
         context_warning: str | None = None
@@ -164,6 +165,8 @@ class GenerationContextService:
                     ),
                     deduplicate=True,
                     minimum_category_coverage=("RECENT_FULL",),
+                    target_chapter_revision=chapter.revision,
+                    requirement_revision=requirement.revision,
                 )
             )
             manifest = built.manifest

@@ -147,6 +147,10 @@ def test_basic_preparation_preserves_output_limit_and_links_manifest(
     assert prepared.run.output_token_limit == 32_000
     assert prepared.run.context_manifest_id == prepared.manifest.id
     assert prepared.manifest.run_id == prepared.run.id
+    assert prepared.manifest.schema_version == 2
+    assert prepared.manifest.compiler_version == "context-compiler/2.0"
+    assert prepared.manifest.target_chapter_revision == workspace["current"].revision
+    assert prepared.manifest.requirement_revision == workspace["requirement"].revision
     assert workspace["manifests"].load(prepared.manifest.id) == prepared.manifest
 
 
