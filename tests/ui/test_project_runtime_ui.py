@@ -1,10 +1,12 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 from PySide6.QtWidgets import QMessageBox
 from pytest import MonkeyPatch
 from pytestqt.qtbot import QtBot
 
 from ai_novel_studio.application.agent_loop_service import AgentLoopResult
+from ai_novel_studio.application.generation_recovery_service import RecoverableGeneration
 from ai_novel_studio.application.manuscript_memory_build_service import (
     ManuscriptMemoryBuildFailure,
     ManuscriptMemoryBuildReport,
@@ -12,6 +14,9 @@ from ai_novel_studio.application.manuscript_memory_build_service import (
     MemoryBuildProgressPhase,
 )
 from ai_novel_studio.application.model_tasks import StyleAuditFinding, StyleAuditResult
+from ai_novel_studio.application.project_audit_service import (
+    GeneratedDraftDeepAuditResults,
+)
 from ai_novel_studio.application.project_runtime import ProjectRuntime
 from ai_novel_studio.application.view_assertion_service import ViewAssertionService
 from ai_novel_studio.core.context.context_manifest import (
@@ -787,11 +792,50 @@ def test_standard_generation_can_run_independent_deep_audit(
     )
     assert all(audit.mode == CreationMode.STANDARD for audit in audits)
     assert all(audit.audit_policy == AuditPolicy.DEEP for audit in audits)
+    assert window.audit_window is not None
+    assert "最新" in window.audit_window.result_scope_label.text()
+    assert window.audit_window.model_table.rowCount() == 0
+    assert window.audit_window.repair_button.isEnabled() is False
     assert window.manuscript_panel.adopt_draft_button.isEnabled()
 
     window.manuscript_panel.adopt_draft_button.click()
 
     assert ChapterRepository(runtime.project).read_content(chapter_id) == "模型生成正文"
+
+
+def test_recovered_draft_shows_persisted_deep_results_as_read_only(
+    qtbot: QtBot, tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    runtime, chapter_id = _project_with_chapter(tmp_path / "novel", tmp_path)
+    window = MainWindow(model_runtime=UiModelRuntime(tmp_path), project_runtime=runtime)
+    qtbot.addWidget(window)
+    window.load_project_chapter(chapter_id)
+    findings = (SimpleNamespace(
+        id="recovered-finding",
+        source=SimpleNamespace(value="DETERMINISTIC"),
+        category=SimpleNamespace(value="REQUIREMENT"),
+        severity=SimpleNamespace(value="ERROR"),
+        explanation="missing event",
+        evidence="recovered evidence",
+        status=SimpleNamespace(value="OPEN"),
+    ),)
+    monkeypatch.setattr(
+        runtime.generation_session,
+        "latest_deep_audit_results",
+        lambda: GeneratedDraftDeepAuditResults(findings, (), True, True),
+    )
+
+    window.apply_recovered_generation(
+        RecoverableGeneration(
+            run=SimpleNamespace(status=GenerationStatus.PARTIAL),
+            latest_checkpoint=None,
+            draft_text="recovered draft",
+        )
+    )
+
+    assert window.audit_window is not None
+    assert "最新" in window.audit_window.result_scope_label.text()
+    assert window.audit_window.repair_button.isEnabled() is False
 
 
 def test_deep_audit_does_not_start_while_pre_accept_audit_is_pending(

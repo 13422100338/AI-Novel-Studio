@@ -19,6 +19,7 @@ from ai_novel_studio.domain.audit import (
     AuditFindingCategory,
     AuditFindingSource,
     AuditFindingStatus,
+    AuditRunStatus,
     AuditSeverity,
     AuditTargetKind,
     RepairProposal,
@@ -52,6 +53,18 @@ class ModelAuditSnapshot:
     audit_policy: AuditPolicy
     model_provider_id: str
     model_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class GeneratedDraftDeepAuditResults:
+    deterministic_findings: tuple[AuditFinding, ...]
+    model_findings: tuple[AuditFinding, ...]
+    has_deterministic_result: bool
+    has_model_result: bool
+
+    @property
+    def has_results(self) -> bool:
+        return self.has_deterministic_result or self.has_model_result
 
 
 class ProjectAuditService:
@@ -224,6 +237,38 @@ class ProjectAuditService:
                 return findings
         return ()
 
+    def latest_generated_draft_deep_results(
+        self, generation_run_id: str
+    ) -> GeneratedDraftDeepAuditResults:
+        latest_by_source: dict[AuditFindingSource, tuple[AuditFinding, ...]] = {}
+        for run in self.repository.list_runs_for_target(
+            target_kind=AuditTargetKind.GENERATED_DRAFT,
+            target_id=generation_run_id,
+        ):
+            if (
+                run.status != AuditRunStatus.COMPLETED
+                or run.audit_policy != AuditPolicy.DEEP
+            ):
+                continue
+            source = _audit_source_for_prompt_version(run.prompt_version)
+            if source is None or source in latest_by_source:
+                continue
+            latest_by_source[source] = tuple(
+                finding
+                for finding in self.repository.list_findings(run.id)
+                if finding.source == source
+            )
+        return GeneratedDraftDeepAuditResults(
+            deterministic_findings=latest_by_source.get(
+                AuditFindingSource.DETERMINISTIC, ()
+            ),
+            model_findings=latest_by_source.get(AuditFindingSource.MODEL, ()),
+            has_deterministic_result=(
+                AuditFindingSource.DETERMINISTIC in latest_by_source
+            ),
+            has_model_result=AuditFindingSource.MODEL in latest_by_source,
+        )
+
     def create_replacement_proposal(
         self,
         *,
@@ -290,6 +335,16 @@ _SEVERITY_ALIASES = {
     "高": "ERROR",
     "严重": "BLOCKER",
 }
+
+
+def _audit_source_for_prompt_version(
+    prompt_version: str,
+) -> AuditFindingSource | None:
+    if prompt_version == "deterministic-audit-v1":
+        return AuditFindingSource.DETERMINISTIC
+    if prompt_version == "model-audit-ui-v1":
+        return AuditFindingSource.MODEL
+    return None
 
 
 def _model_category(value: str) -> str:

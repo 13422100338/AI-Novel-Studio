@@ -896,6 +896,11 @@ class MainWindow(QMainWindow):
         deep_audit_changed = getattr(self.generation_runtime, "deep_audit_changed", None)
         if deep_audit_changed is not None:
             deep_audit_changed.connect(self.manuscript_panel.set_deep_audit_status)
+        deep_audit_completed = getattr(
+            self.generation_runtime, "deep_audit_completed", None
+        )
+        if deep_audit_completed is not None:
+            deep_audit_completed.connect(self.show_generated_draft_audit_results)
 
     def apply_accepted_generation(self, text: str) -> None:
         self.manuscript_panel.apply_accepted_generation(text)
@@ -930,6 +935,11 @@ class MainWindow(QMainWindow):
         self.manuscript_panel.begin_generation_draft()
         self.manuscript_panel.append_generation_draft(text)
         self.manuscript_panel.apply_generation_status(status)
+        if self.generation_runtime is None:
+            return
+        results = self.generation_runtime.session.latest_deep_audit_results()
+        if results.has_results:
+            self.show_generated_draft_audit_results(results)
 
     def _conversation_messages(self) -> tuple[LLMMessage, ...]:
         if self.project_runtime is not None and self.chat_session_id is not None:
@@ -1384,10 +1394,21 @@ class MainWindow(QMainWindow):
             self.audit_window.repair_proposal_requested.connect(self.create_audit_repair_proposal)
             self.audit_window.repair_apply_requested.connect(self.apply_audit_repair_proposal)
             self.audit_window.repair_reject_requested.connect(self.reject_audit_repair_proposal)
+        self.audit_window.show_formal_chapter_mode()
         if self.project_runtime is not None and self.current_chapter_id is not None:
             self.audit_window.apply_saved_model_findings(
                 self.project_runtime.audit_service.latest_model_findings(self.current_chapter_id)
             )
+        self._show_workspace_window(self.audit_window)
+
+    def show_generated_draft_audit_results(self, value: object) -> None:
+        deterministic = getattr(value, "deterministic_findings", ())
+        model = getattr(value, "model_findings", ())
+        if self.audit_window is None:
+            self.open_audit_window()
+        if self.audit_window is None:
+            return
+        self.audit_window.show_generated_draft_results(deterministic, model)
         self._show_workspace_window(self.audit_window)
 
     def focus_audit_evidence(self, evidence: str) -> None:

@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 from pytestqt.qtbot import QtBot
 
 from ai_novel_studio.ui.demo_data import WorkspaceDemoData
@@ -59,6 +61,83 @@ def test_audit_window_separates_deterministic_and_model_findings(qtbot: QtBot) -
 
     assert "测试失败" in window.error_label.text()
     assert window.run_deterministic_audit_button.isEnabled() is True
+
+
+def test_audit_window_shows_generated_draft_results_as_latest_and_read_only(
+    qtbot: QtBot,
+) -> None:
+    window = AuditWindow(WorkspaceDemoData.sample())
+    qtbot.addWidget(window)
+    deterministic = SimpleNamespace(
+        id="generated-finding",
+        source=SimpleNamespace(value="DETERMINISTIC"),
+        category=SimpleNamespace(value="REQUIREMENT"),
+        severity=SimpleNamespace(value="ERROR"),
+        explanation="missing event",
+        evidence="draft evidence",
+        status=SimpleNamespace(value="OPEN"),
+    )
+    emitted: list[tuple[str, ...]] = []
+    window.repair_proposal_requested.connect(lambda *value: emitted.append(value))
+    window.repair_apply_requested.connect(lambda value: emitted.append((value,)))
+    window.repair_reject_requested.connect(lambda value: emitted.append((value,)))
+
+    window.show_generated_draft_results((deterministic,), ())
+    window.deterministic_table.selectRow(0)
+    window.repair_button.click()
+    window.apply_repair_button.click()
+    window.reject_repair_button.click()
+
+    assert "最新" in window.result_scope_label.text()
+    assert window.repair_button.isEnabled() is False
+    assert window.apply_repair_button.isEnabled() is False
+    assert window.reject_repair_button.isEnabled() is False
+    assert emitted == []
+
+
+def test_generated_draft_read_only_mode_ignores_async_repair_updates(
+    qtbot: QtBot,
+) -> None:
+    window = AuditWindow(WorkspaceDemoData.sample())
+    qtbot.addWidget(window)
+    emitted: list[tuple[str, ...]] = []
+    window.repair_proposal_requested.connect(lambda *value: emitted.append(value))
+    window.repair_apply_requested.connect(lambda value: emitted.append((value,)))
+    window.repair_reject_requested.connect(lambda value: emitted.append((value,)))
+    proposal = SimpleNamespace(
+        id="formal-proposal",
+        status=SimpleNamespace(value="VALIDATED"),
+        risk_note="formal risk note",
+        target_text="formal proposal source",
+        replacement_text="formal proposal replacement",
+    )
+
+    window.show_generated_draft_results((), ())
+    window.show_repair_proposal(proposal)
+
+    assert window.repair_button.isEnabled() is False
+    assert window.apply_repair_button.isEnabled() is False
+    assert window.reject_repair_button.isEnabled() is False
+    assert window.repair_target.toPlainText() == ""
+    assert window.repair_replacement.toPlainText() == ""
+    assert window.repair_diff.toPlainText() == ""
+
+    window.show_repair_error("formal repair failed")
+    window.mark_repair_applied()
+    window.mark_repair_rejected()
+    window.repair_button.click()
+    window.apply_repair_button.click()
+    window.reject_repair_button.click()
+
+    assert window.repair_button.isEnabled() is False
+    assert window.apply_repair_button.isEnabled() is False
+    assert window.reject_repair_button.isEnabled() is False
+    assert window.repair_target.isReadOnly()
+    assert window.repair_replacement.isReadOnly()
+    assert window.repair_target.toPlainText() == ""
+    assert window.repair_replacement.toPlainText() == ""
+    assert window.repair_diff.toPlainText() == ""
+    assert emitted == []
 
 
 def test_main_window_reuses_memory_style_and_audit_windows(qtbot: QtBot) -> None:

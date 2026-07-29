@@ -51,6 +51,8 @@ class AuditWindow(QMainWindow):
         self.error_label = QLabel("", surface)
         self.error_label.setObjectName("errorLabel")
         self.error_label.setWordWrap(True)
+        self.result_scope_label = QLabel("", surface)
+        self.result_scope_label.setObjectName("mutedLabel")
 
         deterministic = [row for row in data.audit_findings if row[0] == "确定性"]
         model = [row for row in data.audit_findings if row[0] == "模型"]
@@ -107,15 +109,12 @@ class AuditWindow(QMainWindow):
         self.repair_diff.setMaximumHeight(130)
         self.apply_repair_button = QPushButton("确认采用", surface)
         self.apply_repair_button.setEnabled(False)
-        self.apply_repair_button.clicked.connect(
-            lambda: self.repair_apply_requested.emit(self.current_proposal_id)
-        )
+        self.apply_repair_button.clicked.connect(self._request_repair_apply)
         self.reject_repair_button = QPushButton("拒绝建议", surface)
         self.reject_repair_button.setEnabled(False)
-        self.reject_repair_button.clicked.connect(
-            lambda: self.repair_reject_requested.emit(self.current_proposal_id)
-        )
+        self.reject_repair_button.clicked.connect(self._request_repair_reject)
         self._selected_finding_id = ""
+        self._generated_draft_read_only = False
         self.run_model_audit_button = QPushButton("运行模型审校", surface)
         self.run_model_audit_button.setAccessibleName("使用审校模型检查当前章节")
         self.run_model_audit_button.clicked.connect(self.model_audit_requested)
@@ -130,6 +129,7 @@ class AuditWindow(QMainWindow):
         layout.addWidget(title)
         layout.addWidget(explanation)
         layout.addWidget(self.error_label)
+        layout.addWidget(self.result_scope_label)
         layout.addWidget(self.tabs, 1)
         layout.addWidget(QLabel("局部修复原文", surface))
         layout.addWidget(self.repair_target)
@@ -234,12 +234,53 @@ class AuditWindow(QMainWindow):
         self.run_deterministic_audit_button.setEnabled(True)
         self.run_deterministic_audit_button.setText("重新运行确定性检查")
 
+    def show_generated_draft_results(
+        self,
+        deterministic_findings: Iterable[object],
+        model_findings: Iterable[object],
+    ) -> None:
+        self._generated_draft_read_only = True
+        self.result_scope_label.setText("当前生成草稿的最新深度审校结果（只读）")
+        self.apply_deterministic_findings(deterministic_findings)
+        self.apply_saved_model_findings(model_findings)
+        self._set_generated_draft_read_only()
+
+    def show_formal_chapter_mode(self) -> None:
+        self._generated_draft_read_only = False
+        self.result_scope_label.setText("")
+        self._selected_finding_id = ""
+        self.run_deterministic_audit_button.setEnabled(True)
+        self.run_model_audit_button.setEnabled(True)
+        self.reject_finding_button.setEnabled(True)
+        self.false_positive_button.setEnabled(True)
+        self.repair_button.setEnabled(False)
+        self.repair_target.setReadOnly(False)
+        self.repair_replacement.setReadOnly(False)
+
+    def _set_generated_draft_read_only(self) -> None:
+        self._selected_finding_id = ""
+        self.run_deterministic_audit_button.setEnabled(False)
+        self.run_model_audit_button.setEnabled(False)
+        self.reject_finding_button.setEnabled(False)
+        self.false_positive_button.setEnabled(False)
+        self.repair_button.setEnabled(False)
+        self.apply_repair_button.setEnabled(False)
+        self.reject_repair_button.setEnabled(False)
+        self.repair_target.clear()
+        self.repair_target.setReadOnly(True)
+        self.repair_replacement.clear()
+        self.repair_replacement.setReadOnly(True)
+        self.repair_diff.clear()
+        self.repair_status_label.setText("生成草稿审校结果为只读，不能生成或采用修复建议")
+
     def _activate_evidence(self, table: QTableWidget, row: int) -> None:
         item = table.item(row, 2)
         if item is not None and item.text().strip():
             self.evidence_activated.emit(item.text().strip())
 
     def _request_status(self, status: str) -> None:
+        if self._generated_draft_read_only:
+            return
         table = self.tabs.currentWidget()
         if not isinstance(table, QTableWidget):
             return
@@ -268,6 +309,11 @@ class AuditWindow(QMainWindow):
         self.run_deterministic_audit_button.setText("重新运行确定性检查")
 
     def _select_finding(self, table: QTableWidget, row: int) -> None:
+        if self._generated_draft_read_only:
+            self._selected_finding_id = ""
+            self.repair_target.clear()
+            self.repair_button.setEnabled(False)
+            return
         source_item = table.item(row, 0) if row >= 0 else None
         evidence_item = table.item(row, 2) if row >= 0 else None
         finding_id = (
@@ -282,6 +328,8 @@ class AuditWindow(QMainWindow):
         self.repair_button.setEnabled(bool(self._selected_finding_id))
 
     def _request_repair_proposal(self) -> None:
+        if self._generated_draft_read_only:
+            return
         target = self.repair_target.toPlainText().strip()
         replacement = self.repair_replacement.toPlainText().strip()
         if self._selected_finding_id and target and replacement:
@@ -291,7 +339,17 @@ class AuditWindow(QMainWindow):
         else:
             self.repair_status_label.setText("请选择问题并填写建议替换文本")
 
+    def _request_repair_apply(self) -> None:
+        if not self._generated_draft_read_only:
+            self.repair_apply_requested.emit(self.current_proposal_id)
+
+    def _request_repair_reject(self) -> None:
+        if not self._generated_draft_read_only:
+            self.repair_reject_requested.emit(self.current_proposal_id)
+
     def show_repair_proposal(self, proposal: object) -> None:
+        if self._generated_draft_read_only:
+            return
         self.current_proposal_id = str(getattr(proposal, "id", ""))
         status = getattr(getattr(proposal, "status", ""), "value", "")
         risk = str(getattr(proposal, "risk_note", ""))
@@ -310,14 +368,20 @@ class AuditWindow(QMainWindow):
         self.reject_repair_button.setEnabled(status == "VALIDATED")
 
     def show_repair_error(self, message: str) -> None:
+        if self._generated_draft_read_only:
+            return
         self.repair_status_label.setText(f"修复建议未生成：{message}")
 
     def mark_repair_applied(self) -> None:
+        if self._generated_draft_read_only:
+            return
         self.repair_status_label.setText("修复已采用，正文已创建新版本并记录来源")
         self.apply_repair_button.setEnabled(False)
         self.reject_repair_button.setEnabled(False)
 
     def mark_repair_rejected(self) -> None:
+        if self._generated_draft_read_only:
+            return
         self.repair_status_label.setText("修复建议已拒绝，正文未修改")
         self.apply_repair_button.setEnabled(False)
         self.reject_repair_button.setEnabled(False)

@@ -38,6 +38,7 @@ class QtProjectGenerationRuntime(QObject):
     usage_changed = Signal(object)
     pre_accept_audit_changed = Signal(bool, str)
     deep_audit_changed = Signal(bool, str)
+    deep_audit_completed = Signal(object)
 
     def __init__(
         self,
@@ -233,6 +234,7 @@ class QtProjectGenerationRuntime(QObject):
             return
         try:
             blocker_count = self.session.record_model_audit(snapshot, value)
+            self.deep_audit_completed.emit(self.session.latest_deep_audit_results())
             self.deep_audit_changed.emit(
                 False,
                 (

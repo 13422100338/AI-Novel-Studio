@@ -16,6 +16,7 @@ from ai_novel_studio.application.generation_recovery_service import (
 )
 from ai_novel_studio.application.model_tasks import StyleAuditResult
 from ai_novel_studio.application.project_audit_service import (
+    GeneratedDraftDeepAuditResults,
     ModelAuditSnapshot,
     ProjectAuditService,
 )
@@ -310,6 +311,13 @@ class ProjectGenerationSession:
             draft_text=draft_text,
             rules=self.project_audits.model_context_rules(run.chapter_id),
             output_token_limit=run.output_token_limit,
+        )
+
+    def latest_deep_audit_results(self) -> GeneratedDraftDeepAuditResults:
+        if self.current_run_id is None:
+            raise RuntimeError("深度审校缺少生成任务")
+        return self.project_audits.latest_generated_draft_deep_results(
+            self.current_run_id
         )
 
     def record_model_audit(
