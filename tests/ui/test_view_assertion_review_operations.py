@@ -52,6 +52,7 @@ class _WorkspaceGateway:
 class _ReviewService:
     candidates: tuple[ViewAssertion, ...]
     error: Exception | None = None
+    keep_candidates_on_edit: bool = False
 
     def __post_init__(self) -> None:
         self.calls: list[tuple[str, str, bool]] = []
@@ -78,8 +79,10 @@ class _ReviewService:
         if self.error is not None:
             raise self.error
         candidate = self.candidates[0]
-        self.candidates = (replace(candidate, content=content, updated_at=datetime.now()),)
-        return self.candidates[0]
+        saved = replace(candidate, content=content, updated_at=datetime.now())
+        if not self.keep_candidates_on_edit:
+            self.candidates = (saved,)
+        return saved
 
     def _review(
         self, action: str, assertion_id: str, confirmed_by_user: bool
@@ -245,3 +248,127 @@ def test_view_assertion_review_edit_requires_confirmation(
     )
     qtbot.mouseClick(window.view_assertion_save_edit_button, Qt.MouseButton.LeftButton)
     assert service.calls == [("edit", "assertion-1", True)]
+
+
+def test_view_assertion_review_successful_save_refreshes_without_second_guard(
+    qtbot: QtBot, monkeypatch: MonkeyPatch
+) -> None:
+    window = MemoryWindow(WorkspaceDemoData.sample())
+    qtbot.addWidget(window)
+    service = _ReviewService((_candidate(),), keep_candidates_on_edit=True)
+    _bind(window, service)
+    window.view_assertion_content_editor.setPlainText("saved content")
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
+    )
+
+    qtbot.mouseClick(window.view_assertion_save_edit_button, Qt.MouseButton.LeftButton)
+
+    assert service.calls == [("edit", "assertion-1", True)]
+    assert window.view_assertion_content_editor.toPlainText() == "saved content"
+    assert "可选编辑" in window.view_assertion_review_status_label.text()
+
+
+def test_view_assertion_review_dirty_switch_cancel_keeps_draft(
+    qtbot: QtBot, monkeypatch: MonkeyPatch
+) -> None:
+    window = MemoryWindow(WorkspaceDemoData.sample())
+    qtbot.addWidget(window)
+    first = _candidate()
+    second = replace(first, id="assertion-2", content="second candidate")
+    _bind(window, _ReviewService((first, second)))
+    window.view_assertion_content_editor.setPlainText("unsaved draft")
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.Cancel,
+    )
+
+    window.view_assertion_review_selector.setCurrentIndex(1)
+
+    assert window.view_assertion_review_selector.currentData() == "assertion-1"
+    assert window.view_assertion_content_editor.toPlainText() == "unsaved draft"
+
+
+def test_view_assertion_review_dirty_switch_discard_allows_switch(
+    qtbot: QtBot, monkeypatch: MonkeyPatch
+) -> None:
+    window = MemoryWindow(WorkspaceDemoData.sample())
+    qtbot.addWidget(window)
+    first = _candidate()
+    second = replace(first, id="assertion-2", content="second candidate")
+    _bind(window, _ReviewService((first, second)))
+    window.view_assertion_content_editor.setPlainText("unsaved draft")
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.Discard,
+    )
+
+    window.view_assertion_review_selector.setCurrentIndex(1)
+
+    assert window.view_assertion_review_selector.currentData() == "assertion-2"
+    assert window.view_assertion_content_editor.toPlainText() == "second candidate"
+
+
+def test_view_assertion_review_dirty_switch_save_requires_edit_confirmation(
+    qtbot: QtBot, monkeypatch: MonkeyPatch
+) -> None:
+    window = MemoryWindow(WorkspaceDemoData.sample())
+    qtbot.addWidget(window)
+    first = _candidate()
+    second = replace(first, id="assertion-2", content="second candidate")
+    service = _ReviewService((first, second))
+    _bind(window, service)
+    window.view_assertion_content_editor.setPlainText("saved draft")
+    answers = iter(
+        (QMessageBox.StandardButton.Save, QMessageBox.StandardButton.Yes)
+    )
+    monkeypatch.setattr(QMessageBox, "question", lambda *args, **kwargs: next(answers))
+
+    window.view_assertion_review_selector.setCurrentIndex(1)
+
+    assert service.calls == [("edit", "assertion-1", True)]
+    assert window.view_assertion_review_selector.currentData() == "assertion-2"
+
+
+def test_view_assertion_review_dirty_approval_cancel_does_not_write_or_discard(
+    qtbot: QtBot, monkeypatch: MonkeyPatch
+) -> None:
+    window = MemoryWindow(WorkspaceDemoData.sample())
+    qtbot.addWidget(window)
+    service = _ReviewService((_candidate(),))
+    _bind(window, service)
+    window.view_assertion_content_editor.setPlainText("unsaved draft")
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.Cancel,
+    )
+
+    qtbot.mouseClick(window.view_assertion_approve_button, Qt.MouseButton.LeftButton)
+
+    assert service.calls == []
+    assert window.view_assertion_content_editor.toPlainText() == "unsaved draft"
+
+
+def test_view_assertion_review_dirty_external_rebind_cancel_keeps_draft(
+    qtbot: QtBot, monkeypatch: MonkeyPatch
+) -> None:
+    window = MemoryWindow(WorkspaceDemoData.sample())
+    qtbot.addWidget(window)
+    service = _ReviewService((_candidate(),))
+    _bind(window, service)
+    window.view_assertion_content_editor.setPlainText("unsaved draft")
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.Cancel,
+    )
+
+    _bind(window, service)
+
+    assert service.calls == []
+    assert window.view_assertion_content_editor.toPlainText() == "unsaved draft"

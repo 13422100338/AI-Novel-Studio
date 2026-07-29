@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from dataclasses import replace
 from datetime import datetime
 from typing import Protocol
 
@@ -118,6 +119,9 @@ class MemoryWindow(QMainWindow):
         self._view_assertion_review_service: ViewAssertionReviewService | None = None
         self._view_assertion_review_candidates: dict[str, ViewAssertion] = {}
         self._view_assertion_subject_names: dict[str, str] = {}
+        self._view_assertion_review_selected_id: str | None = None
+        self._view_assertion_review_refreshing = False
+        self._view_assertion_review_refresh_candidate: ViewAssertion | None = None
 
         self.setWindowTitle("记忆库 · AI Novel Studio")
         self.setMinimumSize(820, 640)
@@ -476,7 +480,7 @@ class MemoryWindow(QMainWindow):
         self.view_assertion_review_selector = QComboBox(panel)
         self.view_assertion_review_selector.setAccessibleName("选择待审查 View Assertion 候选")
         self.view_assertion_review_selector.currentIndexChanged.connect(
-            self._render_view_assertion_review_candidate
+            self._handle_view_assertion_review_selection
         )
         self.view_assertion_review_details = QPlainTextEdit(panel)
         self.view_assertion_review_details.setAccessibleName("查看 View Assertion 候选详情")
@@ -518,6 +522,12 @@ class MemoryWindow(QMainWindow):
     def _bind_view_assertion_review_operation(
         self, reader_view_subjects: tuple[tuple[str, str], ...]
     ) -> None:
+        if (
+            not self._view_assertion_review_refreshing
+            and not self._protect_unsaved_view_assertion_edit()
+        ):
+            return
+        self._view_assertion_review_refreshing = False
         self._view_assertion_subject_names = dict(reader_view_subjects)
         service = self._view_assertion_review_service
         if service is None:
@@ -529,11 +539,17 @@ class MemoryWindow(QMainWindow):
                 "当前未绑定项目，无法审查 View Assertion 候选。"
             )
             self._set_view_assertion_review_enabled(False)
+            self._view_assertion_review_selected_id = None
             return
         candidates = service.list_review_candidates(limit=100)
         self._view_assertion_review_candidates = {
             candidate.id: candidate for candidate in candidates
         }
+        if self._view_assertion_review_refresh_candidate is not None:
+            refreshed = self._view_assertion_review_refresh_candidate
+            if refreshed.id in self._view_assertion_review_candidates:
+                self._view_assertion_review_candidates[refreshed.id] = refreshed
+            self._view_assertion_review_refresh_candidate = None
         self.view_assertion_review_selector.blockSignals(True)
         self.view_assertion_review_selector.clear()
         for candidate in candidates:
@@ -548,9 +564,46 @@ class MemoryWindow(QMainWindow):
             self.view_assertion_content_editor.clear()
             self.view_assertion_review_status_label.setText("没有待审查的 View Assertion 候选。")
             self._set_view_assertion_review_enabled(False)
+            self._view_assertion_review_selected_id = None
             return
         self._set_view_assertion_review_enabled(True)
         self._render_view_assertion_review_candidate()
+
+    def _handle_view_assertion_review_selection(self, _index: int = -1) -> None:
+        if self._protect_unsaved_view_assertion_edit():
+            self._render_view_assertion_review_candidate()
+            return
+        selector = self.view_assertion_review_selector
+        selector.blockSignals(True)
+        selector.setCurrentIndex(
+            selector.findData(self._view_assertion_review_selected_id)
+        )
+        selector.blockSignals(False)
+
+    def _protect_unsaved_view_assertion_edit(self) -> bool:
+        candidate = self._view_assertion_review_candidates.get(
+            self._view_assertion_review_selected_id or ""
+        )
+        if candidate is None:
+            return True
+        if self.view_assertion_content_editor.toPlainText() == candidate.content:
+            return True
+        answer = QMessageBox.question(
+            self,
+            "候选内容尚未保存",
+            "当前候选内容已编辑但尚未保存。请选择保存草稿、丢弃草稿或继续编辑。",
+            QMessageBox.StandardButton.Save
+            | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if answer == QMessageBox.StandardButton.Save:
+            return self._save_view_assertion_edit(
+                candidate=candidate,
+                content=self.view_assertion_content_editor.toPlainText().strip(),
+                refresh=False,
+            )
+        return answer == QMessageBox.StandardButton.Discard
 
     def _render_view_assertion_review_candidate(self, _index: int = -1) -> None:
         candidate = self._current_view_assertion_review_candidate()
@@ -582,6 +635,7 @@ class MemoryWindow(QMainWindow):
             )
         )
         self.view_assertion_content_editor.setPlainText(candidate.content)
+        self._view_assertion_review_selected_id = candidate.id
         self.view_assertion_review_status_label.setText(
             "可选编辑候选内容并单独保存；批准或拒绝仍是独立操作。"
         )
@@ -602,20 +656,30 @@ class MemoryWindow(QMainWindow):
         self.view_assertion_save_edit_button.setEnabled(enabled)
         self.view_assertion_content_editor.setReadOnly(not enabled)
 
-    def _save_view_assertion_edit(self) -> None:
+    def _save_view_assertion_edit(
+        self,
+        *,
+        candidate: ViewAssertion | None = None,
+        content: str | None = None,
+        refresh: bool = True,
+    ) -> bool:
         service = self._view_assertion_review_service
-        candidate = self._current_view_assertion_review_candidate()
-        content = self.view_assertion_content_editor.toPlainText().strip()
+        candidate = candidate or self._current_view_assertion_review_candidate()
+        content = (
+            content
+            if content is not None
+            else self.view_assertion_content_editor.toPlainText()
+        ).strip()
         if service is None or candidate is None or not content:
             self.view_assertion_review_status_label.setText("请输入候选内容后再保存。")
-            return
+            return False
         answer = QMessageBox.question(
             self, "确认保存候选修订", "仅更新当前候选内容，是否继续？"
         )
         if answer != QMessageBox.StandardButton.Yes:
-            return
+            return False
         try:
-            service.edit_model_candidate_content(
+            saved_candidate = service.edit_model_candidate_content(
                 candidate.id,
                 content,
                 expected_updated_at=candidate.updated_at,
@@ -623,9 +687,18 @@ class MemoryWindow(QMainWindow):
             )
         except (PermissionError, ValueError, ViewAssertionReviewError) as error:
             self.view_assertion_review_status_label.setText(f"候选内容保存失败：{error}")
-            return
+            return False
+        if not refresh:
+            self._view_assertion_review_candidates[candidate.id] = replace(
+                saved_candidate, content=content
+            )
+            return True
+        self._view_assertion_review_candidates[candidate.id] = saved_candidate
+        self._view_assertion_review_refresh_candidate = saved_candidate
+        self._view_assertion_review_refreshing = True
         self._bind_view_assertion_review_operation(tuple(self._view_assertion_subject_names.items()))
         self.view_assertion_review_changed.emit()
+        return True
 
     def _review_view_assertion_candidate(self, decision: ReviewStatus) -> None:
         service = self._view_assertion_review_service
@@ -633,6 +706,8 @@ class MemoryWindow(QMainWindow):
         if service is None or candidate is None:
             self.view_assertion_review_status_label.setText("没有可审查的 View Assertion 候选。")
             self._set_view_assertion_review_enabled(False)
+            return
+        if not self._protect_unsaved_view_assertion_edit():
             return
         action = "批准" if decision == ReviewStatus.APPROVED else "拒绝"
         answer = QMessageBox.question(
