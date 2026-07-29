@@ -24,7 +24,7 @@ from ai_novel_studio.core.context.history_retriever import HistoryRetriever
 from ai_novel_studio.core.context.style_retriever import StyleRetriever
 from ai_novel_studio.core.memory.narrative_clue_ledger import NarrativeClueLedger
 from ai_novel_studio.domain.context_pin import ChapterContextPin
-from ai_novel_studio.domain.memory import Character, SummaryNode
+from ai_novel_studio.domain.memory import Character, MemoryStatus, SummaryNode
 from ai_novel_studio.infrastructure.storage.chapter_context_pin_repository import (
     ChapterContextPinRepository,
 )
@@ -390,6 +390,9 @@ class GenerationMemoryContextProvider:
                 hit.source_revision,
                 hit.source_hash,
                 f"与当前章要求相关的记忆检索证据：{hit.title}",
+                eligibility=ContextEligibility(
+                    stale=hit.status == MemoryStatus.STALE,
+                ),
             )
             for index, hit in enumerate(hits)
         )

@@ -62,7 +62,145 @@ from ai_novel_studio.infrastructure.storage.narrative_memory_repository import (
     NarrativeMemoryRepository,
 )
 from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
+from ai_novel_studio.infrastructure.storage.search_repository import SearchRepository
 from ai_novel_studio.infrastructure.storage.summary_repository import SummaryRepository
+
+
+def _project_with_stale_and_current_history(
+    tmp_path: Path,
+) -> tuple[ProjectRepository, ChapterRepository, str, str, str]:
+    project = ProjectRepository.create(tmp_path / "novel", "Novel")
+    volume = project.list_volumes()[0]
+    chapters = ChapterRepository(project)
+    stale_source = chapters.create_chapter(
+        volume.id,
+        "Old Archive",
+        "1",
+        "forgotten vault clue STALE_HISTORY_MARKER",
+    )
+    current_source = chapters.create_chapter(
+        volume.id,
+        "Current Archive",
+        "2",
+        "forgotten vault clue CURRENT_HISTORY_MARKER",
+    )
+    target = chapters.create_chapter(volume.id, "Target", "3")
+    search = SearchRepository(project)
+    search.index_chapter(
+        stale_source.id,
+        "STALE_HISTORY_MARKER",
+        "forgotten vault clue STALE_HISTORY_MARKER",
+    )
+    search.index_chapter(
+        current_source.id,
+        "CURRENT_HISTORY_MARKER",
+        "forgotten vault clue CURRENT_HISTORY_MARKER",
+    )
+    chapters.save_content(
+        stale_source.id,
+        "The old archive was rewritten without the retired evidence.",
+        source="manual",
+        reason="story rewrite",
+    )
+    return project, chapters, stale_source.id, current_source.id, target.id
+
+
+def test_history_blocks_map_only_authoritative_stale_status(
+    tmp_path: Path,
+) -> None:
+    project, _chapters, stale_source_id, current_source_id, target_id = (
+        _project_with_stale_and_current_history(tmp_path)
+    )
+
+    blocks = GenerationMemoryContextProvider(project).blocks(
+        target_id,
+        "forgotten vault clue",
+        (),
+    )
+    stale = next(
+        block
+        for block in blocks
+        if block.source_type == "HISTORY_CHAPTER"
+        and block.source_id == stale_source_id
+    )
+    current = next(
+        block
+        for block in blocks
+        if block.source_type == "HISTORY_CHAPTER"
+        and block.source_id == current_source_id
+    )
+
+    assert current.eligibility.stale is False
+    assert stale.eligibility.stale is True
+
+
+def test_stale_history_is_manifested_but_never_reaches_writer_prompt(
+    tmp_path: Path,
+) -> None:
+    project, chapters, stale_source_id, current_source_id, target_id = (
+        _project_with_stale_and_current_history(tmp_path)
+    )
+    requirements = ChapterRequirementRepository(project)
+    initial = requirements.get_or_create(target_id)
+    requirements.update(
+        target_id,
+        "Continue from the forgotten vault clue.",
+        is_locked=True,
+        expected_revision=initial.revision,
+    )
+    service = GenerationContextService(
+        project,
+        chapters,
+        requirements,
+        ChapterBriefRepository(project),
+        GenerationRepository(project),
+        ContextManifestRepository(project),
+    )
+
+    prepared = service.prepare(
+        GenerationPreparationRequest(
+            chapter_id=target_id,
+            mode=CreationMode.BASIC,
+            brief_id=None,
+            output_token_limit=2_000,
+            model_capabilities=ModelCapabilities(
+                context_window=32_000,
+                max_output_tokens=4_000,
+            ),
+            target_words=1_000,
+            model_provider_id="provider",
+            model_id="writer",
+        )
+    )
+
+    assert any(
+        item.source_type == "HISTORY_CHAPTER"
+        and item.source_id == current_source_id
+        for item in prepared.manifest.selected
+    )
+    stale_omission = next(
+        (
+            item
+            for item in prepared.manifest.omitted
+            if item.source_type == "HISTORY_CHAPTER"
+            and item.source_id == stale_source_id
+        ),
+        None,
+    )
+    writer_prompt = "\n".join(message.content for message in prepared.messages)
+    stale_selected = any(
+        item.source_type == "HISTORY_CHAPTER"
+        and item.source_id == stale_source_id
+        for item in prepared.manifest.selected
+    )
+
+    assert stale_omission is not None, (
+        f"stale_selected={stale_selected}, "
+        f"stale_in_writer_prompt={'STALE_HISTORY_MARKER' in writer_prompt}"
+    )
+    assert stale_omission.reason == "HARD_FILTER:STALE"
+    assert "STALE_HISTORY_MARKER" not in writer_prompt
+    assert "CURRENT_HISTORY_MARKER" in writer_prompt
 
 
 def test_plot_and_prose_share_the_same_time_bounded_character_card_context(
