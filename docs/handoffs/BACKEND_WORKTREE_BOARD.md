@@ -8,7 +8,7 @@
 - Superpowers: disabled for this project workflow.
 - Initial business-code baseline: `e35b50d` (the backend code state before the governance-only dispatch commit).
 - Wave 1 dispatched baseline: `3382dd36c2a4aeb4acdab411e9211885b633e678`.
-- Latest integrated business commit: `812a737` (M1 versioned Context Manifest envelope and backward-compatible JSON reader, including prior A1-A4, B1-B3, and C1-C4 increments).
+- Latest integrated business commit: `8f3e851` (C5 single-current-chapter View Assertion extraction with atomic source validation, including prior A1-A4, B1-B3, C1-C4, M1, and E1a increments).
 - Planning sources:
   - `docs/handoffs/2026-07-22-backend-refactor-handoff.md`
   - `C:\Users\钟子诚\Downloads\AI_Novel_Studio_后端改进方案_Subject_View_Time_Context_Compiler_修订版.md`
@@ -27,7 +27,7 @@
 
 All Wave 1 tasks were dispatched from `3382dd36c2a4aeb4acdab411e9211885b633e678`; their initial business-code baseline remains `e35b50d`.
 
-- Active implementations authorized by the user: E1a stale-history hard filter and C5 manual single-current-chapter View Assertion model extraction.
+- Active implementations authorized by the user: none.
 - Integrated increments:
   - `embedding-production` increment A1 (provider and gateway embedding contract), merged as `fdbfb088278c18a0efb3e062cd5f9e8a6ddd01f4`.
   - `embedding-production` increment A2 (Gateway-backed document/query embedding provider plus fail-open semantic recall), merged as `03b2263043262cdf371f1929a1255162decabfac`.
@@ -41,15 +41,17 @@ All Wave 1 tasks were dispatched from `3382dd36c2a4aeb4acdab411e9211885b633e678`
   - `view-operations-ui` increment C3 (confirmed single-record pending model-candidate content editing with optimistic concurrency), merged as `4d2465f00173a6ffb758f7e4e5a3c493fa33e5a1`.
   - `view-operations-ui` increment C4 (unsaved pending-candidate edit guard), merged as `912ee211470a6b96c8a00b0145acb4883fb5373c`.
   - `manifest-eligibility-v2` increment M1 (versioned Context Manifest JSON envelope and compatible reader), merged as `812a737`.
+  - `manifest-eligibility-v2` increment E1a (hard-filter authoritative stale history before Writer context), merged as `5233ccd`.
+  - `view-operations-ui` increment C5 (confirmed single-current-chapter model extraction into atomically source-validated review candidates), merged as `8f3e851`.
 - Active schema owner: none.
 
 | Task | Model / reasoning | Thread | Worktree | Assigned branch | HEAD state | Status |
 | --- | --- | --- | --- | --- | --- | --- |
-| `manifest-eligibility-v2` | `gpt-5.6-sol` / `high` | `019f87e8-6d32-7141-b9b4-4f1142e4db4e` | `C:\Users\钟子诚\.codex\worktrees\93d7\AI-Novel-Studio` | `codex/manifest-eligibility-v2` | branch | E1a stale-history hard filter active from `f5f1224`; E1b remains separate and unauthorized |
+| `manifest-eligibility-v2` | `gpt-5.6-sol` / `high` | `019f87e8-6d32-7141-b9b4-4f1142e4db4e` | `C:\Users\钟子诚\.codex\worktrees\93d7\AI-Novel-Studio` | `codex/manifest-eligibility-v2` | branch | M1 and E1a merged to main at `812a737` and `5233ccd`; E1b remains separate and unauthorized |
 | `generation-profile-audit-policy` | `gpt-5.6-terra` / `medium` | `019f87e8-696e-7f11-bcfe-1552f51cabc3` | `C:\Users\钟子诚\.codex\worktrees\4df4\AI-Novel-Studio` | `codex/generation-profile-audit-policy` | branch | increment B3 merged to main at `ba13a2e`; B4 not authorized |
-| `view-operations-ui` | `gpt-5.6-terra` / `medium` | `019f87e8-7a77-7902-b3d1-a38f32240136` | `C:\Users\钟子诚\.codex\worktrees\8802\AI-Novel-Studio` | `codex/view-operations-ui` | branch | C5 implementation active from `f5f1224`; C6 remains separate and unauthorized |
+| `view-operations-ui` | `gpt-5.6-sol` / `high` | `019f87e8-7a77-7902-b3d1-a38f32240136` | `C:\Users\钟子诚\.codex\worktrees\8802\AI-Novel-Studio` | `codex/view-operations-ui` | branch | C1-C5 merged to main; C5 is `8f3e851`; C6 remains separate and unauthorized |
 
-E1a and C5 are active implementation increments with non-overlapping file ownership. E1b, B4, C6, and every later increment still require a new user decision.
+E1a and C5 are integrated. E1b, B4, C6, and every later increment still require a new user decision.
 
 ## Later Waves and Dependencies
 
