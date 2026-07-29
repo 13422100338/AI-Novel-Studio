@@ -27,7 +27,7 @@
 
 All Wave 1 tasks were dispatched from `3382dd36c2a4aeb4acdab411e9211885b633e678`; their initial business-code baseline remains `e35b50d`.
 
-- Active implementations authorized by the user: C5 manual single-current-chapter View Assertion model extraction.
+- Active implementations authorized by the user: E1a stale-history hard filter and C5 manual single-current-chapter View Assertion model extraction.
 - Integrated increments:
   - `embedding-production` increment A1 (provider and gateway embedding contract), merged as `fdbfb088278c18a0efb3e062cd5f9e8a6ddd01f4`.
   - `embedding-production` increment A2 (Gateway-backed document/query embedding provider plus fail-open semantic recall), merged as `03b2263043262cdf371f1929a1255162decabfac`.
@@ -45,11 +45,11 @@ All Wave 1 tasks were dispatched from `3382dd36c2a4aeb4acdab411e9211885b633e678`
 
 | Task | Model / reasoning | Thread | Worktree | Assigned branch | HEAD state | Status |
 | --- | --- | --- | --- | --- | --- | --- |
-| `manifest-eligibility-v2` | `gpt-5.6-terra` / `medium` | `019f87e8-6d32-7141-b9b4-4f1142e4db4e` | `C:\Users\钟子诚\.codex\worktrees\93d7\AI-Novel-Studio` | `codex/manifest-eligibility-v2` | branch | M1 merged to main at `812a737`; E1 remains separate and unauthorized |
+| `manifest-eligibility-v2` | `gpt-5.6-sol` / `high` | `019f87e8-6d32-7141-b9b4-4f1142e4db4e` | `C:\Users\钟子诚\.codex\worktrees\93d7\AI-Novel-Studio` | `codex/manifest-eligibility-v2` | branch | E1a stale-history hard filter active from `f5f1224`; E1b remains separate and unauthorized |
 | `generation-profile-audit-policy` | `gpt-5.6-terra` / `medium` | `019f87e8-696e-7f11-bcfe-1552f51cabc3` | `C:\Users\钟子诚\.codex\worktrees\4df4\AI-Novel-Studio` | `codex/generation-profile-audit-policy` | branch | increment B3 merged to main at `ba13a2e`; B4 not authorized |
 | `view-operations-ui` | `gpt-5.6-terra` / `medium` | `019f87e8-7a77-7902-b3d1-a38f32240136` | `C:\Users\钟子诚\.codex\worktrees\8802\AI-Novel-Studio` | `codex/view-operations-ui` | branch | C5 implementation active from `f5f1224`; C6 remains separate and unauthorized |
 
-C5 is the only active implementation increment. E1, B4, C6, and every later increment still require a new user decision.
+E1a and C5 are active implementation increments with non-overlapping file ownership. E1b, B4, C6, and every later increment still require a new user decision.
 
 ## Later Waves and Dependencies
 
