@@ -201,6 +201,7 @@ def test_style_retriever_compiles_layers_and_keeps_human_samples_immutable(
     assert audited.rules == compiled.rules
     assert audited.samples == compiled.samples
     assert audited.ineligible_rules == (candidate_rule,)
+    assert audited.ineligible_samples == ()
     with pytest.raises(ProtectedMemoryError, match="不可修改"):
         repository.update_sample(sample.id, "被模型改写", SourceType.MODEL)
     with pytest.raises(ValueError, match="次数"):
@@ -213,6 +214,121 @@ def test_style_retriever_compiles_layers_and_keeps_human_samples_immutable(
             ReviewStatus.APPROVED,
             limit_per_chapter=-1,
         )
+
+
+def test_style_retriever_audits_metadata_only_ineligible_samples_on_opt_in(
+    tmp_path: Path,
+) -> None:
+    project, chapters = _project_with_chapters(tmp_path)
+    repository = StyleRepository(project)
+    approved = repository.add_sample(
+        StyleScope.BOOK,
+        project.project.id,
+        "已批准样章",
+        "APPROVED_SAMPLE_BODY",
+        SourceType.HUMAN,
+        Authority.USER_CONFIRMED,
+        ReviewStatus.APPROVED,
+        immutable=False,
+    )
+    review = repository.add_sample(
+        StyleScope.BOOK,
+        project.project.id,
+        "待审样章",
+        "REVIEW_SAMPLE_SECRET_BODY",
+        SourceType.MODEL,
+        Authority.MODEL_EXTRACTED,
+        ReviewStatus.REVIEW,
+        immutable=False,
+    )
+    rejected = repository.add_sample(
+        StyleScope.CHAPTER,
+        chapters[1].id,
+        "已拒绝样章",
+        "REJECTED_SAMPLE_SECRET_BODY",
+        SourceType.MODEL,
+        Authority.MODEL_EXTRACTED,
+        ReviewStatus.REJECTED,
+        immutable=False,
+    )
+    retriever = StyleRetriever(repository)
+
+    default = retriever.for_task(project.project.id, None, (), chapters[1].id)
+    audited = retriever.for_task(
+        project.project.id,
+        None,
+        (),
+        chapters[1].id,
+        include_ineligible_samples=True,
+    )
+
+    assert default.samples == (approved,)
+    assert default.ineligible_samples == ()
+    assert audited.samples == default.samples
+    assert tuple(item.id for item in audited.ineligible_samples) == (
+        review.id,
+        rejected.id,
+    )
+    assert tuple(item.review_status for item in audited.ineligible_samples) == (
+        ReviewStatus.REVIEW,
+        ReviewStatus.REJECTED,
+    )
+    assert tuple(item.content_hash for item in audited.ineligible_samples) == (
+        review.content_hash,
+        rejected.content_hash,
+    )
+    assert all(not hasattr(item, "content") for item in audited.ineligible_samples)
+
+
+def test_style_retriever_bounds_ineligible_samples_across_scopes(
+    tmp_path: Path,
+) -> None:
+    project, chapters = _project_with_chapters(tmp_path)
+    repository = StyleRepository(project)
+    book_samples = [
+        repository.add_sample(
+            StyleScope.BOOK,
+            project.project.id,
+            f"候选-{index:03d}",
+            f"BOOK_REVIEW_SAMPLE_BODY_{index:03d}",
+            SourceType.MODEL,
+            Authority.MODEL_EXTRACTED,
+            ReviewStatus.REVIEW,
+            immutable=False,
+        )
+        for index in range(12)
+    ]
+    chapter_samples = [
+        repository.add_sample(
+            StyleScope.CHAPTER,
+            chapters[1].id,
+            f"候选-{index:03d}",
+            f"CHAPTER_REJECTED_SAMPLE_BODY_{index:03d}",
+            SourceType.MODEL,
+            Authority.MODEL_EXTRACTED,
+            ReviewStatus.REJECTED,
+            immutable=False,
+        )
+        for index in range(12)
+    ]
+
+    compiled = StyleRetriever(repository).for_task(
+        project.project.id,
+        None,
+        (),
+        chapters[1].id,
+        include_ineligible_samples=True,
+    )
+
+    expected_ids = tuple(
+        sample.id
+        for sample in (
+            *sorted(book_samples, key=lambda item: item.id),
+            *sorted(chapter_samples, key=lambda item: item.id)[:8],
+        )
+    )
+    assert tuple(item.id for item in compiled.ineligible_samples) == expected_ids
+    assert len(compiled.ineligible_samples) == 20
 
 
 def test_style_retriever_bounds_ineligible_rules_across_scopes(

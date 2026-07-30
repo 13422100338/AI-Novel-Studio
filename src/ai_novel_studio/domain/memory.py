@@ -269,6 +269,17 @@ class StyleSample:
 
 
 @dataclass(frozen=True, slots=True)
+class StyleSampleReviewCandidate:
+    id: str
+    scope_type: StyleScope
+    scope_id: str
+    title: str
+    authority: Authority
+    review_status: ReviewStatus
+    content_hash: str
+
+
+@dataclass(frozen=True, slots=True)
 class MemoryDependency:
     id: str
     memory_type: str

@@ -2,10 +2,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from ai_novel_studio.domain.memory import StyleRule, StyleSample, StyleScope
+from ai_novel_studio.domain.memory import (
+    StyleRule,
+    StyleSample,
+    StyleSampleReviewCandidate,
+    StyleScope,
+)
 from ai_novel_studio.infrastructure.storage.style_repository import StyleRepository
 
 MAX_INELIGIBLE_STYLE_RULES = 100
+MAX_INELIGIBLE_STYLE_SAMPLES = 20
 
 
 @dataclass(frozen=True, slots=True)
@@ -13,6 +19,7 @@ class CompiledStyle:
     rules: tuple[StyleRule, ...]
     samples: tuple[StyleSample, ...]
     ineligible_rules: tuple[StyleRule, ...] = ()
+    ineligible_samples: tuple[StyleSampleReviewCandidate, ...] = ()
 
 
 class StyleRetriever:
@@ -27,6 +34,7 @@ class StyleRetriever:
         chapter_id: str,
         *,
         include_ineligible_rules: bool = False,
+        include_ineligible_samples: bool = False,
     ) -> CompiledStyle:
         scopes: list[tuple[StyleScope, str]] = [(StyleScope.BOOK, book_id)]
         if scene_scope:
@@ -36,6 +44,7 @@ class StyleRetriever:
         rules: list[StyleRule] = []
         samples: list[StyleSample] = []
         ineligible_rules: list[StyleRule] = []
+        ineligible_samples: list[StyleSampleReviewCandidate] = []
         for scope_type, scope_id in scopes:
             rules.extend(self.repository.rules(scope_type, scope_id))
             samples.extend(self.repository.samples(scope_type, scope_id))
@@ -48,8 +57,18 @@ class StyleRetriever:
                         limit=remaining,
                     )
                 )
+            remaining_samples = MAX_INELIGIBLE_STYLE_SAMPLES - len(ineligible_samples)
+            if include_ineligible_samples and remaining_samples > 0:
+                ineligible_samples.extend(
+                    self.repository.ineligible_samples(
+                        scope_type,
+                        scope_id,
+                        limit=remaining_samples,
+                    )
+                )
         return CompiledStyle(
             tuple(rules),
             tuple(samples),
             tuple(ineligible_rules),
+            tuple(ineligible_samples),
         )

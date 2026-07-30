@@ -303,6 +303,119 @@ def test_unapproved_style_rules_are_manifested_but_never_reach_writer_prompt(
     assert "REJECTED_STYLE_MARKER" not in writer_prompt
 
 
+def test_unapproved_style_samples_are_manifested_without_loading_candidate_bodies(
+    tmp_path: Path,
+) -> None:
+    project = ProjectRepository.create(tmp_path / "novel", "Novel")
+    volume = project.list_volumes()[0]
+    chapters = ChapterRepository(project)
+    target = chapters.create_chapter(volume.id, "Target", "1")
+    requirements = ChapterRequirementRepository(project)
+    initial = requirements.get_or_create(target.id)
+    requirements.update(
+        target.id,
+        "Continue the scene.",
+        is_locked=True,
+        expected_revision=initial.revision,
+    )
+    styles = StyleRepository(project)
+    approved = styles.add_sample(
+        StyleScope.BOOK,
+        project.project.id,
+        "approved",
+        "APPROVED_SAMPLE_MARKER",
+        SourceType.HUMAN,
+        Authority.USER_CONFIRMED,
+        ReviewStatus.APPROVED,
+        immutable=False,
+    )
+    review = styles.add_sample(
+        StyleScope.BOOK,
+        project.project.id,
+        "review",
+        "REVIEW_SAMPLE_SECRET_MARKER",
+        SourceType.MODEL,
+        Authority.MODEL_EXTRACTED,
+        ReviewStatus.REVIEW,
+        immutable=False,
+    )
+    rejected = styles.add_sample(
+        StyleScope.CHAPTER,
+        target.id,
+        "rejected",
+        "REJECTED_SAMPLE_SECRET_MARKER",
+        SourceType.MODEL,
+        Authority.MODEL_EXTRACTED,
+        ReviewStatus.REJECTED,
+        immutable=False,
+    )
+    service = GenerationContextService(
+        project,
+        chapters,
+        requirements,
+        ChapterBriefRepository(project),
+        GenerationRepository(project),
+        ContextManifestRepository(project),
+    )
+
+    style_blocks = tuple(
+        block
+        for block in service.memory_context.blocks(
+            target.id,
+            "Continue the scene.",
+            (),
+        )
+        if block.source_type == "STYLE_SAMPLE"
+    )
+
+    assert next(block for block in style_blocks if block.source_id == approved.id).content == (
+        "人工样章/approved：\nAPPROVED_SAMPLE_MARKER"
+    )
+    candidate_blocks = {
+        block.source_id: block
+        for block in style_blocks
+        if not block.eligibility.authority_allowed
+    }
+    assert set(candidate_blocks) == {review.id, rejected.id}
+    assert {
+        block.content for block in candidate_blocks.values()
+    } == {"未通过审查的文风样章候选"}
+    assert candidate_blocks[review.id].source_hash == review.content_hash
+    assert candidate_blocks[rejected.id].source_hash == rejected.content_hash
+    assert all(block.source_revision is None for block in candidate_blocks.values())
+
+    prepared = service.prepare(
+        GenerationPreparationRequest(
+            chapter_id=target.id,
+            mode=CreationMode.BASIC,
+            brief_id=None,
+            output_token_limit=2_000,
+            model_capabilities=ModelCapabilities(
+                context_window=32_000,
+                max_output_tokens=4_000,
+            ),
+            target_words=1_000,
+            model_provider_id="provider",
+            model_id="writer",
+        )
+    )
+
+    assert any(item.source_id == approved.id for item in prepared.manifest.selected)
+    omissions = {
+        item.source_id: item.reason
+        for item in prepared.manifest.omitted
+        if item.source_type == "STYLE_SAMPLE"
+    }
+    assert omissions == {
+        review.id: "HARD_FILTER:AUTHORITY_REJECTED",
+        rejected.id: "HARD_FILTER:AUTHORITY_REJECTED",
+    }
+    writer_prompt = "\n".join(message.content for message in prepared.messages)
+    assert "APPROVED_SAMPLE_MARKER" in writer_prompt
+    assert "REVIEW_SAMPLE_SECRET_MARKER" not in writer_prompt
+    assert "REJECTED_SAMPLE_SECRET_MARKER" not in writer_prompt
+
+
 def test_plot_and_prose_share_the_same_time_bounded_character_card_context(
     tmp_path: Path,
 ) -> None:

@@ -12,6 +12,7 @@ from ai_novel_studio.domain.memory import (
     SourceType,
     StyleRule,
     StyleSample,
+    StyleSampleReviewCandidate,
     StyleScope,
 )
 from ai_novel_studio.infrastructure.storage.narrative_memory_repository import (
@@ -226,6 +227,30 @@ class StyleRepository:
         samples = [self._sample(row) for row in rows]
         return tuple(sorted(samples, key=lambda item: (-item.authority.rank, item.id)))
 
+    def ineligible_samples(
+        self,
+        scope_type: StyleScope,
+        scope_id: str,
+        *,
+        limit: int,
+    ) -> tuple[StyleSampleReviewCandidate, ...]:
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
+            raise ValueError("文风样章候选数量必须为正整数")
+        with self.project.database.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT id, scope_type, scope_id, title, authority, review_status,
+                       content_hash
+                FROM style_samples
+                WHERE scope_type = ? AND scope_id = ?
+                  AND review_status IN ('REVIEW', 'REJECTED')
+                ORDER BY id
+                LIMIT ?
+                """,
+                (scope_type.value, scope_id, limit),
+            ).fetchall()
+        return tuple(self._sample_review_candidate(row) for row in rows)
+
     def list_all_samples(self) -> tuple[StyleSample, ...]:
         with self.project.database.connect() as connection:
             rows = connection.execute(
@@ -350,5 +375,17 @@ class StyleRepository:
             Authority(row["authority"]),
             ReviewStatus(row["review_status"]),
             bool(row["immutable"]),
+            row["content_hash"],
+        )
+
+    @staticmethod
+    def _sample_review_candidate(row: sqlite3.Row) -> StyleSampleReviewCandidate:
+        return StyleSampleReviewCandidate(
+            row["id"],
+            StyleScope(row["scope_type"]),
+            row["scope_id"],
+            row["title"],
+            Authority(row["authority"]),
+            ReviewStatus(row["review_status"]),
             row["content_hash"],
         )

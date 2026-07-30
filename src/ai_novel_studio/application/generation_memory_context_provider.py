@@ -328,6 +328,7 @@ class GenerationMemoryContextProvider:
             tuple(character.id for character in participants),
             chapter_id,
             include_ineligible_rules=True,
+            include_ineligible_samples=True,
         )
         blocks: list[ContextBlock] = []
         for index, rule in enumerate(compiled.rules):
@@ -379,6 +380,23 @@ class GenerationMemoryContextProvider:
                     0,
                     _hash(content),
                     f"未通过审查的文风规则候选：{rule.rule_type}",
+                    eligibility=ContextEligibility(authority_allowed=False),
+                )
+            )
+        for index, candidate in enumerate(compiled.ineligible_samples):
+            blocks.append(
+                ContextBlock(
+                    f"style-sample-{candidate.id}",
+                    "MEMORY",
+                    "未通过审查的文风样章候选",
+                    24 + len(compiled.samples) + index,
+                    False,
+                    "STYLE_SAMPLE",
+                    candidate.id,
+                    None,
+                    None,
+                    candidate.content_hash,
+                    "未通过审查的文风样章候选",
                     eligibility=ContextEligibility(authority_allowed=False),
                 )
             )
