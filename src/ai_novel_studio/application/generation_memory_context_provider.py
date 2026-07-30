@@ -33,6 +33,7 @@ from ai_novel_studio.infrastructure.storage.character_memory_repository import (
     CharacterMemoryRepository,
 )
 from ai_novel_studio.infrastructure.storage.narrative_memory_repository import (
+    MAX_INELIGIBLE_CANON_CANDIDATES,
     NarrativeMemoryRepository,
 )
 from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
@@ -215,7 +216,8 @@ class GenerationMemoryContextProvider:
 
     def _canon_blocks(self, chapter_id: str) -> tuple[ContextBlock, ...]:
         blocks: list[ContextBlock] = []
-        for index, card in enumerate(self.canon_cards.cards_before(chapter_id)):
+        cards = self.canon_cards.cards_before(chapter_id)
+        for index, card in enumerate(cards):
             facts_content = _canon_facts_content(card)
             if facts_content:
                 blocks.append(
@@ -255,6 +257,28 @@ class GenerationMemoryContextProvider:
                         eligibility=ContextEligibility(conflicted=True),
                     )
                 )
+        for index, candidate in enumerate(
+            self.narrative.list_ineligible_canon_before(
+                chapter_id,
+                limit=MAX_INELIGIBLE_CANON_CANDIDATES,
+            )
+        ):
+            blocks.append(
+                ContextBlock(
+                    f"canon-review-{candidate.id}",
+                    "MEMORY",
+                    "未通过审查的正典候选",
+                    14 + len(cards) + index,
+                    False,
+                    "CANON",
+                    candidate.id,
+                    candidate.source_chapter_id,
+                    None,
+                    candidate.source_hash,
+                    "未通过审查的正典候选",
+                    eligibility=ContextEligibility(authority_allowed=False),
+                )
+            )
         return tuple(blocks)
 
     def _reader_summary_blocks(self, chapter_id: str) -> tuple[ContextBlock, ...]:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -19,6 +20,8 @@ from ai_novel_studio.domain.memory import (
 )
 from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
 
+MAX_INELIGIBLE_CANON_CANDIDATES = 100
+
 
 def _now() -> datetime:
     return datetime.now(UTC)
@@ -36,6 +39,15 @@ class ProtectedMemoryError(PermissionError):
 class ClueTimeline:
     clue: NarrativeClue
     events: tuple[NarrativeClueEvent, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class CanonReviewCandidate:
+    id: str
+    source_chapter_id: str | None
+    status: MemoryStatus
+    review_status: ReviewStatus
+    source_hash: str
 
 
 class NarrativeMemoryRepository:
@@ -156,6 +168,77 @@ class NarrativeMemoryRepository:
                 (chapter_id,),
             ).fetchall()
         return tuple(self._canon(row) for row in rows)
+
+    def list_ineligible_canon_before(
+        self,
+        chapter_id: str,
+        *,
+        limit: int,
+    ) -> tuple[CanonReviewCandidate, ...]:
+        if (
+            isinstance(limit, bool)
+            or not isinstance(limit, int)
+            or limit <= 0
+            or limit > MAX_INELIGIBLE_CANON_CANDIDATES
+        ):
+            raise ValueError(
+                "正典候选数量必须是 "
+                f"1 到 {MAX_INELIGIBLE_CANON_CANDIDATES} 之间的整数"
+            )
+        with self.project.database.connect() as connection:
+            target = connection.execute(
+                "SELECT 1 FROM chapters WHERE id = ? AND is_deleted = 0",
+                (chapter_id,),
+            ).fetchone()
+            if target is None:
+                raise KeyError(f"unknown chapter: {chapter_id}")
+            rows = connection.execute(
+                """
+                WITH target AS (
+                    SELECT v.sort_index AS volume_order, c.sort_index AS chapter_order
+                    FROM chapters c JOIN volumes v ON v.id = c.volume_id
+                    WHERE c.id = ? AND c.is_deleted = 0
+                )
+                SELECT e.id, e.title, e.detail, e.source_chapter_id,
+                       e.status, e.review_status
+                FROM canon_entries e
+                LEFT JOIN chapters c ON c.id = e.source_chapter_id
+                LEFT JOIN volumes v ON v.id = c.volume_id
+                CROSS JOIN target t
+                WHERE e.status = 'CURRENT'
+                  AND e.review_status = 'REVIEW'
+                  AND (
+                    e.source_chapter_id IS NULL OR
+                    (
+                      c.is_deleted = 0 AND
+                      (
+                        v.sort_index < t.volume_order OR
+                        (v.sort_index = t.volume_order AND c.sort_index < t.chapter_order)
+                      )
+                    )
+                  )
+                ORDER BY
+                  CASE WHEN e.source_chapter_id IS NULL THEN 0 ELSE 1 END,
+                  COALESCE(v.sort_index, -1),
+                  COALESCE(c.sort_index, -1),
+                  e.created_at,
+                  e.id
+                LIMIT ?
+                """,
+                (chapter_id, limit),
+            ).fetchall()
+        return tuple(
+            CanonReviewCandidate(
+                id=str(row["id"]),
+                source_chapter_id=row["source_chapter_id"],
+                status=MemoryStatus(row["status"]),
+                review_status=ReviewStatus(row["review_status"]),
+                source_hash=hashlib.sha256(
+                    f"{row['title']}\0{row['detail']}".encode()
+                ).hexdigest(),
+            )
+            for row in rows
+        )
 
     def add_clue(
         self,

@@ -1,3 +1,4 @@
+import hashlib
 from pathlib import Path
 
 import pytest
@@ -9,6 +10,7 @@ from ai_novel_studio.domain.memory import (
     Authority,
     ClueAction,
     ClueType,
+    MemoryStatus,
     ReviewStatus,
     SourceType,
     StyleScope,
@@ -69,6 +71,127 @@ def test_canon_ledger_prefers_authority_and_reports_equal_authority_conflict(
     conflict = CanonLedger(repository).resolve("钟楼状态", chapters[1].id)
     assert conflict.entry is None
     assert len(conflict.conflicts) == 2
+
+
+def test_canon_review_candidates_are_current_time_bounded_and_body_free(
+    tmp_path: Path,
+) -> None:
+    project, chapters = _project_with_chapters(tmp_path)
+    repository = NarrativeMemoryRepository(project)
+    global_review = repository.add_canon(
+        "全局待审",
+        "GLOBAL_REVIEW_CANON_SECRET",
+        None,
+        confidence=0.8,
+        authority=Authority.MODEL_EXTRACTED,
+        review_status=ReviewStatus.REVIEW,
+    )
+    prior_review = repository.add_canon(
+        "前章待审",
+        "PRIOR_REVIEW_CANON_SECRET",
+        chapters[0].id,
+        confidence=0.8,
+        authority=Authority.MODEL_EXTRACTED,
+        review_status=ReviewStatus.REVIEW,
+    )
+    repository.add_canon(
+        "前章已批准",
+        "APPROVED_CANON_DETAIL",
+        chapters[0].id,
+        confidence=1,
+        authority=Authority.USER_CONFIRMED,
+        review_status=ReviewStatus.APPROVED,
+    )
+    repository.add_canon(
+        "前章已拒绝",
+        "REJECTED_CANON_DETAIL",
+        chapters[0].id,
+        confidence=0.2,
+        authority=Authority.MODEL_EXTRACTED,
+        review_status=ReviewStatus.REJECTED,
+    )
+    stale_review = repository.add_canon(
+        "失效待审",
+        "STALE_REVIEW_CANON_DETAIL",
+        chapters[0].id,
+        confidence=0.5,
+        authority=Authority.MODEL_EXTRACTED,
+        review_status=ReviewStatus.REVIEW,
+    )
+    repository.add_canon(
+        "当前章待审",
+        "CURRENT_CHAPTER_REVIEW_CANON_DETAIL",
+        chapters[1].id,
+        confidence=0.5,
+        authority=Authority.MODEL_EXTRACTED,
+        review_status=ReviewStatus.REVIEW,
+    )
+    repository.add_canon(
+        "未来章待审",
+        "FUTURE_REVIEW_CANON_DETAIL",
+        chapters[2].id,
+        confidence=0.5,
+        authority=Authority.MODEL_EXTRACTED,
+        review_status=ReviewStatus.REVIEW,
+    )
+    with project.database.connect() as connection, connection:
+        connection.execute(
+            "UPDATE canon_entries SET status = 'STALE' WHERE id = ?",
+            (stale_review.id,),
+        )
+
+    candidates = repository.list_ineligible_canon_before(chapters[1].id, limit=100)
+
+    assert tuple(item.id for item in candidates) == (
+        global_review.id,
+        prior_review.id,
+    )
+    assert tuple(item.status for item in candidates) == (
+        MemoryStatus.CURRENT,
+        MemoryStatus.CURRENT,
+    )
+    assert tuple(item.review_status for item in candidates) == (
+        ReviewStatus.REVIEW,
+        ReviewStatus.REVIEW,
+    )
+    assert tuple(item.source_hash for item in candidates) == (
+        hashlib.sha256(
+            "全局待审\0GLOBAL_REVIEW_CANON_SECRET".encode()
+        ).hexdigest(),
+        hashlib.sha256(
+            "前章待审\0PRIOR_REVIEW_CANON_SECRET".encode()
+        ).hexdigest(),
+    )
+    assert all(not hasattr(item, "title") for item in candidates)
+    assert all(not hasattr(item, "detail") for item in candidates)
+    with pytest.raises(ValueError, match="候选数量"):
+        repository.list_ineligible_canon_before(chapters[1].id, limit=True)
+    with pytest.raises(ValueError, match="候选数量"):
+        repository.list_ineligible_canon_before(chapters[1].id, limit=101)
+
+
+def test_canon_review_candidates_have_a_deterministic_global_cap(
+    tmp_path: Path,
+) -> None:
+    project, chapters = _project_with_chapters(tmp_path)
+    repository = NarrativeMemoryRepository(project)
+    created = [
+        repository.add_canon(
+            f"候选-{index:03d}",
+            f"REVIEW_CANON_DETAIL_{index:03d}",
+            chapters[0].id,
+            confidence=0.8,
+            authority=Authority.MODEL_EXTRACTED,
+            review_status=ReviewStatus.REVIEW,
+        )
+        for index in range(101)
+    ]
+
+    candidates = repository.list_ineligible_canon_before(chapters[1].id, limit=100)
+
+    expected = sorted(created, key=lambda item: (item.created_at, item.id))[:100]
+    assert tuple(item.id for item in candidates) == tuple(item.id for item in expected)
+    assert len(candidates) == 100
 
 
 def test_typed_clue_history_is_time_bounded_and_locked_misdirection_is_protected(

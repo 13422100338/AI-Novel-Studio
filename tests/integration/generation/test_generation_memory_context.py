@@ -1,3 +1,4 @@
+import hashlib
 from pathlib import Path
 
 from ai_novel_studio.application.canon_card_context_service import (
@@ -666,10 +667,18 @@ def test_plot_and_prose_share_four_time_bounded_canon_cards(tmp_path: Path) -> N
             authority=Authority.USER_CONFIRMED,
             review_status=ReviewStatus.APPROVED,
         )
-    canon.add_canon(
+    review = canon.add_canon(
         "待确认规则",
         "这条待审查内容不能进入正典卡。",
         first.id,
+        confidence=0.5,
+        authority=Authority.MODEL_EXTRACTED,
+        review_status=ReviewStatus.REVIEW,
+    )
+    current_review = canon.add_canon(
+        "当前章待审规则",
+        "CURRENT_CHAPTER_REVIEW_CANON_SECRET",
+        current.id,
         confidence=0.5,
         authority=Authority.MODEL_EXTRACTED,
         review_status=ReviewStatus.REVIEW,
@@ -706,6 +715,43 @@ def test_plot_and_prose_share_four_time_bounded_canon_cards(tmp_path: Path) -> N
     assert [
         block.content for block in prose_blocks if block.source_type == "CANON_CARD"
     ] == [card.content for card in cards]
+    candidate = next(
+        block
+        for block in prose_blocks
+        if block.source_type == "CANON" and block.source_id == review.id
+    )
+    assert candidate.content == "未通过审查的正典候选"
+    assert candidate.rationale == "未通过审查的正典候选"
+    assert candidate.source_chapter_id == first.id
+    assert candidate.source_revision is None
+    assert candidate.source_hash == hashlib.sha256(
+        "待确认规则\0这条待审查内容不能进入正典卡。".encode()
+    ).hexdigest()
+    assert candidate.eligibility.authority_allowed is False
+    assert review.title not in candidate.content
+    assert review.detail not in candidate.content
+    assert all(block.source_id != current_review.id for block in prose_blocks)
+    built = ContextBuilder().build(
+        ContextBuildRequest(
+            chapter_id=current.id,
+            run_id="canon-review-filter",
+            budget=TokenBudget(20_000, 2_000, 0),
+            blocks=prose_blocks,
+            deduplicate=True,
+        )
+    )
+    omission = next(
+        item
+        for item in built.manifest.omitted
+        if item.source_type == "CANON" and item.source_id == review.id
+    )
+    assert omission.reason == "HARD_FILTER:AUTHORITY_REJECTED"
+    assert omission.source_revision is None
+    assert not hasattr(omission, "title")
+    assert not hasattr(omission, "detail")
+    assert review.title not in built.text
+    assert review.detail not in built.text
+    assert current_review.detail not in built.text
     combined = "\n".join(card.content for card in cards)
     assert "北境终年积雪" in combined
     assert "温德米尔家族继承人" in combined
