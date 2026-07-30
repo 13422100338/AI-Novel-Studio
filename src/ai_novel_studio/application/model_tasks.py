@@ -278,11 +278,16 @@ class ModelTaskService:
             if not isinstance(item, dict):
                 raise ContractValidationError("findings 中的项目必须是对象")
             finding = cast(dict[str, object], item)
+            evidence = self._text(finding, "evidence")
+            if evidence not in manuscript:
+                raise ContractValidationError(
+                    "字段 evidence 必须是待审正文中的精确片段"
+                )
             findings.append(
                 StyleAuditFinding(
                     category=self._audit_category(finding),
                     issue=self._text(finding, "issue"),
-                    evidence=self._text(finding, "evidence"),
+                    evidence=evidence,
                     severity=self._audit_severity(finding),
                 )
             )

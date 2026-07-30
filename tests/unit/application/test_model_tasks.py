@@ -1,5 +1,7 @@
 from collections.abc import Iterator
 
+import pytest
+
 from ai_novel_studio.application.model_tasks import (
     ChatSummaryResult,
     ModelTaskService,
@@ -14,6 +16,7 @@ from ai_novel_studio.infrastructure.llm import (
     StreamEventKind,
     TaskPurpose,
 )
+from ai_novel_studio.infrastructure.llm.contract_runner import ContractValidationError
 
 
 class FakeGateway:
@@ -181,37 +184,39 @@ def test_brief_normalization_retries_unrecognized_payload_with_exact_schema() ->
 def test_style_audit_returns_findings_without_modifying_manuscript() -> None:
     gateway = FakeGateway(
         [
-            """{"summary":"人物声音略显一致","findings":[
-            {"category":"声音","issue":"区分不足","evidence":"两人用词相同","severity":"中"}
+            """{"summary":"voice overlap","findings":[
+            {"category":"STYLE","issue":"not distinct",
+            "evidence":"  same phrase  ","severity":"WARNING"}
             ]}"""
         ]
     )
     service = ModelTaskService(gateway)  # type: ignore[arg-type]
 
-    result = service.audit_style("原始正文", ("避免解释情绪",), 4000)
+    manuscript = "Both speakers repeat the same phrase in the hallway."
+    result = service.audit_style(manuscript, ("keep voices distinct",), 4000)
 
     assert isinstance(result, StyleAuditResult)
-    assert result.summary == "人物声音略显一致"
+    assert result.summary == "voice overlap"
     assert result.findings[0].category == "STYLE"
     assert result.findings[0].severity == "WARNING"
-    assert result.findings[0].evidence == "两人用词相同"
+    assert result.findings[0].evidence == "same phrase"
     assert gateway.calls[0][0] == TaskPurpose.STYLE_AUDIT
 
 
 def test_style_audit_accepts_nested_aliases_and_missing_summary() -> None:
     gateway = FakeGateway(
         [
-            '{"findings":[{"category":"STYLE","problem":"声音区分不足",'
-            '"quote":"两人用词相同","level":"WARNING"}]}'
+            '{"findings":[{"category":"STYLE","problem":"voice overlap",'
+            '"quote":"same phrase","level":"WARNING"}]}'
         ]
     )
     service = ModelTaskService(gateway)  # type: ignore[arg-type]
 
-    result = service.audit_style("原始正文", (), 4000)
+    result = service.audit_style("Both speakers repeat the same phrase.", (), 4000)
 
     assert result.summary == ""
     assert result.findings == (
-        StyleAuditFinding("STYLE", "声音区分不足", "两人用词相同", "WARNING"),
+        StyleAuditFinding("STYLE", "voice overlap", "same phrase", "WARNING"),
     )
 
 
@@ -219,15 +224,32 @@ def test_style_audit_retries_when_nested_finding_is_incomplete() -> None:
     gateway = FakeGateway(
         [
             '{"summary":"发现问题","findings":[{"category":"STYLE"}]}',
-            '{"summary":"发现问题","findings":[{"category":"STYLE",'
-            '"issue":"声音区分不足","evidence":"两人用词相同",'
+            '{"summary":"issue found","findings":[{"category":"STYLE",'
+            '"issue":"voice overlap","evidence":"same phrase",'
             '"severity":"WARNING"}]}',
         ]
     )
     service = ModelTaskService(gateway)  # type: ignore[arg-type]
 
-    result = service.audit_style("原始正文", (), 4000)
+    result = service.audit_style("Both speakers repeat the same phrase.", (), 4000)
 
-    assert result.findings[0].issue == "声音区分不足"
+    assert result.findings[0].issue == "voice overlap"
     assert len(gateway.calls) == 2
     assert "findings[0]" in gateway.calls[1][1][-1].content
+
+
+def test_style_audit_rejects_entire_result_when_any_evidence_is_not_in_manuscript() -> None:
+    gateway = FakeGateway(
+        [
+            """{"findings":[
+            {"category":"STYLE","issue":"valid issue",
+            "evidence":"same phrase","severity":"WARNING"},
+            {"category":"STYLE","issue":"fabricated issue",
+            "evidence":"invented evidence","severity":"ERROR"}
+            ]}"""
+        ]
+    )
+    service = ModelTaskService(gateway)  # type: ignore[arg-type]
+
+    with pytest.raises(ContractValidationError, match="evidence"):
+        service.audit_style("Both speakers repeat the same phrase.", (), 4000)
