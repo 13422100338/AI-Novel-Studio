@@ -8,7 +8,7 @@
 - Superpowers: disabled for this project workflow.
 - Initial business-code baseline: `e35b50d` (the backend code state before the governance-only dispatch commit).
 - Wave 1 dispatched baseline: `3382dd36c2a4aeb4acdab411e9211885b633e678`.
-- Latest integrated business commit: `5e1062e` (E1b-SS1 metadata-only audit omissions for unapproved Style Samples, including prior A1-A4, B1-B5, C1-C6b, M1, E1a, and E1b-SR1 increments).
+- Latest integrated business commit: `a9ddfff` (C7 ephemeral per-chapter batch extraction outcome display, including prior A1-A4, B1-B5, C1-C6b, M1, E1a, E1b-SR1, and E1b-SS1 increments).
 - Planning sources:
   - `docs/handoffs/2026-07-22-backend-refactor-handoff.md`
   - `C:\Users\钟子诚\Downloads\AI_Novel_Studio_后端改进方案_Subject_View_Time_Context_Compiler_修订版.md`
@@ -27,7 +27,7 @@
 
 All Wave 1 tasks were dispatched from `3382dd36c2a4aeb4acdab411e9211885b633e678`; their initial business-code baseline remains `e35b50d`.
 
-- Active implementations authorized by the user: none.
+- Active implementations authorized by the user: E1b-CR1 Canon review-candidate omissions and B6 deterministic evidence provenance classification. Both stop after their current minimal tickets.
 - Integrated increments:
   - `embedding-production` increment A1 (provider and gateway embedding contract), merged as `fdbfb088278c18a0efb3e062cd5f9e8a6ddd01f4`.
   - `embedding-production` increment A2 (Gateway-backed document/query embedding provider plus fail-open semantic recall), merged as `03b2263043262cdf371f1929a1255162decabfac`.
@@ -49,15 +49,16 @@ All Wave 1 tasks were dispatched from `3382dd36c2a4aeb4acdab411e9211885b633e678`
   - `view-operations-ui` increment C6b (explicit multi-chapter selection, background coordination, progress, and cooperative cancellation UI), merged as `6f7d5b8`.
   - `generation-profile-audit-policy` increment B5 (exact evidence anchors for model-audit findings, fail-closed before persistence), merged as `f91a66a`.
   - `manifest-eligibility-v2` increment E1b-SS1 (metadata-only audit omissions for REVIEW/REJECTED Style Samples), merged as `5e1062e`.
+  - `view-operations-ui` increment C7 (ephemeral, safe per-chapter batch extraction outcomes), merged as `a9ddfff`.
 - Active schema owner: none.
 
 | Task | Model / reasoning | Thread | Worktree | Assigned branch | HEAD state | Status |
 | --- | --- | --- | --- | --- | --- | --- |
-| `manifest-eligibility-v2` | `gpt-5.6-sol` / `high` | `019f87e8-6d32-7141-b9b4-4f1142e4db4e` | `C:\Users\钟子诚\.codex\worktrees\93d7\AI-Novel-Studio` | `codex/manifest-eligibility-v2` | branch | M1, E1a, E1b-SR1, and E1b-SS1 merged at `812a737`, `5233ccd`, `453a709`, and `5e1062e`; later source tickets remain separate |
-| `generation-profile-audit-policy` | `gpt-5.6-terra` / `medium` | `019f87e8-696e-7f11-bcfe-1552f51cabc3` | `C:\Users\钟子诚\.codex\worktrees\4df4\AI-Novel-Studio` | `codex/generation-profile-audit-policy-b5` | branch | B1-B5 merged; B5 is `f91a66a`; later audit increments require a new user decision |
-| `view-operations-ui` | `gpt-5.6-sol` / `high` | `019f87e8-7a77-7902-b3d1-a38f32240136` | `C:\Users\钟子诚\.codex\worktrees\8802\AI-Novel-Studio` | `codex/view-operations-ui` | branch | C1-C6b merged; C6b is `6f7d5b8`; later workflow increments remain separate |
+| `manifest-eligibility-v2` | `gpt-5.6-sol` / `high` | `019f87e8-6d32-7141-b9b4-4f1142e4db4e` | `C:\Users\钟子诚\.codex\worktrees\93d7\AI-Novel-Studio` | `codex/manifest-eligibility-v2` | branch | M1, E1a, E1b-SR1, and E1b-SS1 merged at `812a737`, `5233ccd`, `453a709`, and `5e1062e`; E1b-CR1 is active and stops after this ticket |
+| `generation-profile-audit-policy` | `gpt-5.6-terra` / `medium` | `019f87e8-696e-7f11-bcfe-1552f51cabc3` | `C:\Users\钟子诚\.codex\worktrees\4df4\AI-Novel-Studio` | `codex/generation-profile-audit-policy-b5` | branch | B1-B5 merged; B5 is `f91a66a`; B6 is active and stops after this ticket |
+| `view-operations-ui` | `gpt-5.6-luna` / `medium` | `019f87e8-7a77-7902-b3d1-a38f32240136` | `C:\Users\钟子诚\.codex\worktrees\8802\AI-Novel-Studio` | `codex/view-operations-ui` | branch | C1-C7 merged; C7 is `a9ddfff`; lane paused pending explicit instruction |
 
-E1a, E1b-SR1, E1b-SS1, C6a, C6b, B4, and B5 are integrated. Every later increment still requires a new user decision.
+E1a, E1b-SR1, E1b-SS1, C6a, C6b, C7, B4, and B5 are integrated. E1b-CR1 and B6 stop after their current authorized tickets; every later increment still requires a new user decision.
 
 ## Later Waves and Dependencies
 
