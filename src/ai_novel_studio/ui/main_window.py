@@ -58,6 +58,9 @@ from ai_novel_studio.application.setting_document_service import (
     SettingImportReport,
 )
 from ai_novel_studio.application.style_workspace_service import StyleWorkspaceService
+from ai_novel_studio.application.view_assertion_batch_extraction_service import (
+    ViewAssertionBatchExtractionService,
+)
 from ai_novel_studio.application.view_assertion_extraction_service import (
     ViewAssertionExtractionService,
 )
@@ -1226,6 +1229,16 @@ class MainWindow(QMainWindow):
             if gateway is not None
             else None
         )
+        batch_extraction_service = (
+            ViewAssertionBatchExtractionService(project, extraction_service)
+            if extraction_service is not None
+            else None
+        )
+        batch_chapters = tuple(
+            (chapter.id, chapter.title)
+            for volume in self.project_runtime.workspace.volume_tree()
+            for chapter in volume.chapters
+        )
         self.memory_window.bind(
             MemoryWorkspaceService(ProjectMemoryWorkspaceGateway(project)),
             "__all__",
@@ -1244,6 +1257,8 @@ class MainWindow(QMainWindow):
             ),
             view_assertion_review_service=view_assertions,
             view_assertion_extraction_service=extraction_service,
+            view_assertion_batch_extraction_service=batch_extraction_service,
+            view_assertion_batch_chapters=batch_chapters,
         )
 
     def _character_identity_changed(self) -> None:

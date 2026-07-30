@@ -5,7 +5,7 @@ from dataclasses import replace
 from datetime import datetime
 from typing import Protocol
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QFormLayout,
@@ -13,6 +13,8 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMainWindow,
     QMessageBox,
     QPlainTextEdit,
@@ -34,6 +36,11 @@ from ai_novel_studio.application.memory_workspace_service import (
     MemoryWorkspaceService,
 )
 from ai_novel_studio.application.project_guidance_service import ProjectGuidanceService
+from ai_novel_studio.application.view_assertion_batch_extraction_service import (
+    ViewAssertionBatchChapterStatus,
+    ViewAssertionBatchExtractionReport,
+    ViewAssertionBatchProgress,
+)
 from ai_novel_studio.application.view_assertion_service import (
     LegacyReaderViewCandidate,
     ViewAssertionExtractionError,
@@ -48,6 +55,10 @@ from ai_novel_studio.ui.pages.character_identity_conflict_dialog import (
 )
 from ai_novel_studio.ui.qt.memory_promotion_coordinator import (
     MemoryPromotionCoordinator,
+)
+from ai_novel_studio.ui.qt.view_assertion_batch_extraction_coordinator import (
+    ViewAssertionBatchExtractionCoordinator,
+    ViewAssertionBatchExtractionPort,
 )
 
 CANON_GROUPS = (
@@ -124,6 +135,14 @@ class MemoryWindow(QMainWindow):
         self._view_assertion_review_service: ViewAssertionReviewService | None = None
         self._view_assertion_extraction_service: ViewAssertionExtractionService | None = None
         self._view_assertion_extraction_chapter_id: str | None = None
+        self._view_assertion_batch_extraction_service: (
+            ViewAssertionBatchExtractionPort | None
+        ) = None
+        self._view_assertion_batch_chapters: tuple[tuple[str, str], ...] = ()
+        self._view_assertion_batch_coordinator: (
+            ViewAssertionBatchExtractionCoordinator | None
+        ) = None
+        self._view_assertion_batch_selection_updating = False
         self._view_assertion_review_candidates: dict[str, ViewAssertion] = {}
         self._view_assertion_subject_names: dict[str, str] = {}
         self._view_assertion_review_selected_id: str | None = None
@@ -226,6 +245,10 @@ class MemoryWindow(QMainWindow):
             surface
         )
         layout.addWidget(self.view_assertion_extraction_panel)
+        self.view_assertion_batch_extraction_panel = (
+            self._view_assertion_batch_extraction_panel(surface)
+        )
+        layout.addWidget(self.view_assertion_batch_extraction_panel)
         self.view_assertion_review_panel = self._view_assertion_review_panel(surface)
         layout.addWidget(self.view_assertion_review_panel)
         layout.addWidget(note)
@@ -244,6 +267,8 @@ class MemoryWindow(QMainWindow):
         reader_view_subjects: tuple[tuple[str, str], ...] = (),
         view_assertion_review_service: ViewAssertionReviewService | None = None,
         view_assertion_extraction_service: ViewAssertionExtractionService | None = None,
+        view_assertion_batch_extraction_service: ViewAssertionBatchExtractionPort | None = None,
+        view_assertion_batch_chapters: tuple[tuple[str, str], ...] = (),
     ) -> None:
         if (
             self._promotion_coordinator is not None
@@ -251,6 +276,14 @@ class MemoryWindow(QMainWindow):
         ):
             self.metadata_label.setText(
                 self._tr("批量晋升仍在后台运行，请等待完成。")
+            )
+            return
+        if (
+            self._view_assertion_batch_coordinator is not None
+            and self._view_assertion_batch_coordinator.is_running
+        ):
+            self.metadata_label.setText(
+                self._tr("批量 View Assertion 提取仍在后台运行，请等待当前章节完成。")
             )
             return
         setting_draft = (
@@ -275,6 +308,28 @@ class MemoryWindow(QMainWindow):
         self._view_assertion_review_service = view_assertion_review_service
         self._view_assertion_extraction_service = view_assertion_extraction_service
         self._view_assertion_extraction_chapter_id = target_chapter_id
+        self._view_assertion_batch_extraction_service = (
+            view_assertion_batch_extraction_service
+        )
+        self._view_assertion_batch_chapters = view_assertion_batch_chapters
+        self._view_assertion_batch_coordinator = (
+            ViewAssertionBatchExtractionCoordinator(
+                view_assertion_batch_extraction_service,
+                self,
+            )
+            if view_assertion_batch_extraction_service is not None
+            else None
+        )
+        if self._view_assertion_batch_coordinator is not None:
+            self._view_assertion_batch_coordinator.progress_changed.connect(
+                self._view_assertion_batch_progress
+            )
+            self._view_assertion_batch_coordinator.completed.connect(
+                self._view_assertion_batch_completed
+            )
+            self._view_assertion_batch_coordinator.failed.connect(
+                self._view_assertion_batch_failed
+            )
         self._promotion_coordinator = MemoryPromotionCoordinator(service, self)
         self._promotion_coordinator.progress_changed.connect(
             self._bulk_promotion_progress
@@ -308,6 +363,7 @@ class MemoryWindow(QMainWindow):
         self.setting_editor.setPlainText(setting_draft[2])
         self._bind_reader_view_operation(reader_view_subjects)
         self._bind_view_assertion_extraction_operation()
+        self._bind_view_assertion_batch_extraction_operation()
         self._bind_view_assertion_review_operation(reader_view_subjects)
         if not grouped:
             self.metadata_label.setText("该章节边界之前没有可显示的记忆记录。")
@@ -550,6 +606,188 @@ class MemoryWindow(QMainWindow):
             f"已创建 {len(candidates)} 条待审查 View Assertion 候选。"
         )
         self.view_assertion_review_changed.emit()
+
+    def _view_assertion_batch_extraction_panel(self, parent: QWidget) -> QFrame:
+        panel = QFrame(parent)
+        panel.setObjectName("cardSurface")
+        layout = QVBoxLayout(panel)
+        title = QLabel("批量提取 View Assertion 候选", panel)
+        title.setObjectName("sectionEyebrow")
+        explanation = QLabel(
+            "勾选最多 10 个章节后，将按正文规范顺序逐章发起模型提取。"
+            "结果只进入待审查队列，不会自动批准、合并或进入正文上下文。",
+            panel,
+        )
+        explanation.setWordWrap(True)
+        explanation.setObjectName("mutedLabel")
+        self.view_assertion_batch_selector = QListWidget(panel)
+        self.view_assertion_batch_selector.setAccessibleName("批量提取章节选择")
+        self.view_assertion_batch_selector.itemChanged.connect(
+            self._view_assertion_batch_selection_changed
+        )
+        actions = QHBoxLayout()
+        self.view_assertion_batch_start_button = QPushButton("提取所选章节候选", panel)
+        self.view_assertion_batch_start_button.setAccessibleName("提取所选章节 View Assertion 候选")
+        self.view_assertion_batch_start_button.clicked.connect(
+            self._start_view_assertion_batch_extraction
+        )
+        self.view_assertion_batch_cancel_button = QPushButton("完成当前章后停止", panel)
+        self.view_assertion_batch_cancel_button.setAccessibleName("停止批量 View Assertion 提取")
+        self.view_assertion_batch_cancel_button.clicked.connect(
+            self._cancel_view_assertion_batch_extraction
+        )
+        self.view_assertion_batch_status_label = QLabel(
+            "当前未绑定批量 View Assertion 提取服务。", panel
+        )
+        self.view_assertion_batch_status_label.setWordWrap(True)
+        self.view_assertion_batch_status_label.setObjectName("mutedLabel")
+        actions.addWidget(self.view_assertion_batch_start_button)
+        actions.addWidget(self.view_assertion_batch_cancel_button)
+        actions.addStretch(1)
+        layout.addWidget(title)
+        layout.addWidget(explanation)
+        layout.addWidget(self.view_assertion_batch_selector)
+        layout.addLayout(actions)
+        layout.addWidget(self.view_assertion_batch_status_label)
+        self.view_assertion_batch_selector.setEnabled(False)
+        self.view_assertion_batch_start_button.setEnabled(False)
+        self.view_assertion_batch_cancel_button.setEnabled(False)
+        return panel
+
+    def _bind_view_assertion_batch_extraction_operation(self) -> None:
+        service = self._view_assertion_batch_extraction_service
+        self._view_assertion_batch_selection_updating = True
+        self.view_assertion_batch_selector.clear()
+        for chapter_id, title in self._view_assertion_batch_chapters:
+            item = QListWidgetItem(title, self.view_assertion_batch_selector)
+            item.setData(Qt.ItemDataRole.UserRole, chapter_id)
+            item.setFlags(
+                Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsUserCheckable
+            )
+            item.setCheckState(Qt.CheckState.Unchecked)
+        self._view_assertion_batch_selection_updating = False
+        enabled = service is not None and bool(self._view_assertion_batch_chapters)
+        self.view_assertion_batch_selector.setEnabled(enabled)
+        self.view_assertion_batch_cancel_button.setEnabled(False)
+        self._refresh_view_assertion_batch_start_button()
+        self.view_assertion_batch_status_label.setText(
+            "请选择最多 10 个章节；提取会按正文规范顺序逐章执行。"
+            if enabled
+            else "当前未绑定可用章节或批量 View Assertion 提取服务。"
+        )
+
+    def _selected_view_assertion_batch_chapter_ids(self) -> tuple[str, ...]:
+        return tuple(
+            str(item.data(Qt.ItemDataRole.UserRole))
+            for index in range(self.view_assertion_batch_selector.count())
+            if (item := self.view_assertion_batch_selector.item(index)).checkState()
+            == Qt.CheckState.Checked
+        )
+
+    def _view_assertion_batch_selection_changed(
+        self, item: QListWidgetItem
+    ) -> None:
+        if self._view_assertion_batch_selection_updating:
+            return
+        selected = self._selected_view_assertion_batch_chapter_ids()
+        if len(selected) > 10 and item.checkState() == Qt.CheckState.Checked:
+            self._view_assertion_batch_selection_updating = True
+            item.setCheckState(Qt.CheckState.Unchecked)
+            self._view_assertion_batch_selection_updating = False
+            self.view_assertion_batch_status_label.setText(
+                "一次最多选择 10 个章节。"
+            )
+        self._refresh_view_assertion_batch_start_button()
+
+    def _refresh_view_assertion_batch_start_button(self) -> None:
+        coordinator = self._view_assertion_batch_coordinator
+        enabled = bool(
+            coordinator is not None
+            and not coordinator.is_running
+            and self._selected_view_assertion_batch_chapter_ids()
+        )
+        self.view_assertion_batch_start_button.setEnabled(enabled)
+
+    def _set_view_assertion_batch_busy(self, busy: bool) -> None:
+        self.view_assertion_batch_selector.setEnabled(not busy)
+        self.view_assertion_batch_start_button.setEnabled(False)
+        self.view_assertion_batch_cancel_button.setEnabled(busy)
+        if not busy:
+            self._refresh_view_assertion_batch_start_button()
+
+    def _start_view_assertion_batch_extraction(self) -> None:
+        coordinator = self._view_assertion_batch_coordinator
+        chapter_ids = self._selected_view_assertion_batch_chapter_ids()
+        if coordinator is None or not chapter_ids:
+            self._bind_view_assertion_batch_extraction_operation()
+            return
+        answer = QMessageBox.question(
+            self,
+            "确认批量提取 View Assertion 候选",
+            "将按正文规范顺序对所选章节逐章发起模型请求，并且只创建待审查候选。"
+            "不会自动批准或合并。是否继续？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self._set_view_assertion_batch_busy(True)
+        self.view_assertion_batch_status_label.setText(
+            f"正在后台提取 0 / {len(chapter_ids)} 个章节…"
+        )
+        try:
+            coordinator.start(chapter_ids)
+        except RuntimeError:
+            self._set_view_assertion_batch_busy(False)
+            self.view_assertion_batch_status_label.setText(
+                "批量 View Assertion 提取正在运行。"
+            )
+
+    def _cancel_view_assertion_batch_extraction(self) -> None:
+        coordinator = self._view_assertion_batch_coordinator
+        if coordinator is None or not coordinator.is_running:
+            return
+        coordinator.cancel()
+        self.view_assertion_batch_cancel_button.setEnabled(False)
+        self.view_assertion_batch_status_label.setText(
+            "已请求停止：当前章节完成后将不再开始下一章节。"
+        )
+
+    def _view_assertion_batch_progress(self, value: object) -> None:
+        if not isinstance(value, ViewAssertionBatchProgress):
+            return
+        self.view_assertion_batch_status_label.setText(
+            f"正在后台提取第 {value.current} / {value.total} 个章节…"
+        )
+
+    def _view_assertion_batch_completed(self, value: object) -> None:
+        if not isinstance(value, ViewAssertionBatchExtractionReport):
+            self._view_assertion_batch_failed("批量 View Assertion 候选提取失败，请重试。")
+            return
+        created = sum(item.created_count for item in value.chapters)
+        skipped = sum(
+            item.status == ViewAssertionBatchChapterStatus.SKIPPED
+            for item in value.chapters
+        )
+        failed = sum(
+            item.status == ViewAssertionBatchChapterStatus.FAILED
+            for item in value.chapters
+        )
+        self._set_view_assertion_batch_busy(False)
+        status = (
+            f"批量提取完成：已创建 {created} 条候选，已跳过 {skipped} 章，"
+            f"失败 {failed} 章。"
+        )
+        if value.cancelled:
+            status += " 已取消，未开始其余章节。"
+        self.view_assertion_review_changed.emit()
+        self.view_assertion_batch_status_label.setText(status)
+
+    def _view_assertion_batch_failed(self, _message: str) -> None:
+        self._set_view_assertion_batch_busy(False)
+        self.view_assertion_batch_status_label.setText(
+            "批量 View Assertion 候选提取失败，请重试。"
+        )
 
     def _view_assertion_review_panel(self, parent: QWidget) -> QFrame:
         panel = QFrame(parent)

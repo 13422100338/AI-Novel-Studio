@@ -531,6 +531,9 @@ def test_main_window_binds_current_chapter_view_assertion_extraction(
 
     assert window.memory_window is not None
     assert window.memory_window.view_assertion_extract_button.isEnabled()
+    assert window.memory_window.view_assertion_batch_start_button.isEnabled() is False
+    assert window.memory_window.view_assertion_batch_selector.isEnabled()
+    assert window.memory_window.view_assertion_batch_selector.count() == 1
 
 
 def test_agent_character_merge_proposal_opens_review_instead_of_mutating_memory(
