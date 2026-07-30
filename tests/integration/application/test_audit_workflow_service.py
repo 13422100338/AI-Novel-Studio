@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 from ai_novel_studio.application.audit_workflow_service import AuditWorkflowService
@@ -58,6 +59,15 @@ def test_run_deterministic_for_formal_chapter_persists_completed_run_and_finding
         and finding.severity == AuditSeverity.WARNING
         for finding in result.findings
     )
+    persisted_kinds = {
+        json.loads(finding.location_json)["evidence_kind"]
+        for finding in audits.list_findings(result.run.id)
+    }
+    assert persisted_kinds == {
+        "SOURCE_EXCERPT",
+        "EXPECTED_MISSING",
+        "DIAGNOSTIC",
+    }
 
 
 def test_run_deterministic_can_audit_generated_draft_without_changing_formal_chapter(
@@ -82,4 +92,3 @@ def test_run_deterministic_can_audit_generated_draft_without_changing_formal_cha
     assert result.run.target_id == "generation-run-1"
     assert chapters.read_content(chapter.id) == "formal chapter stays"
     assert any(finding.category == AuditFindingCategory.REQUIREMENT for finding in result.findings)
-

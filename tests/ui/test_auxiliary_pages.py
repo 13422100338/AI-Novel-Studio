@@ -95,6 +95,61 @@ def test_audit_window_shows_generated_draft_results_as_latest_and_read_only(
     assert emitted == []
 
 
+def test_deterministic_evidence_focuses_only_source_excerpts(qtbot: QtBot) -> None:
+    window = AuditWindow(WorkspaceDemoData.sample())
+    qtbot.addWidget(window)
+    findings = (
+        SimpleNamespace(
+            source=SimpleNamespace(value="DETERMINISTIC"),
+            category=SimpleNamespace(value="FORMAT"),
+            severity=SimpleNamespace(value="WARNING"),
+            evidence="source excerpt",
+            explanation="Source excerpt explanation",
+            location_json='{"evidence_kind": "SOURCE_EXCERPT"}',
+        ),
+        SimpleNamespace(
+            source=SimpleNamespace(value="DETERMINISTIC"),
+            category=SimpleNamespace(value="REQUIREMENT"),
+            severity=SimpleNamespace(value="WARNING"),
+            evidence="required but absent phrase",
+            explanation="Expected text is absent from the chapter.",
+            location_json='{"evidence_kind": "EXPECTED_MISSING"}',
+        ),
+        SimpleNamespace(
+            source=SimpleNamespace(value="DETERMINISTIC"),
+            category=SimpleNamespace(value="FORMAT"),
+            severity=SimpleNamespace(value="WARNING"),
+            evidence="diagnostic token",
+            explanation="Punctuation is unbalanced.",
+            location_json='{"evidence_kind": "DIAGNOSTIC"}',
+        ),
+        SimpleNamespace(
+            source=SimpleNamespace(value="DETERMINISTIC"),
+            category=SimpleNamespace(value="FORMAT"),
+            severity=SimpleNamespace(value="WARNING"),
+            evidence="legacy evidence",
+            explanation="Legacy finding explanation.",
+            location_json="{}",
+        ),
+    )
+    activated: list[str] = []
+    window.evidence_activated.connect(activated.append)
+
+    window.apply_deterministic_findings(findings)
+
+    assert window.deterministic_table.item(0, 2).text() == "source excerpt"
+    assert window.deterministic_table.item(1, 2).text() == (
+        "Expected text is absent from the chapter."
+    )
+    assert window.deterministic_table.item(2, 2).text() == "Punctuation is unbalanced."
+    assert window.deterministic_table.item(3, 2).text() == "Legacy finding explanation."
+
+    for row in range(window.deterministic_table.rowCount()):
+        window._activate_evidence(window.deterministic_table, row)
+
+    assert activated == ["source excerpt"]
+
+
 def test_generated_draft_read_only_mode_ignores_async_repair_updates(
     qtbot: QtBot,
 ) -> None:
@@ -172,4 +227,4 @@ def test_main_window_runs_deterministic_audit_on_current_editor(qtbot: QtBot) ->
         window.audit_window.deterministic_table.item(row, 2).text()
         for row in range(window.audit_window.deterministic_table.rowCount())
     ]
-    assert any("find the letter" in item for item in evidence)
+    assert any("Required requirement phrase" in item for item in evidence)

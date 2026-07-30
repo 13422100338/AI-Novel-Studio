@@ -40,6 +40,10 @@ _QUOTE_PAIRS = (
     ("(", ")"),
 )
 
+_SOURCE_EXCERPT = "SOURCE_EXCERPT"
+_EXPECTED_MISSING = "EXPECTED_MISSING"
+_DIAGNOSTIC = "DIAGNOSTIC"
+
 
 @dataclass(frozen=True, slots=True)
 class DeterministicAuditRequest:
@@ -88,6 +92,7 @@ class DeterministicAuditService:
                     "target text is empty",
                     "The audited chapter text is empty.",
                     location={"scope": "target_text"},
+                    evidence_kind=_DIAGNOSTIC,
                     confidence=1.0,
                 )
             )
@@ -100,6 +105,7 @@ class DeterministicAuditService:
                     "current chapter requirement is empty",
                     "The audit cannot check chapter intent without a current chapter requirement.",
                     location={"scope": "requirement"},
+                    evidence_kind=_DIAGNOSTIC,
                     confidence=1.0,
                 )
             )
@@ -122,9 +128,11 @@ def _finding(
     explanation: str,
     *,
     location: dict[str, object],
+    evidence_kind: str,
     related: list[dict[str, str]] | None = None,
     confidence: float,
 ) -> DeterministicFinding:
+    location = {**location, "evidence_kind": evidence_kind}
     return DeterministicFinding(
         category=category,
         severity=severity,
@@ -150,6 +158,7 @@ def _model_residue_findings(text: str) -> tuple[DeterministicFinding, ...]:
                 match.group(0),
                 "Possible model residue found in chapter text.",
                 location={"quote": match.group(0), "start": match.start()},
+                evidence_kind=_SOURCE_EXCERPT,
                 confidence=0.95,
             )
         )
@@ -172,6 +181,7 @@ def _duplicate_paragraph_findings(text: str) -> tuple[DeterministicFinding, ...]
                 paragraph,
                 "Duplicate non-trivial paragraph detected.",
                 location={"quote": paragraph[:120], "count": count},
+                evidence_kind=_SOURCE_EXCERPT,
                 confidence=1.0,
             )
         )
@@ -190,6 +200,7 @@ def _unbalanced_pair_findings(text: str) -> tuple[DeterministicFinding, ...]:
                         opener,
                         f"Unbalanced punctuation pair detected: {opener}{closer}",
                         location={"punctuation": opener},
+                        evidence_kind=_DIAGNOSTIC,
                         confidence=0.9,
                     )
                 )
@@ -202,6 +213,7 @@ def _unbalanced_pair_findings(text: str) -> tuple[DeterministicFinding, ...]:
                     f"{opener}{closer}",
                     f"Unbalanced punctuation pair detected: {opener}{closer}",
                     location={"punctuation": f"{opener}{closer}"},
+                    evidence_kind=_DIAGNOSTIC,
                     confidence=0.9,
                 )
             )
@@ -223,6 +235,7 @@ def _missing_required_phrase_findings(
                 phrase,
                 "Required requirement phrase was not found by deterministic coarse match.",
                 location={"scope": "requirement", "phrase": phrase},
+                evidence_kind=_EXPECTED_MISSING,
                 related=[{"type": "chapter_requirement", "id": "current"}],
                 confidence=0.65,
             )

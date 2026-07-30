@@ -1,3 +1,5 @@
+import json
+
 from ai_novel_studio.application.deterministic_audit_service import (
     DeterministicAuditRequest,
     DeterministicAuditService,
@@ -94,3 +96,21 @@ def test_required_requirement_phrase_is_not_reported_when_present() -> None:
         and "find the letter" in finding.evidence
         for finding in findings
     )
+
+
+def test_findings_persist_deterministic_evidence_kinds() -> None:
+    source_findings = _run("Of course, the protagonist finds the letter.")
+    missing_findings = _run(
+        "The protagonist searches the archive.", requirement="must: find the letter"
+    )
+    diagnostic_findings = _run('The protagonist said, "find the letter.')
+
+    assert {
+        json.loads(finding.location_json)["evidence_kind"] for finding in source_findings
+    } == {"SOURCE_EXCERPT"}
+    assert {
+        json.loads(finding.location_json)["evidence_kind"] for finding in missing_findings
+    } == {"EXPECTED_MISSING"}
+    assert {
+        json.loads(finding.location_json)["evidence_kind"] for finding in diagnostic_findings
+    } == {"DIAGNOSTIC"}

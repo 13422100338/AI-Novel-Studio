@@ -1,4 +1,5 @@
 import difflib
+import json
 from collections.abc import Iterable
 
 from PySide6.QtCore import Qt, Signal
@@ -17,6 +18,29 @@ from PySide6.QtWidgets import (
 
 from ai_novel_studio.application.model_tasks import StyleAuditResult
 from ai_novel_studio.ui.demo_data import WorkspaceDemoData
+
+_SOURCE_EXCERPT = "SOURCE_EXCERPT"
+_EVIDENCE_KIND_ROLE = Qt.ItemDataRole.UserRole + 1
+
+
+def _deterministic_evidence_kind(finding: object) -> str:
+    location_json = getattr(finding, "location_json", "")
+    if not isinstance(location_json, str):
+        return "UNKNOWN"
+    try:
+        location = json.loads(location_json)
+    except json.JSONDecodeError:
+        return "UNKNOWN"
+    if not isinstance(location, dict):
+        return "UNKNOWN"
+    evidence_kind = location.get("evidence_kind")
+    if isinstance(evidence_kind, str) and evidence_kind in {
+        _SOURCE_EXCERPT,
+        "EXPECTED_MISSING",
+        "DIAGNOSTIC",
+    }:
+        return evidence_kind
+    return "UNKNOWN"
 
 
 class AuditWindow(QMainWindow):
@@ -213,21 +237,27 @@ class AuditWindow(QMainWindow):
             )
             explanation = getattr(finding, "explanation", "")
             evidence = getattr(finding, "evidence", "")
+            evidence_kind = _deterministic_evidence_kind(finding)
+            displayed_evidence = (
+                str(evidence) if evidence_kind == _SOURCE_EXCERPT else str(explanation)
+            )
             rows.append(
                 (
                     str(source or "DETERMINISTIC"),
                     f"{category} / {severity}: {explanation}",
-                    str(evidence),
+                    displayed_evidence,
+                    evidence_kind,
                 )
             )
         self.deterministic_table.setRowCount(len(rows))
         for row, values in enumerate(rows):
-            for column, value in enumerate(values):
+            for column, value in enumerate(values[:3]):
                 self.deterministic_table.setItem(row, column, QTableWidgetItem(value))
-            finding_id = str(getattr(findings[row], "id", ""))
-            if finding_id:
-                source_item = self.deterministic_table.item(row, 0)
-                if source_item is not None:
+            source_item = self.deterministic_table.item(row, 0)
+            if source_item is not None:
+                source_item.setData(_EVIDENCE_KIND_ROLE, values[3])
+                finding_id = str(getattr(findings[row], "id", ""))
+                if finding_id:
                     source_item.setData(Qt.ItemDataRole.UserRole, finding_id)
             status = getattr(getattr(findings[row], "status", ""), "value", "")
             self.deterministic_table.setItem(row, 3, QTableWidgetItem(str(status)))
@@ -274,6 +304,13 @@ class AuditWindow(QMainWindow):
         self.repair_status_label.setText("生成草稿审校结果为只读，不能生成或采用修复建议")
 
     def _activate_evidence(self, table: QTableWidget, row: int) -> None:
+        if table is self.deterministic_table:
+            source_item = table.item(row, 0)
+            if (
+                source_item is None
+                or source_item.data(_EVIDENCE_KIND_ROLE) != _SOURCE_EXCERPT
+            ):
+                return
         item = table.item(row, 2)
         if item is not None and item.text().strip():
             self.evidence_activated.emit(item.text().strip())
