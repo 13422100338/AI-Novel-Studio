@@ -8,7 +8,7 @@
 - Superpowers: disabled for this project workflow.
 - Initial business-code baseline: `e35b50d` (the backend code state before the governance-only dispatch commit).
 - Wave 1 dispatched baseline: `3382dd36c2a4aeb4acdab411e9211885b633e678`.
-- Latest integrated business commit: `14b1a1f` (E1b-CR1 bounded Canon REVIEW-candidate omissions, including prior A1-A4, B1-B5, C1-C7, M1, E1a, E1b-SR1, and E1b-SS1 increments).
+- Latest integrated business commit: `940ede1` (C8 corrected View Assertion review-edit guidance, including prior A1-A4, B1-B5, C1-C7, M1, E1a, E1b-SR1, E1b-SS1, and E1b-CR1 increments).
 - Planning sources:
   - `docs/handoffs/2026-07-22-backend-refactor-handoff.md`
   - `C:\Users\钟子诚\Downloads\AI_Novel_Studio_后端改进方案_Subject_View_Time_Context_Compiler_修订版.md`
@@ -51,13 +51,14 @@ All Wave 1 tasks were dispatched from `3382dd36c2a4aeb4acdab411e9211885b633e678`
   - `manifest-eligibility-v2` increment E1b-SS1 (metadata-only audit omissions for REVIEW/REJECTED Style Samples), merged as `5e1062e`.
   - `view-operations-ui` increment C7 (ephemeral, safe per-chapter batch extraction outcomes), merged as `a9ddfff`.
   - `manifest-eligibility-v2` increment E1b-CR1 (bounded, body-free omission candidates for CURRENT REVIEW Canon entries), merged as `14b1a1f`.
+  - `view-operations-ui` increment C8 (correct View Assertion candidate-edit guidance), merged as `940ede1`.
 - Active schema owner: none.
 
 | Task | Model / reasoning | Thread | Worktree | Assigned branch | HEAD state | Status |
 | --- | --- | --- | --- | --- | --- | --- |
 | `manifest-eligibility-v2` | `gpt-5.6-sol` / `high` | `019f87e8-6d32-7141-b9b4-4f1142e4db4e` | `C:\Users\钟子诚\.codex\worktrees\93d7\AI-Novel-Studio` | `codex/manifest-eligibility-v2` | branch | M1, E1a, E1b-SR1, E1b-SS1, and E1b-CR1 merged at `812a737`, `5233ccd`, `453a709`, `5e1062e`, and `14b1a1f`; lane paused pending explicit instruction |
 | `generation-profile-audit-policy` | `gpt-5.6-terra` / `medium` | `019f87e8-696e-7f11-bcfe-1552f51cabc3` | `C:\Users\钟子诚\.codex\worktrees\4df4\AI-Novel-Studio` | `codex/generation-profile-audit-policy-b5` | branch | B1-B5 merged; B5 is `f91a66a`; B6 is active and stops after this ticket |
-| `view-operations-ui` | `gpt-5.6-luna` / `medium` | `019f87e8-7a77-7902-b3d1-a38f32240136` | `C:\Users\钟子诚\.codex\worktrees\8802\AI-Novel-Studio` | `codex/view-operations-ui` | branch | C1-C7 merged; C7 is `a9ddfff`; lane paused pending explicit instruction |
+| `view-operations-ui` | `gpt-5.6-luna` / `low` | `019f87e8-7a77-7902-b3d1-a38f32240136` | `C:\Users\钟子诚\.codex\worktrees\8802\AI-Novel-Studio` | `codex/view-operations-ui` | branch | C1-C8 merged; C8 is `940ede1`; lane paused pending explicit instruction |
 
 E1a, E1b-SR1, E1b-SS1, E1b-CR1, C6a, C6b, C7, B4, and B5 are integrated. B6 stops after its current authorized ticket; every later increment still requires a new user decision.
 
