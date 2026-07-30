@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import cast
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QMessageBox
+from PySide6.QtWidgets import QLabel, QMessageBox
 from pytest import MonkeyPatch
 from pytestqt.qtbot import QtBot
 
@@ -149,6 +149,14 @@ def test_view_assertion_review_binds_one_candidate_with_safe_subject_names(
     assert "可选" in window.view_assertion_review_status_label.text()
     assert "保存" in window.view_assertion_review_status_label.text()
     assert "批准或拒绝" in window.view_assertion_review_status_label.text()
+    review_guidance = [
+        label.text()
+        for label in window.view_assertion_review_panel.findChildren(QLabel)
+        if "仅审查一条模型候选" in label.text()
+    ]
+    assert review_guidance == [
+        "仅审查一条模型候选。可选编辑候选内容并单独保存；批准或拒绝仍是独立操作。"
+    ]
     assert window.view_assertion_approve_button.isEnabled()
     assert window.view_assertion_reject_button.isEnabled()
 

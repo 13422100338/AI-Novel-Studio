@@ -820,7 +820,7 @@ class MemoryWindow(QMainWindow):
         title = QLabel("View Assertion 审查", panel)
         title.setObjectName("sectionEyebrow")
         explanation = QLabel(
-            "仅审查一条模型候选。批准或拒绝都需要明确确认，候选内容不可在此编辑。",
+            "仅审查一条模型候选。可选编辑候选内容并单独保存；批准或拒绝仍是独立操作。",
             panel,
         )
         explanation.setWordWrap(True)
