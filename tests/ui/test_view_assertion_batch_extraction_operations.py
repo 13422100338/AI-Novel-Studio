@@ -227,21 +227,21 @@ def test_batch_extraction_final_report_distinguishes_each_safe_outcome(
                 "Chapter one",
                 ViewAssertionBatchChapterStatus.CREATED,
                 2,
-                "safe",
+                "sk-test-secret <chapter_text>raw model response</chapter_text>",
             ),
             ViewAssertionBatchChapterResult(
                 "chapter-2",
                 "Chapter two",
                 ViewAssertionBatchChapterStatus.SKIPPED,
                 0,
-                "safe",
+                "sk-test-secret <chapter_text>raw model response</chapter_text>",
             ),
             ViewAssertionBatchChapterResult(
                 "chapter-3",
                 "Chapter three",
                 ViewAssertionBatchChapterStatus.FAILED,
                 0,
-                "safe",
+                "sk-test-secret <chapter_text>raw model response</chapter_text>",
             ),
         ),
         True,
@@ -264,6 +264,55 @@ def test_batch_extraction_final_report_distinguishes_each_safe_outcome(
     assert "2" in status
     assert "跳过 1" in status
     assert "失败 1" in status
+    outcome_text = "\n".join(
+        window.view_assertion_batch_outcome_list.item(index).text()
+        for index in range(window.view_assertion_batch_outcome_list.count())
+    )
+    assert window.view_assertion_batch_outcome_list.count() == 4
+    assert "Chapter one" in outcome_text
+    assert "Chapter two" in outcome_text
+    assert "Chapter three" in outcome_text
+    assert "已取消" in outcome_text
+    assert "sk-test-secret" not in outcome_text
+    assert "raw model response" not in outcome_text
+
+
+def test_batch_extraction_outcome_list_clears_on_normal_rebind(
+    qtbot: QtBot, monkeypatch: MonkeyPatch
+) -> None:
+    window = MemoryWindow(WorkspaceDemoData.sample())
+    qtbot.addWidget(window)
+    report = ViewAssertionBatchExtractionReport(
+        (
+            ViewAssertionBatchChapterResult(
+                "chapter-1",
+                "Chapter one",
+                ViewAssertionBatchChapterStatus.CREATED,
+                1,
+                "safe",
+            ),
+        ),
+        False,
+    )
+    service = _BatchService(report=report)
+    _bind(window, service)
+    _check(window, 0)
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
+    )
+
+    qtbot.mouseClick(window.view_assertion_batch_start_button, Qt.MouseButton.LeftButton)
+    qtbot.waitUntil(
+        lambda: window.view_assertion_batch_outcome_list.count() == 1,
+        timeout=3_000,
+    )
+
+    _bind(window, service)
+    assert window.view_assertion_batch_outcome_list.count() == 0
+    _bind(window, None)
+    assert window.view_assertion_batch_outcome_list.count() == 0
 
 
 def test_batch_extraction_refuses_an_eleventh_checked_chapter(qtbot: QtBot) -> None:

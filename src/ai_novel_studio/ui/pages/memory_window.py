@@ -625,6 +625,13 @@ class MemoryWindow(QMainWindow):
         self.view_assertion_batch_selector.itemChanged.connect(
             self._view_assertion_batch_selection_changed
         )
+        self.view_assertion_batch_outcome_list = QListWidget(panel)
+        self.view_assertion_batch_outcome_list.setAccessibleName(
+            "最近一次批量提取结果"
+        )
+        self.view_assertion_batch_outcome_list.setSelectionMode(
+            QListWidget.SelectionMode.NoSelection
+        )
         actions = QHBoxLayout()
         self.view_assertion_batch_start_button = QPushButton("提取所选章节候选", panel)
         self.view_assertion_batch_start_button.setAccessibleName("提取所选章节 View Assertion 候选")
@@ -647,6 +654,7 @@ class MemoryWindow(QMainWindow):
         layout.addWidget(title)
         layout.addWidget(explanation)
         layout.addWidget(self.view_assertion_batch_selector)
+        layout.addWidget(self.view_assertion_batch_outcome_list)
         layout.addLayout(actions)
         layout.addWidget(self.view_assertion_batch_status_label)
         self.view_assertion_batch_selector.setEnabled(False)
@@ -658,6 +666,7 @@ class MemoryWindow(QMainWindow):
         service = self._view_assertion_batch_extraction_service
         self._view_assertion_batch_selection_updating = True
         self.view_assertion_batch_selector.clear()
+        self.view_assertion_batch_outcome_list.clear()
         for chapter_id, title in self._view_assertion_batch_chapters:
             item = QListWidgetItem(title, self.view_assertion_batch_selector)
             item.setData(Qt.ItemDataRole.UserRole, chapter_id)
@@ -782,6 +791,21 @@ class MemoryWindow(QMainWindow):
             status += " 已取消，未开始其余章节。"
         self.view_assertion_review_changed.emit()
         self.view_assertion_batch_status_label.setText(status)
+        self.view_assertion_batch_outcome_list.clear()
+        for item in value.chapters:
+            if item.status == ViewAssertionBatchChapterStatus.CREATED:
+                outcome = f"{item.chapter_title}：已创建 {item.created_count} 条待审查候选。"
+            elif item.status == ViewAssertionBatchChapterStatus.SKIPPED:
+                outcome = (
+                    f"{item.chapter_title}：已跳过（当前修订已有有效模型候选）。"
+                )
+            else:
+                outcome = f"{item.chapter_title}：提取失败；可重新显式选择此章重试。"
+            self.view_assertion_batch_outcome_list.addItem(outcome)
+        if value.cancelled:
+            self.view_assertion_batch_outcome_list.addItem(
+                "已取消：未开始其余章节。"
+            )
 
     def _view_assertion_batch_failed(self, _message: str) -> None:
         self._set_view_assertion_batch_busy(False)
