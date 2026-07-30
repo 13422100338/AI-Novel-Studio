@@ -8,7 +8,7 @@
 - Superpowers: disabled for this project workflow.
 - Initial business-code baseline: `e35b50d` (the backend code state before the governance-only dispatch commit).
 - Wave 1 dispatched baseline: `3382dd36c2a4aeb4acdab411e9211885b633e678`.
-- Latest integrated business commit: `2d05ca4` (B4 latest completed DEEP audit results for generated and recovered drafts, including prior A1-A4, B1-B3, C1-C6a, M1, E1a, and E1b-SR1 increments).
+- Latest integrated business commit: `6f7d5b8` (C6b bounded multi-chapter View Assertion extraction UI and background coordinator, including prior A1-A4, B1-B4, C1-C6a, M1, E1a, and E1b-SR1 increments).
 - Planning sources:
   - `docs/handoffs/2026-07-22-backend-refactor-handoff.md`
   - `C:\Users\钟子诚\Downloads\AI_Novel_Studio_后端改进方案_Subject_View_Time_Context_Compiler_修订版.md`
@@ -27,7 +27,7 @@
 
 All Wave 1 tasks were dispatched from `3382dd36c2a4aeb4acdab411e9211885b633e678`; their initial business-code baseline remains `e35b50d`.
 
-- Active implementations authorized by the user: none.
+- Active implementations authorized by the user: B5 Evidence Anchor validation and E1b-SS1 Style Sample review-state omissions.
 - Integrated increments:
   - `embedding-production` increment A1 (provider and gateway embedding contract), merged as `fdbfb088278c18a0efb3e062cd5f9e8a6ddd01f4`.
   - `embedding-production` increment A2 (Gateway-backed document/query embedding provider plus fail-open semantic recall), merged as `03b2263043262cdf371f1929a1255162decabfac`.
@@ -46,15 +46,16 @@ All Wave 1 tasks were dispatched from `3382dd36c2a4aeb4acdab411e9211885b633e678`
   - `view-operations-ui` increment C5 (confirmed single-current-chapter model extraction into atomically source-validated review candidates), merged as `8f3e851`.
   - `view-operations-ui` increment C6a (bounded sequential batch extraction with exact-revision idempotency), merged as `1e72d30`.
   - `generation-profile-audit-policy` increment B4 (latest read-only DEEP audit results for generated and recovered drafts), merged as `2d05ca4`.
+  - `view-operations-ui` increment C6b (explicit multi-chapter selection, background coordination, progress, and cooperative cancellation UI), merged as `6f7d5b8`.
 - Active schema owner: none.
 
 | Task | Model / reasoning | Thread | Worktree | Assigned branch | HEAD state | Status |
 | --- | --- | --- | --- | --- | --- | --- |
-| `manifest-eligibility-v2` | `gpt-5.6-sol` / `high` | `019f87e8-6d32-7141-b9b4-4f1142e4db4e` | `C:\Users\钟子诚\.codex\worktrees\93d7\AI-Novel-Studio` | `codex/manifest-eligibility-v2` | branch | M1, E1a, and E1b-SR1 merged at `812a737`, `5233ccd`, and `453a709`; later source tickets remain separate |
-| `generation-profile-audit-policy` | `gpt-5.6-terra` / `medium` | `019f87e8-696e-7f11-bcfe-1552f51cabc3` | `C:\Users\钟子诚\.codex\worktrees\4df4\AI-Novel-Studio` | `codex/generation-profile-audit-policy` | branch | B1-B4 merged; B4 is `2d05ca4`; B5 not authorized |
-| `view-operations-ui` | `gpt-5.6-sol` / `high` | `019f87e8-7a77-7902-b3d1-a38f32240136` | `C:\Users\钟子诚\.codex\worktrees\8802\AI-Novel-Studio` | `codex/view-operations-ui` | branch | C1-C6a merged; C6a is `1e72d30`; C6b remains separate |
+| `manifest-eligibility-v2` | `gpt-5.6-sol` / `high` | `019f87e8-6d32-7141-b9b4-4f1142e4db4e` | `C:\Users\钟子诚\.codex\worktrees\93d7\AI-Novel-Studio` | `codex/manifest-eligibility-v2` | branch | M1, E1a, and E1b-SR1 merged at `812a737`, `5233ccd`, and `453a709`; E1b-SS1 is authorized and active |
+| `generation-profile-audit-policy` | `gpt-5.6-terra` / `medium` | `019f87e8-696e-7f11-bcfe-1552f51cabc3` | `C:\Users\钟子诚\.codex\worktrees\4df4\AI-Novel-Studio` | `codex/generation-profile-audit-policy-b5` | branch | B1-B4 merged; B4 is `2d05ca4`; B5 is authorized and active on a clean branch from `b77abf3` |
+| `view-operations-ui` | `gpt-5.6-sol` / `high` | `019f87e8-7a77-7902-b3d1-a38f32240136` | `C:\Users\钟子诚\.codex\worktrees\8802\AI-Novel-Studio` | `codex/view-operations-ui` | branch | C1-C6b merged; C6b is `6f7d5b8`; later workflow increments remain separate |
 
-E1a, E1b-SR1, C6a, and B4 are integrated. Later E1b source tickets and C6b remain separate; every later increment still requires a new user decision.
+E1a, E1b-SR1, C6a, C6b, and B4 are integrated. B5 and E1b-SS1 are active under their separately approved scopes; every later increment still requires a new user decision.
 
 ## Later Waves and Dependencies
 
