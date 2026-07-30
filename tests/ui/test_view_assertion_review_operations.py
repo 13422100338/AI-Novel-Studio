@@ -161,6 +161,27 @@ def test_view_assertion_review_binds_one_candidate_with_safe_subject_names(
     assert window.view_assertion_reject_button.isEnabled()
 
 
+def test_view_assertion_review_selector_disambiguates_candidates_by_source(
+    qtbot: QtBot,
+) -> None:
+    window = MemoryWindow(WorkspaceDemoData.sample())
+    qtbot.addWidget(window)
+    first = _candidate()
+    second = replace(first, id="assertion-2", source_id="chapter-2")
+
+    _bind(window, _ReviewService((first, second)))
+
+    labels = [
+        window.view_assertion_review_selector.itemText(index)
+        for index in range(window.view_assertion_review_selector.count())
+    ]
+    assert labels[0] != labels[1]
+    assert "chapter-1" in labels[0]
+    assert "chapter-2" in labels[1]
+    assert window.view_assertion_review_selector.itemData(0) == "assertion-1"
+    assert window.view_assertion_review_selector.itemData(1) == "assertion-2"
+
+
 def test_view_assertion_review_cancelled_approval_and_rejection_do_not_write(
     qtbot: QtBot, monkeypatch: MonkeyPatch
 ) -> None:

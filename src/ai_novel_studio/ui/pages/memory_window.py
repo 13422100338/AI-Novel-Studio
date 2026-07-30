@@ -902,8 +902,9 @@ class MemoryWindow(QMainWindow):
         self.view_assertion_review_selector.clear()
         for candidate in candidates:
             subject_name = self._view_assertion_subject_name(candidate.subject_id)
+            source_id = candidate.source_id or "无来源"
             self.view_assertion_review_selector.addItem(
-                f"{candidate.view_type.value} · {subject_name}",
+                f"{candidate.view_type.value} · {subject_name} · 来源 {source_id}",
                 candidate.id,
             )
         self.view_assertion_review_selector.blockSignals(False)
