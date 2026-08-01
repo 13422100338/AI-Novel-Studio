@@ -990,6 +990,92 @@ def test_review_clue_events_are_manifested_but_never_reach_writer_prompt(
     assert review.detail not in built.text
 
 
+def test_review_summary_is_manifested_but_never_reaches_writer_prompt(
+    tmp_path: Path,
+) -> None:
+    project = ProjectRepository.create(tmp_path / "novel", "Novel")
+    volume = project.list_volumes()[0]
+    chapters = ChapterRepository(project)
+    first = chapters.create_chapter(volume.id, "First", "1", "First body")
+    second = chapters.create_chapter(volume.id, "Second", "2", "Second body")
+    chapters.create_chapter(volume.id, "Third", "3", "Third body")
+    chapters.create_chapter(volume.id, "Fourth", "4", "Fourth body")
+    chapters.create_chapter(volume.id, "Fifth", "5", "Fifth body")
+    current = chapters.create_chapter(volume.id, "Current", "6", "Current body")
+    summaries = SummaryRepository(project)
+    review = summaries.add_candidate(
+        SummaryLevel.CHAPTER,
+        first.id,
+        "REVIEW_SUMMARY_SECRET",
+        (first.id,),
+        model_profile_id="provider/writer",
+    )
+    approved = summaries.add_human_summary(
+        SummaryLevel.CHAPTER,
+        second.id,
+        "APPROVED_SUMMARY_BODY",
+        (second.id,),
+        authority=Authority.USER_CONFIRMED,
+        review_status=ReviewStatus.APPROVED,
+    )
+    locked = summaries.add_human_summary(
+        SummaryLevel.ARC,
+        "opening-arc",
+        "LOCKED_SUMMARY_BODY",
+        (first.id,),
+        authority=Authority.USER_CONFIRMED,
+        review_status=ReviewStatus.LOCKED,
+    )
+    provider = GenerationMemoryContextProvider(project)
+
+    blocks = provider.blocks(current.id, "Continue the story.", ())
+    selected_summaries = provider.summaries.select_summary_nodes(
+        current.id,
+        token_budget=12_000,
+    )
+    summary_blocks = tuple(block for block in blocks if block.source_type == "SUMMARY")
+    review_block = next(block for block in summary_blocks if block.source_id == review.id)
+    approved_block = next(
+        block for block in summary_blocks if block.source_id == approved.id
+    )
+    locked_block = next(block for block in summary_blocks if block.source_id == locked.id)
+    built = ContextBuilder().build(
+        ContextBuildRequest(
+            chapter_id=current.id,
+            run_id="review-summary-filter",
+            budget=TokenBudget(20_000, 2_000, 0),
+            blocks=blocks,
+            deduplicate=True,
+        )
+    )
+
+    assert tuple(block.source_id for block in summary_blocks) == tuple(
+        summary.id for summary in selected_summaries
+    )
+    assert approved_block.content == provider.summaries.render(approved)
+    assert approved_block.eligibility.authority_allowed is True
+    assert locked_block.content == provider.summaries.render(locked)
+    assert locked_block.eligibility.authority_allowed is True
+    assert review_block.content == "未通过审查的摘要候选"
+    assert review_block.rationale == "未通过审查的摘要候选"
+    assert review_block.source_chapter_id == first.id
+    assert review_block.source_revision == review.revision
+    assert review_block.source_hash == review.content_hash
+    assert review_block.eligibility.authority_allowed is False
+    omission = next(
+        item
+        for item in built.manifest.omitted
+        if item.source_type == "SUMMARY" and item.source_id == review.id
+    )
+    assert omission.reason == "HARD_FILTER:AUTHORITY_REJECTED"
+    assert omission.source_chapter_id == first.id
+    assert omission.source_revision == review.revision
+    assert omission.source_hash == review.content_hash
+    assert approved.content in built.text
+    assert locked.content in built.text
+    assert review.content not in built.text
+
+
 def test_basic_generation_includes_relevant_state_and_compressed_history(
     tmp_path: Path,
 ) -> None:

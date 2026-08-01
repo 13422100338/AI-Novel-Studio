@@ -24,7 +24,7 @@ from ai_novel_studio.core.context.history_retriever import HistoryRetriever
 from ai_novel_studio.core.context.style_retriever import StyleRetriever
 from ai_novel_studio.core.memory.narrative_clue_ledger import NarrativeClueLedger
 from ai_novel_studio.domain.context_pin import ChapterContextPin
-from ai_novel_studio.domain.memory import Character, MemoryStatus, SummaryNode
+from ai_novel_studio.domain.memory import Character, MemoryStatus, ReviewStatus, SummaryNode
 from ai_novel_studio.infrastructure.storage.chapter_context_pin_repository import (
     ChapterContextPinRepository,
 )
@@ -510,22 +510,50 @@ class GenerationMemoryContextProvider:
             chapter_id,
             token_budget=12_000,
         )
-        return tuple(
-            ContextBlock(
-                f"summary-{summary.id}",
-                "HISTORY",
-                self.summaries.render(summary),
-                40 + index,
-                False,
-                "SUMMARY",
-                summary.id,
-                summary.source_chapter_ids[-1] if summary.source_chapter_ids else None,
-                summary.revision,
-                summary.content_hash,
-                f"分层压缩前文：{summary.level.value} / {summary.scope_id}",
+        blocks: list[ContextBlock] = []
+        for index, summary in enumerate(summaries):
+            if summary.review_status == ReviewStatus.REVIEW:
+                blocks.append(
+                    ContextBlock(
+                        f"summary-{summary.id}",
+                        "HISTORY",
+                        "未通过审查的摘要候选",
+                        40 + index,
+                        False,
+                        "SUMMARY",
+                        summary.id,
+                        (
+                            summary.source_chapter_ids[-1]
+                            if summary.source_chapter_ids
+                            else None
+                        ),
+                        summary.revision,
+                        summary.content_hash,
+                        "未通过审查的摘要候选",
+                        eligibility=ContextEligibility(authority_allowed=False),
+                    )
+                )
+                continue
+            blocks.append(
+                ContextBlock(
+                    f"summary-{summary.id}",
+                    "HISTORY",
+                    self.summaries.render(summary),
+                    40 + index,
+                    False,
+                    "SUMMARY",
+                    summary.id,
+                    (
+                        summary.source_chapter_ids[-1]
+                        if summary.source_chapter_ids
+                        else None
+                    ),
+                    summary.revision,
+                    summary.content_hash,
+                    f"分层压缩前文：{summary.level.value} / {summary.scope_id}",
+                )
             )
-            for index, summary in enumerate(summaries)
-        )
+        return tuple(blocks)
 
 
 def _hash(content: str) -> str:
