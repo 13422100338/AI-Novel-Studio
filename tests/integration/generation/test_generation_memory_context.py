@@ -449,6 +449,30 @@ def test_plot_and_prose_share_the_same_time_bounded_character_card_context(
             source_type=SourceType.HUMAN,
             review_status=ReviewStatus.APPROVED,
         )
+    review = memory.append_state(
+        eric.id,
+        first.id,
+        motivation="REVIEW_STATE_SECRET_MOTIVATION",
+        psychology="REVIEW_STATE_SECRET_PSYCHOLOGY",
+        current_goal="REVIEW_STATE_SECRET_GOAL",
+        relationships="REVIEW_STATE_SECRET_RELATIONSHIPS",
+        recent_activity="REVIEW_STATE_SECRET_RECENT",
+        confidence=0.8,
+        source_type=SourceType.MODEL,
+        review_status=ReviewStatus.REVIEW,
+    )
+    current_review = memory.append_state(
+        eric.id,
+        current.id,
+        motivation="CURRENT_REVIEW_STATE_SECRET",
+        psychology="",
+        current_goal="",
+        relationships="",
+        recent_activity="",
+        confidence=0.8,
+        source_type=SourceType.MODEL,
+        review_status=ReviewStatus.REVIEW,
+    )
 
     shared = CharacterCardContextService(project).items_before(current.id)
     plot = PlotMemoryContextService(project).select(current.id, token_budget=6_000)
@@ -462,8 +486,56 @@ def test_plot_and_prose_share_the_same_time_bounded_character_card_context(
     assert plot.message is not None
     assert plot.message.content.count(shared[0].content) == 1
     assert [
-        block.content for block in prose_blocks if block.source_type == "CHARACTER_STATE"
+        block.content
+        for block in prose_blocks
+        if block.source_type == "CHARACTER_STATE"
+        and block.eligibility.authority_allowed
     ] == [shared[0].content]
+    candidate = next(
+        block
+        for block in prose_blocks
+        if block.source_type == "CHARACTER_STATE" and block.source_id == review.id
+    )
+    assert candidate.content == "未通过审查的人物状态候选"
+    assert candidate.rationale == "未通过审查的人物状态候选"
+    assert candidate.source_chapter_id == first.id
+    assert candidate.source_revision is None
+    assert candidate.source_hash == hashlib.sha256(
+        "\x1f".join(
+            (
+                review.motivation,
+                review.psychology,
+                review.current_goal,
+                review.relationships,
+                review.recent_activity,
+            )
+        ).encode()
+    ).hexdigest()
+    assert candidate.eligibility.authority_allowed is False
+    assert review.current_goal not in candidate.content
+    assert all(block.source_id != current_review.id for block in prose_blocks)
+    built = ContextBuilder().build(
+        ContextBuildRequest(
+            chapter_id=current.id,
+            run_id="character-review-filter",
+            budget=TokenBudget(20_000, 2_000, 0),
+            blocks=prose_blocks,
+            deduplicate=True,
+        )
+    )
+    omission = next(
+        item
+        for item in built.manifest.omitted
+        if item.source_type == "CHARACTER_STATE" and item.source_id == review.id
+    )
+    assert omission.reason == "HARD_FILTER:AUTHORITY_REJECTED"
+    assert omission.source_revision is None
+    assert not hasattr(omission, "motivation")
+    assert not hasattr(omission, "current_goal")
+    assert review.motivation not in built.text
+    assert review.current_goal not in built.text
+    assert current_review.motivation not in built.text
+    assert review.motivation not in plot.message.content
     assert "Restrained voice; rubs his cuff when anxious." in shared[0].content
     assert "Survive the storm" in shared[0].content
     past_journey = shared[0].content.split("过往心路历程：", maxsplit=1)[1]

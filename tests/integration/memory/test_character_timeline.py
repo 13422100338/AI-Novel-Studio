@@ -1,4 +1,7 @@
+import hashlib
 from pathlib import Path
+
+import pytest
 
 from ai_novel_studio.application.character_status_service import CharacterStatusService
 from ai_novel_studio.core.memory.character_timeline import CharacterTimeline
@@ -106,6 +109,110 @@ def test_character_states_can_be_loaded_in_one_batch(tmp_path: Path) -> None:
     histories = repository.state_histories((first.id, second.id))
     assert histories[first.id][0].current_goal == "检查来信"
     assert histories[second.id][0].current_goal == "守住码头"
+
+
+def test_review_state_candidates_are_all_time_bounded_body_free_and_hashed(
+    tmp_path: Path,
+) -> None:
+    project, chapters = _project_with_three_chapters(tmp_path)
+    repository = CharacterMemoryRepository(project)
+    first = repository.create_character("林岚")
+    second = repository.create_character("苏澄")
+
+    def append(  # type: ignore[no-untyped-def]
+        character_id: str,
+        chapter_id: str,
+        marker: str,
+        review_status: ReviewStatus,
+    ):
+        return repository.append_state(
+            character_id,
+            chapter_id,
+            motivation=f"{marker}-MOTIVATION",
+            psychology=f"{marker}-PSYCHOLOGY",
+            current_goal=f"{marker}-GOAL",
+            relationships=f"{marker}-RELATIONSHIPS",
+            recent_activity=f"{marker}-RECENT",
+            confidence=0.8,
+            source_type=SourceType.MODEL,
+            review_status=review_status,
+        )
+
+    included = (
+        append(first.id, chapters[0].id, "FIRST-REVIEW-ONE", ReviewStatus.REVIEW),
+        append(first.id, chapters[0].id, "FIRST-REVIEW-TWO", ReviewStatus.REVIEW),
+        append(second.id, chapters[0].id, "SECOND-REVIEW", ReviewStatus.REVIEW),
+    )
+    append(first.id, chapters[0].id, "APPROVED", ReviewStatus.APPROVED)
+    append(first.id, chapters[0].id, "LOCKED", ReviewStatus.LOCKED)
+    append(first.id, chapters[0].id, "REJECTED", ReviewStatus.REJECTED)
+    append(first.id, chapters[1].id, "CURRENT-REVIEW", ReviewStatus.REVIEW)
+    append(first.id, chapters[2].id, "FUTURE-REVIEW", ReviewStatus.REVIEW)
+
+    candidates = repository.list_ineligible_state_events_before(
+        chapters[1].id,
+        limit=100,
+    )
+
+    expected = sorted(
+        included,
+        key=lambda item: (item.character_id, item.created_at, item.id),
+    )
+    assert tuple(item.id for item in candidates) == tuple(item.id for item in expected)
+    assert all(item.review_status == ReviewStatus.REVIEW for item in candidates)
+    assert tuple(item.source_hash for item in candidates) == tuple(
+        hashlib.sha256(
+            "\x1f".join(
+                (
+                    item.motivation,
+                    item.psychology,
+                    item.current_goal,
+                    item.relationships,
+                    item.recent_activity,
+                )
+            ).encode()
+        ).hexdigest()
+        for item in expected
+    )
+    assert all(not hasattr(item, "motivation") for item in candidates)
+    assert all(not hasattr(item, "psychology") for item in candidates)
+    assert all(not hasattr(item, "current_goal") for item in candidates)
+    with pytest.raises(ValueError, match="候选数量"):
+        repository.list_ineligible_state_events_before(chapters[1].id, limit=True)
+    with pytest.raises(ValueError, match="候选数量"):
+        repository.list_ineligible_state_events_before(chapters[1].id, limit=101)
+
+
+def test_review_state_candidates_have_a_deterministic_global_cap(
+    tmp_path: Path,
+) -> None:
+    project, chapters = _project_with_three_chapters(tmp_path)
+    repository = CharacterMemoryRepository(project)
+    character = repository.create_character("林岚")
+    created = [
+        repository.append_state(
+            character.id,
+            chapters[0].id,
+            motivation=f"MOTIVATION-{index:03d}",
+            psychology=f"PSYCHOLOGY-{index:03d}",
+            current_goal=f"GOAL-{index:03d}",
+            relationships=f"RELATIONSHIPS-{index:03d}",
+            recent_activity=f"RECENT-{index:03d}",
+            confidence=0.8,
+            source_type=SourceType.MODEL,
+            review_status=ReviewStatus.REVIEW,
+        )
+        for index in range(101)
+    ]
+
+    candidates = repository.list_ineligible_state_events_before(
+        chapters[1].id,
+        limit=100,
+    )
+
+    expected = sorted(created, key=lambda item: (item.created_at, item.id))[:100]
+    assert tuple(item.id for item in candidates) == tuple(item.id for item in expected)
+    assert len(candidates) == 100
 
 
 def test_character_status_cards_aggregate_reviewed_history_without_future_leak(

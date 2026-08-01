@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 from dataclasses import dataclass
@@ -22,6 +23,8 @@ from ai_novel_studio.infrastructure.storage.subject_repository import (
     register_character_subject,
 )
 
+MAX_INELIGIBLE_CHARACTER_STATE_CANDIDATES = 100
+
 
 def _now() -> datetime:
     return datetime.now(UTC)
@@ -33,6 +36,15 @@ def _time(value: str) -> datetime:
 
 class MemoryConflictError(RuntimeError):
     pass
+
+
+@dataclass(frozen=True, slots=True)
+class CharacterStateReviewCandidate:
+    id: str
+    character_id: str
+    source_chapter_id: str
+    review_status: ReviewStatus
+    source_hash: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -271,6 +283,76 @@ class CharacterMemoryRepository:
         for row in rows:
             grouped.setdefault(str(row["character_id"]), []).append(self._state(row))
         return {character_id: tuple(events) for character_id, events in grouped.items()}
+
+    def list_ineligible_state_events_before(
+        self,
+        chapter_id: str,
+        *,
+        limit: int,
+    ) -> tuple[CharacterStateReviewCandidate, ...]:
+        if (
+            isinstance(limit, bool)
+            or not isinstance(limit, int)
+            or limit <= 0
+            or limit > MAX_INELIGIBLE_CHARACTER_STATE_CANDIDATES
+        ):
+            raise ValueError(
+                "人物状态候选数量必须是 "
+                f"1 到 {MAX_INELIGIBLE_CHARACTER_STATE_CANDIDATES} 之间的整数"
+            )
+        with self.project.database.connect() as connection:
+            target = connection.execute(
+                "SELECT 1 FROM chapters WHERE id = ? AND is_deleted = 0",
+                (chapter_id,),
+            ).fetchone()
+            if target is None:
+                raise KeyError(f"unknown chapter: {chapter_id}")
+            rows = connection.execute(
+                """
+                WITH target AS (
+                    SELECT v.sort_index AS volume_order, c.sort_index AS chapter_order
+                    FROM chapters c JOIN volumes v ON v.id = c.volume_id
+                    WHERE c.id = ? AND c.is_deleted = 0
+                )
+                SELECT e.id, e.character_id, e.chapter_id, e.motivation,
+                       e.psychology, e.current_goal, e.relationships,
+                       e.recent_activity, e.review_status
+                FROM character_state_events e
+                JOIN chapters c ON c.id = e.chapter_id
+                JOIN volumes v ON v.id = c.volume_id
+                CROSS JOIN target t
+                WHERE c.is_deleted = 0
+                  AND e.review_status = 'REVIEW'
+                  AND (
+                    v.sort_index < t.volume_order OR
+                    (v.sort_index = t.volume_order AND c.sort_index < t.chapter_order)
+                  )
+                ORDER BY e.character_id, v.sort_index, c.sort_index, e.created_at, e.id
+                LIMIT ?
+                """,
+                (chapter_id, limit),
+            ).fetchall()
+        return tuple(
+            CharacterStateReviewCandidate(
+                id=str(row["id"]),
+                character_id=str(row["character_id"]),
+                source_chapter_id=str(row["chapter_id"]),
+                review_status=ReviewStatus(row["review_status"]),
+                source_hash=hashlib.sha256(
+                    "\x1f".join(
+                        str(row[field])
+                        for field in (
+                            "motivation",
+                            "psychology",
+                            "current_goal",
+                            "relationships",
+                            "recent_activity",
+                        )
+                    ).encode()
+                ).hexdigest(),
+            )
+            for row in rows
+        )
 
     def state_candidates_before(
         self,

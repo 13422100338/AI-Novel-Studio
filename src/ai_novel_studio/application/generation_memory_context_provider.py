@@ -30,6 +30,7 @@ from ai_novel_studio.infrastructure.storage.chapter_context_pin_repository impor
 )
 from ai_novel_studio.infrastructure.storage.chapter_repository import ChapterRepository
 from ai_novel_studio.infrastructure.storage.character_memory_repository import (
+    MAX_INELIGIBLE_CHARACTER_STATE_CANDIDATES,
     CharacterMemoryRepository,
 )
 from ai_novel_studio.infrastructure.storage.narrative_memory_repository import (
@@ -196,6 +197,7 @@ class GenerationMemoryContextProvider:
         self,
         chapter_id: str,
     ) -> tuple[ContextBlock, ...]:
+        items = self.character_cards.items_before(chapter_id)
         blocks = [
             ContextBlock(
                 f"character-card-{item.character_id}",
@@ -210,8 +212,30 @@ class GenerationMemoryContextProvider:
                 item.content_hash,
                 "当前章之前按人物聚合的已审查状态卡",
             )
-            for index, item in enumerate(self.character_cards.items_before(chapter_id))
+            for index, item in enumerate(items)
         ]
+        for index, candidate in enumerate(
+            self.characters.list_ineligible_state_events_before(
+                chapter_id,
+                limit=MAX_INELIGIBLE_CHARACTER_STATE_CANDIDATES,
+            )
+        ):
+            blocks.append(
+                ContextBlock(
+                    f"character-state-review-{candidate.id}",
+                    "MEMORY",
+                    "未通过审查的人物状态候选",
+                    8 + len(items) + index,
+                    False,
+                    "CHARACTER_STATE",
+                    candidate.id,
+                    candidate.source_chapter_id,
+                    None,
+                    candidate.source_hash,
+                    "未通过审查的人物状态候选",
+                    eligibility=ContextEligibility(authority_allowed=False),
+                )
+            )
         return tuple(blocks)
 
     def _canon_blocks(self, chapter_id: str) -> tuple[ContextBlock, ...]:
