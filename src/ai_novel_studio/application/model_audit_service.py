@@ -26,10 +26,11 @@ class ModelAuditFindingInput:
     confidence: float
 
     def __post_init__(self) -> None:
-        for field in ("category", "severity", "evidence", "explanation"):
+        for field in ("category", "severity", "quote", "evidence", "explanation"):
             value = getattr(self, field)
             if not isinstance(value, str) or not value.strip():
                 raise ValueError(f"{field} cannot be empty")
+        object.__setattr__(self, "quote", self.quote.strip())
         if self.confidence < 0 or self.confidence > 1:
             raise ValueError("confidence must be between 0 and 1")
 
@@ -59,6 +60,10 @@ class ModelAuditService:
         findings: tuple[ModelAuditFindingInput, ...],
         audit_policy: AuditPolicy = AuditPolicy.MINIMAL,
     ) -> ModelAuditRecordResult:
+        validated_findings = tuple(
+            (item, _category(item.category), _severity(item.severity))
+            for item in findings
+        )
         run = self.audits.create_run(
             chapter_id=chapter_id,
             target_kind=target_kind,
@@ -75,8 +80,8 @@ class ModelAuditService:
         saved = tuple(
             self.audits.add_finding(
                 run_id=run.id,
-                category=_category(item.category),
-                severity=_severity(item.severity),
+                category=category,
+                severity=severity,
                 source=AuditFindingSource.MODEL,
                 location_json=json.dumps(
                     {"quote": item.quote},
@@ -88,7 +93,7 @@ class ModelAuditService:
                 related_source_json="[]",
                 confidence=item.confidence,
             )
-            for item in findings
+            for item, category, severity in validated_findings
         )
         completed = self.audits.update_run_status(run.id, AuditRunStatus.COMPLETED)
         return ModelAuditRecordResult(completed, saved)
