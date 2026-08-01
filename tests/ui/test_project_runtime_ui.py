@@ -33,7 +33,11 @@ from ai_novel_studio.domain.agent import (
     AgentToolCallStatus,
     AgentToolName,
 )
-from ai_novel_studio.domain.audit import AuditFindingStatus, AuditTargetKind
+from ai_novel_studio.domain.audit import (
+    AuditFindingStatus,
+    AuditRunStatus,
+    AuditTargetKind,
+)
 from ai_novel_studio.domain.generation import (
     AuditPolicy,
     BriefStatus,
@@ -1284,3 +1288,82 @@ def test_model_audit_result_is_persisted_and_reloaded_for_project_chapter(
     window.open_audit_window()
 
     assert window.audit_window.model_table.item(0, 2).text() == "原文证据句"
+
+
+def test_model_audit_completion_persists_but_does_not_render_after_visible_edit(
+    qtbot: QtBot, tmp_path: Path
+) -> None:
+    model_runtime = UiModelRuntime(tmp_path)
+    runtime, chapter_id = _project_with_chapter(tmp_path / "novel", tmp_path)
+    window = MainWindow(model_runtime=model_runtime, project_runtime=runtime)
+    qtbot.addWidget(window)
+    window.load_project_chapter(chapter_id)
+    window.open_audit_window()
+    original = window.manuscript_panel.editor.toPlainText()
+
+    window.request_model_audit()
+    window.manuscript_panel.editor.setPlainText(f"{original}\nvisible edit")
+    window.apply_model_audit(
+        StyleAuditResult(
+            "stale result",
+            (StyleAuditFinding("STYLE", "stale issue", original, "WARNING"),),
+        )
+    )
+
+    runs = AuditRepository(runtime.project).list_runs_for_target(
+        target_kind=AuditTargetKind.FORMAL_CHAPTER,
+        target_id=chapter_id,
+    )
+    persisted = tuple(
+        finding
+        for run in runs
+        for finding in AuditRepository(runtime.project).list_findings(run.id)
+        if finding.source.value == "MODEL"
+    )
+    assert len(persisted) == 1
+    assert persisted[0].evidence == original
+    assert runs[0].status == AuditRunStatus.COMPLETED
+    assert window.audit_window is not None
+    assert window.audit_window.model_table.rowCount() == 0
+    assert window.audit_window.repair_target.toPlainText() == ""
+    assert window.audit_window.repair_button.isEnabled() is False
+    assert "已保存" in window.audit_window.error_label.text()
+    assert "重新运行" in window.audit_window.error_label.text()
+
+
+def test_model_audit_completion_does_not_render_after_switching_chapters(
+    qtbot: QtBot, tmp_path: Path
+) -> None:
+    model_runtime = UiModelRuntime(tmp_path)
+    runtime, first_chapter_id = _project_with_chapter(tmp_path / "novel", tmp_path)
+    chapters = ChapterRepository(runtime.project)
+    second = chapters.create_chapter(
+        runtime.project.list_volumes()[0].id,
+        "Second",
+        "2",
+        "second chapter text",
+    )
+    window = MainWindow(model_runtime=model_runtime, project_runtime=runtime)
+    qtbot.addWidget(window)
+    window.load_project_chapter(first_chapter_id)
+    window.open_audit_window()
+    original = window.manuscript_panel.editor.toPlainText()
+
+    window.request_model_audit()
+    window.load_project_chapter(second.id)
+    window.apply_model_audit(
+        StyleAuditResult(
+            "stale result",
+            (StyleAuditFinding("STYLE", "stale issue", original, "WARNING"),),
+        )
+    )
+
+    runs = AuditRepository(runtime.project).list_runs_for_target(
+        target_kind=AuditTargetKind.FORMAL_CHAPTER,
+        target_id=first_chapter_id,
+    )
+    assert any(AuditRepository(runtime.project).list_findings(run.id) for run in runs)
+    assert window.audit_window is not None
+    assert window.audit_window.model_table.rowCount() == 0
+    assert "已保存" in window.audit_window.error_label.text()
+    assert "重新运行" in window.audit_window.error_label.text()

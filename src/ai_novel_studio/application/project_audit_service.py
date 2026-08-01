@@ -222,6 +222,21 @@ class ProjectAuditService:
             findings=inputs,
         ).findings
 
+    @staticmethod
+    def model_snapshot_matches_visible_state(
+        snapshot: ModelAuditSnapshot,
+        *,
+        chapter_id: str | None,
+        revision: int,
+        text: str,
+    ) -> bool:
+        return (
+            chapter_id == snapshot.chapter_id
+            and revision == snapshot.target_revision
+            and hashlib.sha256(text.encode("utf-8")).hexdigest()
+            == snapshot.target_hash
+        )
+
     def latest_model_findings(self, chapter_id: str) -> tuple[AuditFinding, ...]:
         chapter = self.chapters.get_chapter(chapter_id, include_deleted=False)
         current_hash = hashlib.sha256(

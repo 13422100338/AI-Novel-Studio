@@ -843,10 +843,22 @@ class MainWindow(QMainWindow):
             self.audit_window.error_label.clear()
             if self.project_runtime is not None and self._pending_model_audit is not None:
                 try:
+                    snapshot = self._pending_model_audit
                     findings = self.project_runtime.audit_service.record_model_result(
-                        self._pending_model_audit, value
+                        snapshot, value
                     )
-                    self.audit_window.apply_saved_model_findings(findings)
+                    if self.project_runtime.audit_service.model_snapshot_matches_visible_state(
+                        snapshot,
+                        chapter_id=self.current_chapter_id,
+                        revision=self.manuscript_panel.current_chapter_revision,
+                        text=self.manuscript_panel.editor.toPlainText(),
+                    ):
+                        self.audit_window.apply_saved_model_findings(findings)
+                    else:
+                        self.audit_window.apply_saved_model_findings(())
+                        self.audit_window.error_label.setText(
+                            "审校结果已保存，但当前章节或正文已经变化，请重新运行模型审校"
+                        )
                 except ValueError as exc:
                     self.audit_window.show_error(str(exc))
                 finally:
