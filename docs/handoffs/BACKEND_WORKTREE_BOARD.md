@@ -8,7 +8,7 @@
 - Superpowers: disabled for this project workflow.
 - Initial business-code baseline: `e35b50d` (the backend code state before the governance-only dispatch commit).
 - Wave 1 dispatched baseline: `3382dd36c2a4aeb4acdab411e9211885b633e678`.
-- Latest integrated business commit: `bc41148` (C10 explicit manual refresh for pending View Assertion reviews, including prior A1-A4, B1-B7, C1-C9, M1, E1a, E1b-SR1, E1b-SS1, E1b-CR1, and E1b-CS1 increments).
+- Latest integrated business commit: `0a8bb42` (E1b-CE1 body-free audit omissions for prior REVIEW Narrative Clue Events, including prior A1-A4, B1-B7, C1-C10, M1, E1a, E1b-SR1, E1b-SS1, E1b-CR1, and E1b-CS1 increments).
 - Planning sources:
   - `docs/handoffs/2026-07-22-backend-refactor-handoff.md`
   - `C:\Users\钟子诚\Downloads\AI_Novel_Studio_后端改进方案_Subject_View_Time_Context_Compiler_修订版.md`
@@ -27,7 +27,7 @@
 
 All Wave 1 tasks were dispatched from `3382dd36c2a4aeb4acdab411e9211885b633e678`; their initial business-code baseline remains `e35b50d`.
 
-- Active implementations authorized by the user: none.
+- Active implementations authorized by the user: B8 (live formal model-audit completion snapshot guard) and C11 (bounded loaded pending View Assertion queue count/status feedback).
 - Integrated increments:
   - `embedding-production` increment A1 (provider and gateway embedding contract), merged as `fdbfb088278c18a0efb3e062cd5f9e8a6ddd01f4`.
   - `embedding-production` increment A2 (Gateway-backed document/query embedding provider plus fail-open semantic recall), merged as `03b2263043262cdf371f1929a1255162decabfac`.
@@ -57,15 +57,19 @@ All Wave 1 tasks were dispatched from `3382dd36c2a4aeb4acdab411e9211885b633e678`
   - `generation-profile-audit-policy` increment B7 (freshness gate for formal model-audit evidence), merged as `663f932`.
   - `manifest-eligibility-v2` increment E1b-CS1 (bounded, body-free omissions for prior REVIEW Character State events), merged as `ce4e7ba`.
   - `view-operations-ui` increment C10 (explicit manual refresh for pending View Assertion reviews), merged as `bc41148`.
+  - `manifest-eligibility-v2` increment E1b-CE1 (bounded, body-free omissions for prior REVIEW Narrative Clue Events under approved current clues), merged as `0a8bb42`.
 - Active schema owner: none.
 
 | Task | Model / reasoning | Thread | Worktree | Assigned branch | HEAD state | Status |
 | --- | --- | --- | --- | --- | --- | --- |
+
 | `manifest-eligibility-v2` | `gpt-5.6-sol` / `high` | `019f87e8-6d32-7141-b9b4-4f1142e4db4e` | `C:\Users\钟子诚\.codex\worktrees\93d7\AI-Novel-Studio` | `codex/manifest-eligibility-v2` | branch | M1, E1a, E1b-SR1, E1b-SS1, E1b-CR1, and E1b-CS1 merged at `812a737`, `5233ccd`, `453a709`, `5e1062e`, `14b1a1f`, and `ce4e7ba`; lane paused pending explicit instruction |
 | `generation-profile-audit-policy` | `gpt-5.6-terra` / `medium` | `019f87e8-696e-7f11-bcfe-1552f51cabc3` | `C:\Users\钟子诚\.codex\worktrees\4df4\AI-Novel-Studio` | `codex/generation-profile-audit-policy-b5` | branch | B1-B7 merged; B7 is `663f932`; lane paused pending explicit instruction |
 | `view-operations-ui` | `gpt-5.6-luna` / `medium` | `019f87e8-7a77-7902-b3d1-a38f32240136` | `C:\Users\钟子诚\.codex\worktrees\8802\AI-Novel-Studio` | `codex/view-operations-ui` | branch | C1-C10 merged; C10 is `bc41148`; lane paused pending explicit instruction |
 
-E1a, E1b-SR1, E1b-SS1, E1b-CR1, E1b-CS1, C6a, C6b, C7, C8, C9, C10, B4, B5, B6, and B7 are integrated. Every later increment still requires a new user decision.
+Current dispatch override: `manifest-eligibility-v2` is paused after E1b-CE1; `generation-profile-audit-policy` is running B8 with `gpt-5.6-sol` / `high`; `view-operations-ui` is running C11 with `gpt-5.6-luna` / `max`.
+
+E1a, E1b-SR1, E1b-SS1, E1b-CR1, E1b-CS1, E1b-CE1, C6a, C6b, C7, C8, C9, C10, B4, B5, B6, and B7 are integrated. Every later increment still requires a new user decision.
 
 ## Later Waves and Dependencies
 
