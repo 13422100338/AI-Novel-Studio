@@ -1,3 +1,4 @@
+import hashlib
 from pathlib import Path
 
 from ai_novel_studio.application.project_audit_service import ProjectAuditService
@@ -45,6 +46,41 @@ def _completed_deep_run(
         audit_policy=AuditPolicy.DEEP,
         status=AuditRunStatus.COMPLETED,
         prompt_version=prompt_version,
+    )
+
+
+def _formal_model_run(
+    audits: AuditRepository,
+    *,
+    chapter_id: str,
+    revision: int,
+    content: str,
+    status: AuditRunStatus,
+):
+    return audits.create_run(
+        chapter_id=chapter_id,
+        target_kind=AuditTargetKind.FORMAL_CHAPTER,
+        target_id=chapter_id,
+        target_revision=revision,
+        target_hash=hashlib.sha256(content.encode("utf-8")).hexdigest(),
+        mode=CreationMode.STANDARD,
+        audit_policy=AuditPolicy.STANDARD,
+        status=status,
+        prompt_version="model-audit-ui-v1",
+    )
+
+
+def _model_finding(audits: AuditRepository, run_id: str, evidence: str):
+    return audits.add_finding(
+        run_id=run_id,
+        category=AuditFindingCategory.STYLE,
+        severity=AuditSeverity.WARNING,
+        source=AuditFindingSource.MODEL,
+        location_json="{}",
+        evidence=evidence,
+        explanation="model finding",
+        related_source_json="[]",
+        confidence=0.7,
     )
 
 
@@ -185,3 +221,83 @@ def test_recovered_current_run_reads_its_persisted_latest_deep_results(
     assert results.deterministic_findings == (finding,)
     assert results.model_findings == ()
     assert results.has_results is True
+
+
+def test_latest_formal_model_findings_ignores_stale_and_incomplete_runs(
+    tmp_path: Path,
+) -> None:
+    project = ProjectRepository.create(tmp_path / "novel", "Fresh Formal Audit")
+    chapters = ChapterRepository(project)
+    chapter = chapters.create_chapter(
+        project.list_volumes()[0].id, "Opening", "1", "old chapter text"
+    )
+    audits = AuditRepository(project)
+    stale = _formal_model_run(
+        audits,
+        chapter_id=chapter.id,
+        revision=chapter.revision,
+        content="old chapter text",
+        status=AuditRunStatus.COMPLETED,
+    )
+    _model_finding(audits, stale.id, "stale evidence")
+    chapter = chapters.save_content(
+        chapter.id,
+        "current chapter text",
+        source="manual",
+        reason="test revision",
+        expected_revision=chapter.revision,
+    )
+    wrong_hash = _formal_model_run(
+        audits,
+        chapter_id=chapter.id,
+        revision=chapter.revision,
+        content="different chapter text",
+        status=AuditRunStatus.COMPLETED,
+    )
+    _model_finding(audits, wrong_hash.id, "wrong hash evidence")
+    failed = _formal_model_run(
+        audits,
+        chapter_id=chapter.id,
+        revision=chapter.revision,
+        content="current chapter text",
+        status=AuditRunStatus.FAILED,
+    )
+    _model_finding(audits, failed.id, "failed evidence")
+    preparing = _formal_model_run(
+        audits,
+        chapter_id=chapter.id,
+        revision=chapter.revision,
+        content="current chapter text",
+        status=AuditRunStatus.PREPARING,
+    )
+    _model_finding(audits, preparing.id, "preparing evidence")
+
+    assert ProjectAuditService(project).latest_model_findings(chapter.id) == ()
+
+
+def test_latest_formal_model_zero_finding_run_clears_older_matching_findings(
+    tmp_path: Path,
+) -> None:
+    project = ProjectRepository.create(tmp_path / "novel", "Empty Formal Audit")
+    chapters = ChapterRepository(project)
+    chapter = chapters.create_chapter(
+        project.list_volumes()[0].id, "Opening", "1", "current chapter text"
+    )
+    audits = AuditRepository(project)
+    older = _formal_model_run(
+        audits,
+        chapter_id=chapter.id,
+        revision=chapter.revision,
+        content="current chapter text",
+        status=AuditRunStatus.COMPLETED,
+    )
+    _model_finding(audits, older.id, "older evidence")
+    _formal_model_run(
+        audits,
+        chapter_id=chapter.id,
+        revision=chapter.revision,
+        content="current chapter text",
+        status=AuditRunStatus.COMPLETED,
+    )
+
+    assert ProjectAuditService(project).latest_model_findings(chapter.id) == ()

@@ -223,18 +223,28 @@ class ProjectAuditService:
         ).findings
 
     def latest_model_findings(self, chapter_id: str) -> tuple[AuditFinding, ...]:
+        chapter = self.chapters.get_chapter(chapter_id, include_deleted=False)
+        current_hash = hashlib.sha256(
+            self.chapters.read_content(chapter_id).encode("utf-8")
+        ).hexdigest()
         runs = self.repository.list_runs_for_target(
             target_kind=AuditTargetKind.FORMAL_CHAPTER,
             target_id=chapter_id,
         )
         for run in runs:
-            findings = tuple(
+            if (
+                run.status != AuditRunStatus.COMPLETED
+                or run.target_revision != chapter.revision
+                or run.target_hash != current_hash
+                or _audit_source_for_prompt_version(run.prompt_version)
+                != AuditFindingSource.MODEL
+            ):
+                continue
+            return tuple(
                 item
                 for item in self.repository.list_findings(run.id)
                 if item.source == AuditFindingSource.MODEL
             )
-            if findings:
-                return findings
         return ()
 
     def latest_generated_draft_deep_results(
