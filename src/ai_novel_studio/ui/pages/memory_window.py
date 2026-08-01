@@ -850,6 +850,12 @@ class MemoryWindow(QMainWindow):
         )
         self.view_assertion_save_edit_button = QPushButton("保存内容修订", panel)
         self.view_assertion_save_edit_button.clicked.connect(self._save_view_assertion_edit)
+        self.view_assertion_review_refresh_button = QPushButton("刷新待审列表", panel)
+        self.view_assertion_review_refresh_button.setAccessibleName("刷新待审 View Assertion 列表")
+        self.view_assertion_review_refresh_button.clicked.connect(
+            self._refresh_view_assertion_review_operation
+        )
+        actions.addWidget(self.view_assertion_review_refresh_button)
         actions.addWidget(self.view_assertion_save_edit_button)
         actions.addWidget(self.view_assertion_approve_button)
         actions.addWidget(self.view_assertion_reject_button)
@@ -865,6 +871,7 @@ class MemoryWindow(QMainWindow):
         layout.addLayout(actions)
         layout.addWidget(self.view_assertion_review_status_label)
         self._set_view_assertion_review_enabled(False)
+        self.view_assertion_review_refresh_button.setEnabled(False)
         return panel
 
     def _bind_view_assertion_review_operation(
@@ -887,8 +894,10 @@ class MemoryWindow(QMainWindow):
                 "当前未绑定项目，无法审查 View Assertion 候选。"
             )
             self._set_view_assertion_review_enabled(False)
+            self.view_assertion_review_refresh_button.setEnabled(False)
             self._view_assertion_review_selected_id = None
             return
+        self.view_assertion_review_refresh_button.setEnabled(True)
         candidates = service.list_review_candidates(limit=100)
         self._view_assertion_review_candidates = {
             candidate.id: candidate for candidate in candidates
@@ -917,6 +926,11 @@ class MemoryWindow(QMainWindow):
             return
         self._set_view_assertion_review_enabled(True)
         self._render_view_assertion_review_candidate()
+
+    def _refresh_view_assertion_review_operation(self) -> None:
+        self._bind_view_assertion_review_operation(
+            tuple(self._view_assertion_subject_names.items())
+        )
 
     def _handle_view_assertion_review_selection(self, _index: int = -1) -> None:
         if self._protect_unsaved_view_assertion_edit():

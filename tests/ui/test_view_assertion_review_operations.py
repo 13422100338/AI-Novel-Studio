@@ -182,6 +182,45 @@ def test_view_assertion_review_selector_disambiguates_candidates_by_source(
     assert window.view_assertion_review_selector.itemData(1) == "assertion-2"
 
 
+def test_view_assertion_review_refresh_shows_new_candidates(
+    qtbot: QtBot,
+) -> None:
+    window = MemoryWindow(WorkspaceDemoData.sample())
+    qtbot.addWidget(window)
+    first = _candidate()
+    service = _ReviewService((first,))
+    _bind(window, service)
+    service.candidates = (
+        first,
+        replace(first, id="assertion-2", source_id="chapter-2"),
+    )
+
+    qtbot.mouseClick(window.view_assertion_review_refresh_button, Qt.MouseButton.LeftButton)
+
+    assert window.view_assertion_review_selector.count() == 2
+    assert window.view_assertion_review_selector.itemData(1) == "assertion-2"
+
+
+def test_view_assertion_review_refresh_cancel_keeps_unsaved_draft(
+    qtbot: QtBot, monkeypatch: MonkeyPatch
+) -> None:
+    window = MemoryWindow(WorkspaceDemoData.sample())
+    qtbot.addWidget(window)
+    service = _ReviewService((_candidate(),))
+    _bind(window, service)
+    window.view_assertion_content_editor.setPlainText("unsaved draft")
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.Cancel,
+    )
+
+    qtbot.mouseClick(window.view_assertion_review_refresh_button, Qt.MouseButton.LeftButton)
+
+    assert window.view_assertion_review_selector.currentData() == "assertion-1"
+    assert window.view_assertion_content_editor.toPlainText() == "unsaved draft"
+
+
 def test_view_assertion_review_cancelled_approval_and_rejection_do_not_write(
     qtbot: QtBot, monkeypatch: MonkeyPatch
 ) -> None:
