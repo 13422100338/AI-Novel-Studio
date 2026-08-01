@@ -138,9 +138,15 @@ def test_view_assertion_review_binds_one_candidate_with_safe_subject_names(
     window = MemoryWindow(WorkspaceDemoData.sample())
     qtbot.addWidget(window)
 
+    assert window.view_assertion_review_count_label.text() == (
+        "当前未绑定项目，待审候选数量不可用。"
+    )
     _bind(window, _ReviewService((_candidate(),)))
 
     assert window.view_assertion_review_selector.count() == 1
+    assert window.view_assertion_review_count_label.text() == (
+        "当前显示 1 条待审候选（最多 100 条）。"
+    )
     assert "CHARACTER_VIEW" in window.view_assertion_review_details.toPlainText()
     assert "艾瑞克" in window.view_assertion_review_details.toPlainText()
     assert "克莉丝汀" in window.view_assertion_review_details.toPlainText()
@@ -190,6 +196,9 @@ def test_view_assertion_review_refresh_shows_new_candidates(
     first = _candidate()
     service = _ReviewService((first,))
     _bind(window, service)
+    assert window.view_assertion_review_count_label.text() == (
+        "当前显示 1 条待审候选（最多 100 条）。"
+    )
     service.candidates = (
         first,
         replace(first, id="assertion-2", source_id="chapter-2"),
@@ -199,6 +208,9 @@ def test_view_assertion_review_refresh_shows_new_candidates(
 
     assert window.view_assertion_review_selector.count() == 2
     assert window.view_assertion_review_selector.itemData(1) == "assertion-2"
+    assert window.view_assertion_review_count_label.text() == (
+        "当前显示 2 条待审候选（最多 100 条）。"
+    )
 
 
 def test_view_assertion_review_refresh_cancel_keeps_unsaved_draft(
@@ -282,6 +294,9 @@ def test_view_assertion_review_handles_error_and_empty_state(
 
     assert window.view_assertion_approve_button.isEnabled() is False
     assert "没有" in window.view_assertion_review_status_label.text()
+    assert window.view_assertion_review_count_label.text() == (
+        "当前显示 0 条待审候选（最多 100 条）。"
+    )
 
     service = _ReviewService(
         (_candidate(),), error=ViewAssertionReviewError("候选已被审查")

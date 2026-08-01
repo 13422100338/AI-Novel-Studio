@@ -830,6 +830,11 @@ class MemoryWindow(QMainWindow):
         self.view_assertion_review_selector.currentIndexChanged.connect(
             self._handle_view_assertion_review_selection
         )
+        self.view_assertion_review_count_label = QLabel(
+            "当前未绑定项目，待审候选数量不可用。", panel
+        )
+        self.view_assertion_review_count_label.setWordWrap(True)
+        self.view_assertion_review_count_label.setObjectName("mutedLabel")
         self.view_assertion_review_details = QPlainTextEdit(panel)
         self.view_assertion_review_details.setAccessibleName("查看 View Assertion 候选详情")
         self.view_assertion_review_details.setReadOnly(True)
@@ -866,6 +871,7 @@ class MemoryWindow(QMainWindow):
         layout.addWidget(title)
         layout.addWidget(explanation)
         layout.addWidget(self.view_assertion_review_selector)
+        layout.addWidget(self.view_assertion_review_count_label)
         layout.addWidget(self.view_assertion_review_details)
         layout.addWidget(self.view_assertion_content_editor)
         layout.addLayout(actions)
@@ -893,12 +899,18 @@ class MemoryWindow(QMainWindow):
             self.view_assertion_review_status_label.setText(
                 "当前未绑定项目，无法审查 View Assertion 候选。"
             )
+            self.view_assertion_review_count_label.setText(
+                "当前未绑定项目，待审候选数量不可用。"
+            )
             self._set_view_assertion_review_enabled(False)
             self.view_assertion_review_refresh_button.setEnabled(False)
             self._view_assertion_review_selected_id = None
             return
         self.view_assertion_review_refresh_button.setEnabled(True)
         candidates = service.list_review_candidates(limit=100)
+        self.view_assertion_review_count_label.setText(
+            f"当前显示 {len(candidates)} 条待审候选（最多 100 条）。"
+        )
         self._view_assertion_review_candidates = {
             candidate.id: candidate for candidate in candidates
         }
