@@ -244,6 +244,184 @@ def test_typed_clue_history_is_time_bounded_and_locked_misdirection_is_protected
         repository.update_clue_detail(clue.id, "直接改成真凶", SourceType.MODEL)
 
 
+def test_review_clue_events_are_time_bounded_body_free_and_audit_only(
+    tmp_path: Path,
+) -> None:
+    project, chapters = _project_with_chapters(tmp_path)
+    repository = NarrativeMemoryRepository(project)
+    approved_clue = repository.add_clue(
+        ClueType.FORESHADOW,
+        "批准伏笔",
+        "批准伏笔正文",
+        Authority.USER_CONFIRMED,
+        ReviewStatus.APPROVED,
+    )
+    locked_clue = repository.add_clue(
+        ClueType.MISDIRECTION,
+        "锁定伏笔",
+        "锁定伏笔正文",
+        Authority.USER_CONFIRMED,
+        ReviewStatus.LOCKED,
+    )
+    review_clue = repository.add_clue(
+        ClueType.FORESHADOW,
+        "待审伏笔",
+        "待审伏笔正文",
+        Authority.MODEL_EXTRACTED,
+        ReviewStatus.REVIEW,
+    )
+    stale_clue = repository.add_clue(
+        ClueType.FORESHADOW,
+        "失效伏笔",
+        "失效伏笔正文",
+        Authority.USER_CONFIRMED,
+        ReviewStatus.APPROVED,
+    )
+    allowed = repository.append_clue_action(
+        approved_clue.id,
+        chapters[0].id,
+        ClueAction.PLANT,
+        "已批准事件",
+        SourceType.HUMAN,
+        ReviewStatus.APPROVED,
+    )
+    first_review = repository.append_clue_action(
+        approved_clue.id,
+        chapters[0].id,
+        ClueAction.RESOLVE,
+        "FIRST_REVIEW_CLUE_EVENT_SECRET",
+        SourceType.MODEL,
+        ReviewStatus.REVIEW,
+    )
+    second_review = repository.append_clue_action(
+        locked_clue.id,
+        chapters[0].id,
+        ClueAction.ABANDON,
+        "SECOND_REVIEW_CLUE_EVENT_SECRET",
+        SourceType.MODEL,
+        ReviewStatus.REVIEW,
+    )
+    repository.append_clue_action(
+        approved_clue.id,
+        chapters[0].id,
+        ClueAction.REINFORCE,
+        "已拒绝事件",
+        SourceType.MODEL,
+        ReviewStatus.REJECTED,
+    )
+    repository.append_clue_action(
+        review_clue.id,
+        chapters[0].id,
+        ClueAction.PLANT,
+        "未批准父伏笔的事件",
+        SourceType.MODEL,
+        ReviewStatus.REVIEW,
+    )
+    repository.append_clue_action(
+        stale_clue.id,
+        chapters[0].id,
+        ClueAction.PLANT,
+        "非当前父伏笔的事件",
+        SourceType.MODEL,
+        ReviewStatus.REVIEW,
+    )
+    repository.append_clue_action(
+        approved_clue.id,
+        chapters[1].id,
+        ClueAction.REINFORCE,
+        "当前章事件",
+        SourceType.MODEL,
+        ReviewStatus.REVIEW,
+    )
+    repository.append_clue_action(
+        approved_clue.id,
+        chapters[2].id,
+        ClueAction.REINFORCE,
+        "未来章事件",
+        SourceType.MODEL,
+        ReviewStatus.REVIEW,
+    )
+    with project.database.connect() as connection, connection:
+        connection.execute(
+            "UPDATE narrative_clues SET status = 'STALE' WHERE id = ?",
+            (stale_clue.id,),
+        )
+
+    candidates = repository.list_ineligible_clue_events_before(
+        chapters[1].id,
+        limit=100,
+    )
+    active = NarrativeClueLedger(repository).active_before(chapters[1].id)
+
+    expected = sorted(
+        (first_review, second_review),
+        key=lambda event: (event.created_at, event.id),
+    )
+    assert tuple(item.id for item in candidates) == tuple(
+        event.id for event in expected
+    )
+    assert tuple(item.clue_id for item in candidates) == tuple(
+        event.clue_id for event in expected
+    )
+    assert tuple(item.source_chapter_id for item in candidates) == tuple(
+        event.chapter_id for event in expected
+    )
+    assert tuple(item.review_status for item in candidates) == (
+        ReviewStatus.REVIEW,
+        ReviewStatus.REVIEW,
+    )
+    assert tuple(item.source_hash for item in candidates) == tuple(
+        hashlib.sha256(
+            f"{event.id}\x1f{event.action.value}\x1f{event.detail}".encode()
+        ).hexdigest()
+        for event in expected
+    )
+    assert all(not hasattr(item, "action") for item in candidates)
+    assert all(not hasattr(item, "detail") for item in candidates)
+    assert all(not hasattr(item, "source_type") for item in candidates)
+    assert active[0].events == (allowed,)
+    with pytest.raises(ValueError, match="伏笔事件候选数量"):
+        repository.list_ineligible_clue_events_before(chapters[1].id, limit=True)
+    with pytest.raises(ValueError, match="伏笔事件候选数量"):
+        repository.list_ineligible_clue_events_before(chapters[1].id, limit=101)
+
+
+def test_review_clue_event_candidates_have_a_deterministic_global_cap(
+    tmp_path: Path,
+) -> None:
+    project, chapters = _project_with_chapters(tmp_path)
+    repository = NarrativeMemoryRepository(project)
+    clue = repository.add_clue(
+        ClueType.FORESHADOW,
+        "容量伏笔",
+        "容量伏笔正文",
+        Authority.USER_CONFIRMED,
+        ReviewStatus.APPROVED,
+    )
+    created = [
+        repository.append_clue_action(
+            clue.id,
+            chapters[0].id,
+            ClueAction.REINFORCE,
+            f"REVIEW_CLUE_EVENT_{index:03d}",
+            SourceType.MODEL,
+            ReviewStatus.REVIEW,
+        )
+        for index in range(101)
+    ]
+
+    candidates = repository.list_ineligible_clue_events_before(
+        chapters[1].id,
+        limit=100,
+    )
+
+    expected = sorted(created, key=lambda event: (event.created_at, event.id))[:100]
+    assert tuple(item.id for item in candidates) == tuple(
+        event.id for event in expected
+    )
+    assert len(candidates) == 100
+
+
 def test_style_retriever_compiles_layers_and_keeps_human_samples_immutable(
     tmp_path: Path,
 ) -> None:

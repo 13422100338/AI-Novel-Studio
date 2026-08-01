@@ -21,6 +21,7 @@ from ai_novel_studio.domain.memory import (
 from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
 
 MAX_INELIGIBLE_CANON_CANDIDATES = 100
+MAX_INELIGIBLE_CLUE_EVENT_CANDIDATES = 100
 
 
 def _now() -> datetime:
@@ -46,6 +47,15 @@ class CanonReviewCandidate:
     id: str
     source_chapter_id: str | None
     status: MemoryStatus
+    review_status: ReviewStatus
+    source_hash: str
+
+
+@dataclass(frozen=True, slots=True)
+class ClueEventReviewCandidate:
+    id: str
+    clue_id: str
+    source_chapter_id: str
     review_status: ReviewStatus
     source_hash: str
 
@@ -354,6 +364,70 @@ class NarrativeMemoryRepository:
         return tuple(
             ClueTimeline(self._clue(row), tuple(events.get(row["id"], [])))
             for row in clue_rows
+        )
+
+    def list_ineligible_clue_events_before(
+        self,
+        chapter_id: str,
+        *,
+        limit: int,
+    ) -> tuple[ClueEventReviewCandidate, ...]:
+        if (
+            isinstance(limit, bool)
+            or not isinstance(limit, int)
+            or limit <= 0
+            or limit > MAX_INELIGIBLE_CLUE_EVENT_CANDIDATES
+        ):
+            raise ValueError(
+                "伏笔事件候选数量必须是 "
+                f"1 到 {MAX_INELIGIBLE_CLUE_EVENT_CANDIDATES} 之间的整数"
+            )
+        with self.project.database.connect() as connection:
+            target = connection.execute(
+                "SELECT 1 FROM chapters WHERE id = ? AND is_deleted = 0",
+                (chapter_id,),
+            ).fetchone()
+            if target is None:
+                raise KeyError(f"unknown chapter: {chapter_id}")
+            rows = connection.execute(
+                """
+                WITH target AS (
+                    SELECT v.sort_index AS volume_order, c.sort_index AS chapter_order
+                    FROM chapters c JOIN volumes v ON v.id = c.volume_id
+                    WHERE c.id = ? AND c.is_deleted = 0
+                )
+                SELECT e.id, e.clue_id, e.chapter_id, e.action, e.detail,
+                       e.review_status
+                FROM narrative_clue_events e
+                JOIN narrative_clues clue ON clue.id = e.clue_id
+                JOIN chapters c ON c.id = e.chapter_id AND c.is_deleted = 0
+                JOIN volumes v ON v.id = c.volume_id
+                CROSS JOIN target t
+                WHERE clue.status = 'CURRENT'
+                  AND clue.review_status IN ('APPROVED', 'LOCKED')
+                  AND e.review_status = 'REVIEW'
+                  AND (
+                    v.sort_index < t.volume_order OR
+                    (v.sort_index = t.volume_order AND c.sort_index < t.chapter_order)
+                  )
+                ORDER BY v.sort_index, c.sort_index, e.created_at, e.id
+                LIMIT ?
+                """,
+                (chapter_id, limit),
+            ).fetchall()
+        return tuple(
+            ClueEventReviewCandidate(
+                id=str(row["id"]),
+                clue_id=str(row["clue_id"]),
+                source_chapter_id=str(row["chapter_id"]),
+                review_status=ReviewStatus(row["review_status"]),
+                source_hash=hashlib.sha256(
+                    "\x1f".join(
+                        (str(row["id"]), str(row["action"]), str(row["detail"]))
+                    ).encode("utf-8")
+                ).hexdigest(),
+            )
+            for row in rows
         )
 
     def update_clue_detail(

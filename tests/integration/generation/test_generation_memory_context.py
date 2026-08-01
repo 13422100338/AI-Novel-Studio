@@ -34,9 +34,12 @@ from ai_novel_studio.core.context.context_builder import (
 )
 from ai_novel_studio.core.context.context_manifest import ContextManifestRepository
 from ai_novel_studio.core.context.token_budget import TokenBudget
+from ai_novel_studio.core.memory.narrative_clue_ledger import NarrativeClueLedger
 from ai_novel_studio.domain.generation import CreationMode
 from ai_novel_studio.domain.memory import (
     Authority,
+    ClueAction,
+    ClueType,
     KnowledgeState,
     KnowledgeSubject,
     ReviewStatus,
@@ -915,6 +918,76 @@ def test_manual_canon_category_overrides_title_heuristic(tmp_path: Path) -> None
 
     assert "月辉印记其实是一件王室信物" not in cards[1].content
     assert "月辉印记其实是一件王室信物" in cards[2].content
+
+
+def test_review_clue_events_are_manifested_but_never_reach_writer_prompt(
+    tmp_path: Path,
+) -> None:
+    project = ProjectRepository.create(tmp_path / "novel", "Novel")
+    volume = project.list_volumes()[0]
+    chapters = ChapterRepository(project)
+    first = chapters.create_chapter(volume.id, "Opening", "1", "Opening body")
+    current = chapters.create_chapter(volume.id, "Current", "2", "Current body")
+    narrative = NarrativeMemoryRepository(project)
+    clue = narrative.add_clue(
+        ClueType.FORESHADOW,
+        "批准伏笔",
+        "批准伏笔正文",
+        Authority.USER_CONFIRMED,
+        ReviewStatus.APPROVED,
+    )
+    allowed = narrative.append_clue_action(
+        clue.id,
+        first.id,
+        ClueAction.PLANT,
+        "已批准事件",
+        SourceType.HUMAN,
+        ReviewStatus.APPROVED,
+    )
+    review = narrative.append_clue_action(
+        clue.id,
+        first.id,
+        ClueAction.RESOLVE,
+        "REVIEW_CLUE_EVENT_SECRET",
+        SourceType.MODEL,
+        ReviewStatus.REVIEW,
+    )
+
+    provider = GenerationMemoryContextProvider(project)
+    blocks = provider.blocks(current.id, "继续伏笔", ())
+    candidate = next(
+        block for block in blocks if block.source_type == "NARRATIVE_CLUE_EVENT"
+    )
+    active = NarrativeClueLedger(narrative).active_before(current.id)
+    built = ContextBuilder().build(
+        ContextBuildRequest(
+            chapter_id=current.id,
+            run_id="review-clue-event-filter",
+            budget=TokenBudget(20_000, 2_000, 0),
+            blocks=blocks,
+            deduplicate=True,
+        )
+    )
+
+    assert candidate.content == "未通过审查的伏笔事件候选"
+    assert candidate.source_id == review.id
+    assert candidate.source_chapter_id == first.id
+    assert candidate.source_revision is None
+    assert candidate.source_hash == hashlib.sha256(
+        f"{review.id}\x1f{review.action.value}\x1f{review.detail}".encode()
+    ).hexdigest()
+    assert candidate.eligibility.authority_allowed is False
+    assert active[0].events == (allowed,)
+    omission = next(
+        item
+        for item in built.manifest.omitted
+        if item.source_type == "NARRATIVE_CLUE_EVENT"
+    )
+    assert omission.source_id == review.id
+    assert omission.reason == "HARD_FILTER:AUTHORITY_REJECTED"
+    assert omission.source_revision is None
+    assert review.detail not in candidate.content
+    assert review.detail not in built.text
 
 
 def test_basic_generation_includes_relevant_state_and_compressed_history(

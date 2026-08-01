@@ -35,6 +35,7 @@ from ai_novel_studio.infrastructure.storage.character_memory_repository import (
 )
 from ai_novel_studio.infrastructure.storage.narrative_memory_repository import (
     MAX_INELIGIBLE_CANON_CANDIDATES,
+    MAX_INELIGIBLE_CLUE_EVENT_CANDIDATES,
     NarrativeMemoryRepository,
 )
 from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
@@ -361,6 +362,28 @@ class GenerationMemoryContextProvider:
                     0,
                     _hash(content),
                     f"当前章之前仍未解决的伏笔：{timeline.clue.title}",
+                )
+            )
+        for index, candidate in enumerate(
+            self.narrative.list_ineligible_clue_events_before(
+                chapter_id,
+                limit=MAX_INELIGIBLE_CLUE_EVENT_CANDIDATES,
+            )
+        ):
+            blocks.append(
+                ContextBlock(
+                    f"clue-event-review-{candidate.id}",
+                    "MEMORY",
+                    "未通过审查的伏笔事件候选",
+                    16 + len(timelines) + index,
+                    False,
+                    "NARRATIVE_CLUE_EVENT",
+                    candidate.id,
+                    candidate.source_chapter_id,
+                    None,
+                    candidate.source_hash,
+                    "未通过审查的伏笔事件候选",
+                    eligibility=ContextEligibility(authority_allowed=False),
                 )
             )
         return tuple(blocks)
