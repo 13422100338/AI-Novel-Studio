@@ -907,7 +907,24 @@ class MemoryWindow(QMainWindow):
             self._view_assertion_review_selected_id = None
             return
         self.view_assertion_review_refresh_button.setEnabled(True)
-        candidates = service.list_review_candidates(limit=100)
+        try:
+            candidates = service.list_review_candidates(limit=100)
+        except (PermissionError, ValueError, ViewAssertionReviewError):
+            self._view_assertion_review_candidates = {}
+            self.view_assertion_review_selector.blockSignals(True)
+            self.view_assertion_review_selector.clear()
+            self.view_assertion_review_selector.blockSignals(False)
+            self.view_assertion_review_details.clear()
+            self.view_assertion_content_editor.clear()
+            self.view_assertion_review_status_label.setText(
+                "待审列表刷新失败，请稍后重试。"
+            )
+            self.view_assertion_review_count_label.setText("待审候选数量暂不可用。")
+            self._set_view_assertion_review_enabled(False)
+            self.view_assertion_review_refresh_button.setEnabled(True)
+            self._view_assertion_review_selected_id = None
+            self._view_assertion_review_refresh_candidate = None
+            return
         self.view_assertion_review_count_label.setText(
             f"当前显示 {len(candidates)} 条待审候选（最多 100 条）。"
         )

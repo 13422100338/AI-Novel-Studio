@@ -53,12 +53,17 @@ class _ReviewService:
     candidates: tuple[ViewAssertion, ...]
     error: Exception | None = None
     keep_candidates_on_edit: bool = False
+    list_error: Exception | None = None
 
     def __post_init__(self) -> None:
         self.calls: list[tuple[str, str, bool]] = []
+        self.list_calls = 0
 
     def list_review_candidates(self, *, limit: int = 100) -> tuple[ViewAssertion, ...]:
         assert limit == 100
+        self.list_calls += 1
+        if self.list_error is not None:
+            raise self.list_error
         return self.candidates
 
     def approve_candidate(
@@ -213,6 +218,44 @@ def test_view_assertion_review_refresh_shows_new_candidates(
     )
 
 
+def test_view_assertion_review_list_failure_fails_closed_and_recovers(
+    qtbot: QtBot,
+) -> None:
+    window = MemoryWindow(WorkspaceDemoData.sample())
+    qtbot.addWidget(window)
+    service = _ReviewService((_candidate(),))
+    _bind(window, service)
+    service.list_error = ViewAssertionReviewError(
+        "secret token and model body must not be shown"
+    )
+
+    qtbot.mouseClick(window.view_assertion_review_refresh_button, Qt.MouseButton.LeftButton)
+
+    assert window.view_assertion_review_selector.count() == 0
+    assert window.view_assertion_review_details.toPlainText() == ""
+    assert window.view_assertion_content_editor.toPlainText() == ""
+    assert window.view_assertion_review_selector.isEnabled() is False
+    assert window.view_assertion_save_edit_button.isEnabled() is False
+    assert window.view_assertion_approve_button.isEnabled() is False
+    assert window.view_assertion_reject_button.isEnabled() is False
+    assert window.view_assertion_review_refresh_button.isEnabled() is True
+    assert window.view_assertion_review_status_label.text() == (
+        "待审列表刷新失败，请稍后重试。"
+    )
+    assert window.view_assertion_review_count_label.text() == "待审候选数量暂不可用。"
+    assert "secret" not in window.view_assertion_review_status_label.text()
+    assert "model body" not in window.view_assertion_review_status_label.text()
+
+    service.list_error = None
+    qtbot.mouseClick(window.view_assertion_review_refresh_button, Qt.MouseButton.LeftButton)
+
+    assert window.view_assertion_review_selector.count() == 1
+    assert window.view_assertion_approve_button.isEnabled() is True
+    assert window.view_assertion_review_count_label.text() == (
+        "当前显示 1 条待审候选（最多 100 条）。"
+    )
+
+
 def test_view_assertion_review_refresh_cancel_keeps_unsaved_draft(
     qtbot: QtBot, monkeypatch: MonkeyPatch
 ) -> None:
@@ -231,6 +274,7 @@ def test_view_assertion_review_refresh_cancel_keeps_unsaved_draft(
 
     assert window.view_assertion_review_selector.currentData() == "assertion-1"
     assert window.view_assertion_content_editor.toPlainText() == "unsaved draft"
+    assert service.list_calls == 1
 
 
 def test_view_assertion_review_cancelled_approval_and_rejection_do_not_write(
