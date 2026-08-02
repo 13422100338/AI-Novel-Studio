@@ -76,16 +76,17 @@ class ProjectAuditService:
     def __init__(self, project: ProjectRepository) -> None:
         self.repository = AuditRepository(project)
         self.chapters = ChapterRepository(project)
+        self.characters = CharacterMemoryRepository(project)
         self.workflow = AuditWorkflowService(
             self.chapters,
             ChapterRequirementRepository(project),
             self.repository,
             view_assertions=ViewAssertionRepository(project),
+            character_memory=self.characters,
         )
         self.model_audits = ModelAuditService(self.repository)
         self.repairs = RepairApplicationService(self.chapters, self.repository)
         self.briefs = ChapterBriefRepository(project)
-        self.characters = CharacterMemoryRepository(project)
         self.summaries = SummaryRepository(project)
 
     def run_deterministic(

@@ -65,6 +65,38 @@ class ReaderViewAuditSource:
 
 
 @dataclass(frozen=True, slots=True)
+class CharacterLocationConflictAuditSource:
+    character_id: str
+    source_boundary_chapter_id: str
+    locations: tuple[str, ...]
+    state_event_ids: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        character_id = self.character_id.strip()
+        source_boundary_chapter_id = self.source_boundary_chapter_id.strip()
+        if not character_id:
+            raise ValueError("character_id cannot be empty")
+        if not source_boundary_chapter_id:
+            raise ValueError("source_boundary_chapter_id cannot be empty")
+        locations = tuple(
+            dict.fromkeys(location.strip() for location in self.locations if location.strip())
+        )
+        state_event_ids = tuple(
+            sorted({event_id.strip() for event_id in self.state_event_ids if event_id.strip()})
+        )
+        if not state_event_ids:
+            raise ValueError("state_event_ids cannot be empty")
+        object.__setattr__(self, "character_id", character_id)
+        object.__setattr__(
+            self,
+            "source_boundary_chapter_id",
+            source_boundary_chapter_id,
+        )
+        object.__setattr__(self, "locations", locations)
+        object.__setattr__(self, "state_event_ids", state_event_ids)
+
+
+@dataclass(frozen=True, slots=True)
 class DeterministicAuditRequest:
     chapter_id: str
     target_text: str
@@ -73,6 +105,9 @@ class DeterministicAuditRequest:
     requirement_content: str
     chapter_sequence: int = 0
     reader_view_sources: tuple[ReaderViewAuditSource, ...] = ()
+    character_location_conflict_sources: tuple[
+        CharacterLocationConflictAuditSource, ...
+    ] = ()
 
     def __post_init__(self) -> None:
         if not self.chapter_id.strip():
@@ -142,6 +177,12 @@ class DeterministicAuditService:
                     text,
                     chapter_sequence=request.chapter_sequence,
                     sources=request.reader_view_sources,
+                )
+            )
+            findings.extend(
+                _contested_character_location_findings(
+                    text,
+                    sources=request.character_location_conflict_sources,
                 )
             )
 
@@ -303,6 +344,55 @@ def _premature_reader_view_exposure_findings(
                 confidence=1.0,
             )
         )
+    return tuple(findings)
+
+
+def _contested_character_location_findings(
+    text: str,
+    *,
+    sources: tuple[CharacterLocationConflictAuditSource, ...],
+) -> tuple[DeterministicFinding, ...]:
+    findings: list[DeterministicFinding] = []
+    matched_character_ids: set[str] = set()
+    for source in sources:
+        if source.character_id in matched_character_ids or len(source.locations) < 2:
+            continue
+        matches = (
+            (start, location)
+            for location in source.locations
+            if (start := text.find(location)) >= 0
+        )
+        match = min(matches, default=None)
+        if match is None:
+            continue
+        start, location = match
+        findings.append(
+            _finding(
+                AuditFindingCategory.TIMELINE,
+                AuditSeverity.WARNING,
+                location,
+                (
+                    "The audited text uses one location branch from an unresolved "
+                    "same-boundary Character State conflict."
+                ),
+                location={
+                    "quote": location,
+                    "start": start,
+                    "character_id": source.character_id,
+                    "state_field": "location",
+                    "source_boundary_chapter_id": (
+                        source.source_boundary_chapter_id
+                    ),
+                },
+                evidence_kind=_SOURCE_EXCERPT,
+                related=[
+                    {"type": "character_state_event", "id": event_id}
+                    for event_id in source.state_event_ids
+                ],
+                confidence=1.0,
+            )
+        )
+        matched_character_ids.add(source.character_id)
     return tuple(findings)
 
 

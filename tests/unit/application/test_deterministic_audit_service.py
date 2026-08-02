@@ -3,6 +3,7 @@ import json
 import pytest
 
 from ai_novel_studio.application.deterministic_audit_service import (
+    CharacterLocationConflictAuditSource,
     DeterministicAuditRequest,
     DeterministicAuditService,
     ReaderViewAuditSource,
@@ -20,6 +21,9 @@ def _run(
     *,
     chapter_sequence: int = 1,
     reader_view_sources: tuple[ReaderViewAuditSource, ...] = (),
+    character_location_conflict_sources: tuple[
+        CharacterLocationConflictAuditSource, ...
+    ] = (),
 ):
     request = DeterministicAuditRequest(
         chapter_id="chapter-1",
@@ -29,6 +33,7 @@ def _run(
         requirement_content=requirement,
         chapter_sequence=chapter_sequence,
         reader_view_sources=reader_view_sources,
+        character_location_conflict_sources=character_location_conflict_sources,
     )
     return DeterministicAuditService().run(request)
 
@@ -192,4 +197,78 @@ def test_reader_view_exposure_requires_early_case_sensitive_exact_match(
 
     assert not any(
         finding.category == AuditFindingCategory.KNOWLEDGE for finding in findings
+    )
+
+
+def test_contested_character_location_uses_earliest_exact_branch_with_provenance() -> None:
+    target = "Old harbor first. Clock tower later. Old harbor again."
+    findings = _run(
+        target,
+        character_location_conflict_sources=(
+            CharacterLocationConflictAuditSource(
+                character_id="character-1",
+                source_boundary_chapter_id="chapter-source",
+                locations=("  Clock tower  ", "Old harbor"),
+                state_event_ids=("state-b", "state-a"),
+            ),
+        ),
+    )
+
+    timeline = [
+        finding
+        for finding in findings
+        if finding.category == AuditFindingCategory.TIMELINE
+    ]
+    assert len(timeline) == 1
+    finding = timeline[0]
+    assert finding.severity == AuditSeverity.WARNING
+    assert finding.source == AuditFindingSource.DETERMINISTIC
+    assert finding.confidence == 1.0
+    assert finding.evidence == "Old harbor"
+    assert "unresolved" in finding.explanation.lower()
+    assert "branch" in finding.explanation.lower()
+    assert "error" not in finding.explanation.lower()
+    assert json.loads(finding.location_json) == {
+        "character_id": "character-1",
+        "evidence_kind": "SOURCE_EXCERPT",
+        "quote": "Old harbor",
+        "source_boundary_chapter_id": "chapter-source",
+        "start": target.index("Old harbor"),
+        "state_field": "location",
+    }
+    assert json.loads(finding.related_source_json) == [
+        {"id": "state-a", "type": "character_state_event"},
+        {"id": "state-b", "type": "character_state_event"},
+    ]
+
+
+@pytest.mark.parametrize(
+    ("target", "locations"),
+    (
+        ("No listed place appears.", ("Clock tower", "Old harbor")),
+        ("OLD HARBOR appears.", ("Clock tower", "Old harbor")),
+        ("The harbor district appears.", ("Clock tower", "Old harbor")),
+        ("Old harbor appears.", ("Old harbor",)),
+        ("Old harbor appears.", (" Old harbor ", "Old harbor")),
+        ("Old harbor appears.", (" ", "")),
+    ),
+)
+def test_contested_character_location_requires_two_distinct_exact_locations(
+    target: str,
+    locations: tuple[str, ...],
+) -> None:
+    findings = _run(
+        target,
+        character_location_conflict_sources=(
+            CharacterLocationConflictAuditSource(
+                character_id="character-1",
+                source_boundary_chapter_id="chapter-source",
+                locations=locations,
+                state_event_ids=("state-a", "state-b"),
+            ),
+        ),
+    )
+
+    assert not any(
+        finding.category == AuditFindingCategory.TIMELINE for finding in findings
     )

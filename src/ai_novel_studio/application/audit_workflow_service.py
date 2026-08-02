@@ -4,6 +4,7 @@ import hashlib
 from dataclasses import dataclass
 
 from ai_novel_studio.application.deterministic_audit_service import (
+    CharacterLocationConflictAuditSource,
     DeterministicAuditRequest,
     DeterministicAuditService,
     ReaderViewAuditSource,
@@ -21,6 +22,9 @@ from ai_novel_studio.infrastructure.storage.audit_repository import AuditReposit
 from ai_novel_studio.infrastructure.storage.chapter_repository import ChapterRepository
 from ai_novel_studio.infrastructure.storage.chapter_requirement_repository import (
     ChapterRequirementRepository,
+)
+from ai_novel_studio.infrastructure.storage.character_memory_repository import (
+    CharacterMemoryRepository,
 )
 from ai_novel_studio.infrastructure.storage.view_assertion_repository import (
     ViewAssertionRepository,
@@ -43,12 +47,14 @@ class AuditWorkflowService:
         audits: AuditRepository,
         deterministic: DeterministicAuditService | None = None,
         view_assertions: ViewAssertionRepository | None = None,
+        character_memory: CharacterMemoryRepository | None = None,
     ) -> None:
         self.chapters = chapters
         self.requirements = requirements
         self.audits = audits
         self.deterministic = deterministic or DeterministicAuditService()
         self.view_assertions = view_assertions
+        self.character_memory = character_memory
 
     def run_deterministic_for_formal_chapter(
         self,
@@ -131,6 +137,9 @@ class AuditWorkflowService:
                 reader_view_sources=self._reader_view_sources(
                     chapter_sequence=chapter_sequence
                 ),
+                character_location_conflict_sources=(
+                    self._character_location_conflict_sources(chapter_id)
+                ),
             )
         )
         findings = tuple(
@@ -180,6 +189,44 @@ class AuditWorkflowService:
                     assertion_id=assertion.id,
                     content=assertion.content,
                     visible_from_sequence=visible_from,
+                )
+            )
+        return tuple(sources)
+
+    def _character_location_conflict_sources(
+        self,
+        chapter_id: str,
+    ) -> tuple[CharacterLocationConflictAuditSource, ...]:
+        if self.character_memory is None:
+            return ()
+        characters = self.character_memory.list_characters()
+        states_by_character = self.character_memory.state_candidates_before_many(
+            tuple(character.id for character in characters),
+            chapter_id,
+            inclusive=False,
+        )
+        sources: list[CharacterLocationConflictAuditSource] = []
+        for character in characters:
+            states = states_by_character.get(character.id, ())
+            if len(states) < 2:
+                continue
+            locations = tuple(
+                dict.fromkeys(
+                    state.location.strip()
+                    for state in states
+                    if state.location.strip()
+                )
+            )
+            if len(locations) < 2:
+                continue
+            sources.append(
+                CharacterLocationConflictAuditSource(
+                    character_id=character.id,
+                    source_boundary_chapter_id=states[0].chapter_id,
+                    locations=locations,
+                    state_event_ids=tuple(
+                        state.id for state in states if state.location.strip()
+                    ),
                 )
             )
         return tuple(sources)

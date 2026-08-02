@@ -42,6 +42,9 @@ from ai_novel_studio.infrastructure.storage.chapter_repository import ChapterRep
 from ai_novel_studio.infrastructure.storage.chapter_requirement_repository import (
     ChapterRequirementRepository,
 )
+from ai_novel_studio.infrastructure.storage.character_memory_repository import (
+    CharacterMemoryRepository,
+)
 from ai_novel_studio.infrastructure.storage.checkpoint_repository import CheckpointRepository
 from ai_novel_studio.infrastructure.storage.generation_repository import GenerationRepository
 from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
@@ -131,6 +134,7 @@ class ProjectGenerationSession:
             self.requirements,
             AuditRepository(project),
             view_assertions=ViewAssertionRepository(project),
+            character_memory=CharacterMemoryRepository(project),
         )
         self.project_audits = ProjectAuditService(project)
         self.current_chapter_id: str | None = None

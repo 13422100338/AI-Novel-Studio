@@ -6,6 +6,7 @@ import pytest
 from ai_novel_studio.application.audit_workflow_service import AuditWorkflowService
 from ai_novel_studio.domain.audit import (
     AuditFindingCategory,
+    AuditFindingSource,
     AuditRunStatus,
     AuditSeverity,
     AuditTargetKind,
@@ -67,6 +68,60 @@ def _reader_view(  # type: ignore[no-untyped-def]
         source_revision=source_revision,
     )
     return character, assertion
+
+
+def _timeline_workspace(tmp_path: Path, target_content: str):  # type: ignore[no-untyped-def]
+    project = ProjectRepository.create(tmp_path / "novel", "Timeline Audit Workflow")
+    chapters = ChapterRepository(project)
+    volume_id = project.list_volumes()[0].id
+    source = chapters.create_chapter(volume_id, "Source", "1", "source")
+    target = chapters.create_chapter(volume_id, "Target", "2", target_content)
+    future = chapters.create_chapter(volume_id, "Future", "3", "future")
+    requirements = ChapterRequirementRepository(project)
+    current = requirements.get_or_create(target.id)
+    requirements.update(
+        target.id,
+        "must: find the letter",
+        is_locked=False,
+        expected_revision=current.revision,
+    )
+    audits = AuditRepository(project)
+    memory = CharacterMemoryRepository(project)
+    character = memory.create_character("Timeline subject")
+    return (
+        project,
+        chapters,
+        source,
+        target,
+        future,
+        requirements,
+        audits,
+        memory,
+        character,
+    )
+
+
+def _append_location_state(  # type: ignore[no-untyped-def]
+    memory,
+    *,
+    character_id: str,
+    chapter_id: str,
+    location: str,
+    review_status: ReviewStatus,
+):
+    return memory.append_state(
+        character_id,
+        chapter_id,
+        motivation="protect the archive",
+        psychology="alert",
+        current_goal="find the letter",
+        relationships="trusted",
+        recent_activity="searching",
+        confidence=1.0,
+        source_type=SourceType.HUMAN,
+        review_status=review_status,
+        location=location,
+    )
 
 
 def test_run_deterministic_for_formal_chapter_persists_completed_run_and_findings(
@@ -249,3 +304,174 @@ def test_reader_view_exposure_ignores_ineligible_persisted_sources(
 
     assert result.run.status == AuditRunStatus.COMPLETED
     assert result.findings == ()
+
+
+def test_contested_prior_character_location_persists_timeline_warning(
+    tmp_path: Path,
+) -> None:
+    (
+        _,
+        chapters,
+        source,
+        target,
+        _,
+        requirements,
+        audits,
+        memory,
+        character,
+    ) = _timeline_workspace(
+        tmp_path,
+        "The protagonist finds the letter at Old harbor.",
+    )
+    first = _append_location_state(
+        memory,
+        character_id=character.id,
+        chapter_id=source.id,
+        location=" Clock tower ",
+        review_status=ReviewStatus.APPROVED,
+    )
+    second = _append_location_state(
+        memory,
+        character_id=character.id,
+        chapter_id=source.id,
+        location="Old harbor",
+        review_status=ReviewStatus.LOCKED,
+    )
+    service = AuditWorkflowService(
+        chapters,
+        requirements,
+        audits,
+        character_memory=memory,
+    )
+
+    result = service.run_deterministic_for_formal_chapter(
+        target.id,
+        mode=CreationMode.STANDARD,
+        audit_policy=AuditPolicy.STANDARD,
+    )
+
+    timeline = [
+        finding
+        for finding in result.findings
+        if finding.category == AuditFindingCategory.TIMELINE
+    ]
+    assert len(timeline) == 1
+    finding = timeline[0]
+    assert result.run.status == AuditRunStatus.COMPLETED
+    assert result.run.mode == CreationMode.STANDARD
+    assert result.run.audit_policy == AuditPolicy.STANDARD
+    assert finding.severity == AuditSeverity.WARNING
+    assert finding.source == AuditFindingSource.DETERMINISTIC
+    assert finding.confidence == 1.0
+    assert finding.evidence == "Old harbor"
+    assert "unresolved" in finding.explanation.lower()
+    assert "branch" in finding.explanation.lower()
+    assert json.loads(finding.location_json) == {
+        "character_id": character.id,
+        "evidence_kind": "SOURCE_EXCERPT",
+        "quote": "Old harbor",
+        "source_boundary_chapter_id": source.id,
+        "start": chapters.read_content(target.id).index("Old harbor"),
+        "state_field": "location",
+    }
+    assert json.loads(finding.related_source_json) == [
+        {"id": event_id, "type": "character_state_event"}
+        for event_id in sorted((first.id, second.id))
+    ]
+    assert audits.list_findings(result.run.id) == result.findings
+
+
+@pytest.mark.parametrize(
+    "excluded_reason",
+    (
+        "trusted_single",
+        "same_location",
+        "empty_location",
+        "review",
+        "rejected",
+        "current",
+        "future",
+        "deleted_source",
+        "inactive",
+        "absent",
+        "case_changed",
+        "paraphrased",
+    ),
+)
+def test_contested_character_location_ignores_ineligible_sources_and_text(
+    tmp_path: Path,
+    excluded_reason: str,
+) -> None:
+    target_content = {
+        "absent": "The protagonist finds the letter elsewhere.",
+        "case_changed": "The protagonist finds the letter at OLD HARBOR.",
+        "paraphrased": "The protagonist finds the letter by the harbor district.",
+    }.get(
+        excluded_reason,
+        "The protagonist finds the letter at Old harbor.",
+    )
+    (
+        project,
+        chapters,
+        source,
+        target,
+        future,
+        requirements,
+        audits,
+        memory,
+        character,
+    ) = _timeline_workspace(tmp_path, target_content)
+    state_chapter_id = {
+        "current": target.id,
+        "future": future.id,
+    }.get(excluded_reason, source.id)
+    second_status = {
+        "review": ReviewStatus.REVIEW,
+        "rejected": ReviewStatus.REJECTED,
+    }.get(excluded_reason, ReviewStatus.LOCKED)
+    first_location = "" if excluded_reason == "empty_location" else "Clock tower"
+    second_location = {
+        "same_location": " Clock tower ",
+        "empty_location": " ",
+    }.get(excluded_reason, "Old harbor")
+    _append_location_state(
+        memory,
+        character_id=character.id,
+        chapter_id=state_chapter_id,
+        location=first_location,
+        review_status=ReviewStatus.APPROVED,
+    )
+    if excluded_reason != "trusted_single":
+        _append_location_state(
+            memory,
+            character_id=character.id,
+            chapter_id=state_chapter_id,
+            location=second_location,
+            review_status=second_status,
+        )
+    if excluded_reason == "deleted_source":
+        chapters.delete_chapter(source.id)
+    elif excluded_reason == "inactive":
+        with project.database.connect() as connection, connection:
+            connection.execute(
+                "UPDATE subjects SET active = 0 WHERE id = ?",
+                (character.id,),
+            )
+    service = AuditWorkflowService(
+        chapters,
+        requirements,
+        audits,
+        character_memory=memory,
+    )
+
+    result = service.run_deterministic_for_formal_chapter(
+        target.id,
+        mode=CreationMode.STANDARD,
+        audit_policy=AuditPolicy.STANDARD,
+    )
+
+    assert result.run.status == AuditRunStatus.COMPLETED
+    assert not any(
+        finding.category == AuditFindingCategory.TIMELINE
+        for finding in result.findings
+    )
