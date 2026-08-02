@@ -33,7 +33,8 @@
 
 All Wave 1 tasks were dispatched from `3382dd36c2a4aeb4acdab411e9211885b633e678`; their initial business-code baseline remains `e35b50d`.
 
-- Active implementations authorized by the user: none.
+- Active implementations authorized by the user:
+  - `state-events` SE3 — model-derived physical Character State extraction (`gpt-5.6-sol / high`): carry `location` and `injury_status` only through the existing untrusted-candidate-to-REVIEW-event path; no schema, promotion, Writer/Brief hash, or UI change.
 - Integrated increments:
   - `embedding-production` increment A1 (provider and gateway embedding contract), merged as `fdbfb088278c18a0efb3e062cd5f9e8a6ddd01f4`.
   - `embedding-production` increment A2 (Gateway-backed document/query embedding provider plus fail-open semantic recall), merged as `03b2263043262cdf371f1929a1255162decabfac`.
