@@ -420,6 +420,93 @@ def test_unapproved_style_samples_are_manifested_without_loading_candidate_bodie
     assert "REJECTED_SAMPLE_SECRET_MARKER" not in writer_prompt
 
 
+def test_writer_style_samples_are_bounded_by_scope_and_participant_order(
+    tmp_path: Path,
+) -> None:
+    project = ProjectRepository.create(tmp_path / "novel", "Novel")
+    volume = project.list_volumes()[0]
+    chapters = ChapterRepository(project)
+    target = chapters.create_chapter(volume.id, "Target", "1")
+    characters = CharacterMemoryRepository(project)
+    character_a = characters.create_character("Character A")
+    character_b = characters.create_character("Character B")
+    styles = StyleRepository(project)
+
+    for scope_type, scope_id, marker, authority in (
+        (
+            StyleScope.BOOK,
+            project.project.id,
+            "BOOK_SAMPLE",
+            Authority.USER_CONFIRMED,
+        ),
+        (
+            StyleScope.CHARACTER,
+            character_a.id,
+            "CHARACTER_A_SAMPLE",
+            Authority.USER_CONFIRMED,
+        ),
+        (
+            StyleScope.CHARACTER,
+            character_b.id,
+            "CHARACTER_B_SAMPLE",
+            Authority.OUTLINE,
+        ),
+        (
+            StyleScope.CHAPTER,
+            target.id,
+            "CHAPTER_OUTLINE_SAMPLE",
+            Authority.OUTLINE,
+        ),
+        (
+            StyleScope.CHAPTER,
+            target.id,
+            "CHAPTER_LOCKED_SAMPLE",
+            Authority.USER_CONFIRMED,
+        ),
+    ):
+        styles.add_sample(
+            scope_type,
+            scope_id,
+            marker,
+            marker,
+            SourceType.HUMAN,
+            authority,
+            (
+                ReviewStatus.LOCKED
+                if marker == "CHAPTER_LOCKED_SAMPLE"
+                else ReviewStatus.APPROVED
+            ),
+            immutable=marker == "CHAPTER_LOCKED_SAMPLE",
+        )
+
+    blocks = tuple(
+        block
+        for block in GenerationMemoryContextProvider(project).blocks(
+            target.id,
+            "",
+            (),
+            participant_ids=(character_b.id, character_a.id),
+        )
+        if block.source_type == "STYLE_SAMPLE"
+        and block.eligibility.authority_allowed
+    )
+    expected = (
+        *styles.samples(StyleScope.CHAPTER, target.id),
+        *styles.samples(StyleScope.CHARACTER, character_b.id),
+        *styles.samples(StyleScope.CHARACTER, character_a.id),
+        *styles.samples(StyleScope.BOOK, project.project.id),
+    )[:4]
+
+    assert tuple(block.source_id for block in blocks) == tuple(
+        sample.id for sample in expected
+    )
+    assert len(blocks) == 4
+    assert tuple(block.source_hash for block in blocks) == tuple(
+        sample.content_hash for sample in expected
+    )
+    assert "BOOK_SAMPLE" not in "\n".join(block.content for block in blocks)
+
+
 def test_plot_keeps_legacy_card_while_prose_uses_physical_writer_projection(
     tmp_path: Path,
 ) -> None:

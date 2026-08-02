@@ -404,6 +404,7 @@ class GenerationMemoryContextProvider:
             chapter_id,
             include_ineligible_rules=True,
             include_ineligible_samples=True,
+            writer_sample_selection=True,
         )
         blocks: list[ContextBlock] = []
         for index, rule in enumerate(compiled.rules):

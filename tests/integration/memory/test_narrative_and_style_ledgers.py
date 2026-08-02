@@ -517,6 +517,135 @@ def test_style_retriever_compiles_layers_and_keeps_human_samples_immutable(
         )
 
 
+def test_style_retriever_bounds_writer_samples_by_scope_precedence(
+    tmp_path: Path,
+) -> None:
+    project, chapters = _project_with_chapters(tmp_path)
+    repository = StyleRepository(project)
+    character_a = "character-a"
+    character_b = "character-b"
+
+    repository.add_sample(
+        StyleScope.BOOK,
+        project.project.id,
+        "book",
+        "BOOK_SAMPLE",
+        SourceType.HUMAN,
+        Authority.USER_CONFIRMED,
+        ReviewStatus.APPROVED,
+        immutable=False,
+    )
+    repository.add_sample(
+        StyleScope.GENRE_OR_SCENE,
+        "mystery",
+        "scene",
+        "SCENE_SAMPLE",
+        SourceType.HUMAN,
+        Authority.OUTLINE,
+        ReviewStatus.LOCKED,
+        immutable=True,
+    )
+    repository.add_sample(
+        StyleScope.CHARACTER,
+        character_a,
+        "character-a",
+        "CHARACTER_A_SAMPLE",
+        SourceType.HUMAN,
+        Authority.USER_CONFIRMED,
+        ReviewStatus.APPROVED,
+        immutable=False,
+    )
+    repository.add_sample(
+        StyleScope.CHARACTER,
+        character_b,
+        "character-b",
+        "CHARACTER_B_SAMPLE",
+        SourceType.HUMAN,
+        Authority.OUTLINE,
+        ReviewStatus.APPROVED,
+        immutable=False,
+    )
+    repository.add_sample(
+        StyleScope.CHAPTER,
+        chapters[1].id,
+        "chapter-outline",
+        "CHAPTER_OUTLINE_SAMPLE",
+        SourceType.HUMAN,
+        Authority.OUTLINE,
+        ReviewStatus.APPROVED,
+        immutable=False,
+    )
+    repository.add_sample(
+        StyleScope.CHAPTER,
+        chapters[1].id,
+        "chapter-locked",
+        "CHAPTER_LOCKED_SAMPLE",
+        SourceType.HUMAN,
+        Authority.USER_CONFIRMED,
+        ReviewStatus.LOCKED,
+        immutable=True,
+    )
+    review = repository.add_sample(
+        StyleScope.CHAPTER,
+        chapters[1].id,
+        "chapter-review",
+        "CHAPTER_REVIEW_SAMPLE",
+        SourceType.MODEL,
+        Authority.MODEL_EXTRACTED,
+        ReviewStatus.REVIEW,
+        immutable=False,
+    )
+    retriever = StyleRetriever(repository)
+    character_ids = (character_b, character_a)
+
+    default = retriever.for_task(
+        project.project.id,
+        "mystery",
+        character_ids,
+        chapters[1].id,
+    )
+    writer = retriever.for_task(
+        project.project.id,
+        "mystery",
+        character_ids,
+        chapters[1].id,
+        writer_sample_selection=True,
+    )
+    scene_then_book = retriever.for_task(
+        project.project.id,
+        "mystery",
+        (),
+        chapters[2].id,
+        writer_sample_selection=True,
+    )
+
+    expected_default = (
+        *repository.samples(StyleScope.BOOK, project.project.id),
+        *repository.samples(StyleScope.GENRE_OR_SCENE, "mystery"),
+        *repository.samples(StyleScope.CHARACTER, character_b),
+        *repository.samples(StyleScope.CHARACTER, character_a),
+        *repository.samples(StyleScope.CHAPTER, chapters[1].id),
+    )
+    expected_writer = (
+        *repository.samples(StyleScope.CHAPTER, chapters[1].id),
+        *repository.samples(StyleScope.CHARACTER, character_b),
+        *repository.samples(StyleScope.CHARACTER, character_a),
+        *repository.samples(StyleScope.GENRE_OR_SCENE, "mystery"),
+        *repository.samples(StyleScope.BOOK, project.project.id),
+    )[:4]
+
+    assert default.samples == expected_default
+    assert writer.samples == expected_writer
+    assert len(writer.samples) == 4
+    assert review not in default.samples
+    assert review not in writer.samples
+    assert scene_then_book.samples == (
+        *repository.samples(StyleScope.GENRE_OR_SCENE, "mystery"),
+        *repository.samples(StyleScope.BOOK, project.project.id),
+    )
+    assert writer.rules == default.rules
+
+
 def test_style_retriever_audits_metadata_only_ineligible_samples_on_opt_in(
     tmp_path: Path,
 ) -> None:
