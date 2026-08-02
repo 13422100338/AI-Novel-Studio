@@ -255,6 +255,13 @@ class ChapterSidebar(QFrame):
         self.location_display.setReadOnly(True)
         self.injury_status_display = self._labeled_editor(layout, container, "伤势状态")
         self.injury_status_display.setReadOnly(True)
+        self.physical_state_hint_label = QLabel(
+            "只读：显示当前章节（含当前章）的已批准/锁定人物状态；侧栏不直接写入。",
+            container,
+        )
+        self.physical_state_hint_label.setObjectName("mutedLabel")
+        self.physical_state_hint_label.setWordWrap(True)
+        layout.addWidget(self.physical_state_hint_label)
         self.journey_edit = self._labeled_editor(layout, container, "过往心路历程")
         self.journey_edit.setReadOnly(True)
         self.journey_edit.setFixedHeight(104)

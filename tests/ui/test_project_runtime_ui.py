@@ -640,6 +640,10 @@ def test_main_window_displays_one_time_bounded_card_per_character(
     assert window.chapter_sidebar.injury_status_display.toPlainText() == "左臂包扎"
     assert window.chapter_sidebar.location_display.isReadOnly()
     assert window.chapter_sidebar.injury_status_display.isReadOnly()
+    assert (
+        window.chapter_sidebar.physical_state_hint_label.text()
+        == "只读：显示当前章节（含当前章）的已批准/锁定人物状态；侧栏不直接写入。"
+    )
 
     window.load_project_chapter(first_chapter_id)
 
