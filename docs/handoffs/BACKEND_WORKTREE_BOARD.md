@@ -35,6 +35,7 @@ All Wave 1 tasks were dispatched from `3382dd36c2a4aeb4acdab411e9211885b633e678`
 
 - Active implementations authorized by the user:
   - `style-engine` ST1 — bounded Writer Style Exemplar Retrieval (`gpt-5.6-sol / high`): select at most four approved samples in deterministic chapter, character, scene, then book scope precedence; keep Brief, style-rule retrieval, storage, UI, approval, and prompt templates unchanged.
+  - `view-operations-ui` C14 — read-only Character physical-state semantics hint (`gpt-5.6-luna / max`): clarify that sidebar location/injury values are the inclusive current-chapter APPROVED/LOCKED projection and are not written by the sidebar; no service, storage, Writer, Brief, or save-payload change.
 - Integrated increments:
   - `embedding-production` increment A1 (provider and gateway embedding contract), merged as `fdbfb088278c18a0efb3e062cd5f9e8a6ddd01f4`.
   - `embedding-production` increment A2 (Gateway-backed document/query embedding provider plus fail-open semantic recall), merged as `03b2263043262cdf371f1929a1255162decabfac`.
@@ -89,7 +90,7 @@ All Wave 1 tasks were dispatched from `3382dd36c2a4aeb4acdab411e9211885b633e678`
 | `generation-profile-audit-policy` | `gpt-5.6-terra` / `medium` | `019f87e8-696e-7f11-bcfe-1552f51cabc3` | `C:\Users\钟子诚\.codex\worktrees\4df4\AI-Novel-Studio` | `codex/generation-profile-audit-policy-b5` | branch | B1-B7 merged; B7 is `663f932`; lane paused pending explicit instruction |
 | `view-operations-ui` | `gpt-5.6-luna` / `medium` | `019f87e8-7a77-7902-b3d1-a38f32240136` | `C:\Users\钟子诚\.codex\worktrees\8802\AI-Novel-Studio` | `codex/view-operations-ui` | branch | C1-C10 merged; C10 is `bc41148`; lane paused pending explicit instruction |
 
-Current dispatch override: `style-engine` is active for ST1; `generation-profile-audit-policy` is paused after B14; `view-operations-ui` is paused after C13.
+Current dispatch override: `style-engine` is active for ST1; `generation-profile-audit-policy` is paused after B14 because no safe B15 rule exists without a new POV/visibility product contract; `view-operations-ui` is active for C14.
 
 Product decision: Manual Pins are immutable materialized snapshots. They never automatically re-resolve or refresh from their source; authors update them only by removing and re-pinning. Do not add a live-pointer, automatic stale gate, or refresh behavior without a new explicit decision.
 
