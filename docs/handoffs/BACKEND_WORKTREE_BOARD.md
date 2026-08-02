@@ -157,6 +157,10 @@ Tests and checks:
 
 If cross-task messaging is unavailable, output the same `MASTER REPORT` block for the user to paste into the master task.
 
+### Frontend isolation exception
+
+Tasks assigned to `codex/frontend-*` branches or an explicitly frontend-only redesign scope are not participants in this backend reporting plane. They must not contact the backend master or A/B/C tasks, must not edit this Board, and must keep all writes, tests, environments, and Git operations inside their dedicated frontend worktree. Their status and review output remain in their own frontend conversation unless the user explicitly requests cross-task communication.
+
 Do not copy the following local-only or sensitive workspace files into any worktree:
 
 - `.venv`

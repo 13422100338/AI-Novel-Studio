@@ -35,3 +35,13 @@
 - Workers must use Codex cross-task messaging when available and must not rely only on a reply in their own task.
 - Reports must include the task, branch, baseline SHA, evidence, impact, recommendation, requested master action, changed files, tests, and commit state.
 - If cross-task messaging is unavailable, output a `MASTER REPORT` block for the user to paste into the master task.
+
+## Frontend Task Isolation Override
+
+- This section overrides **Worktree Worker Reporting** for tasks assigned to `codex/frontend-*` branches or an explicitly frontend-only redesign scope.
+- Frontend tasks must not send cross-task messages, delegations, `MASTER REPORT` blocks, status events, or review requests to the backend master task or backend A/B/C tasks unless the user explicitly requests that communication.
+- Frontend task reports stay in the frontend task's own conversation. Backend integration is initiated by the user, not by an unsolicited frontend report.
+- Frontend tasks must use a dedicated frontend worktree. The main checkout and backend A/B/C worktrees are read-only and must not be used for writes, tests, environment installation, staging, commits, or branch switching.
+- Before every write, test, or Git command, a frontend task must explicitly target its dedicated worktree and verify the assigned `codex/frontend-*` branch.
+- Frontend tasks must not modify `docs/handoffs/BACKEND_WORKTREE_BOARD.md`, backend governance files, backend domain/application/storage/schema/context code, backend tests, or backend public interfaces. Future backend wiring needs are recorded only in frontend-owned documentation.
+- If a frontend task writes outside its dedicated worktree, it must stop immediately, preserve the accidental files, and report only in its own conversation so the user can coordinate recovery.
