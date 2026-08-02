@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
+from typing import Literal
 
 from ai_novel_studio.application.deterministic_audit_service import (
+    CharacterInjuryConflictAuditSource,
     CharacterLocationConflictAuditSource,
     DeterministicAuditRequest,
     DeterministicAuditService,
@@ -37,6 +39,14 @@ DETERMINISTIC_AUDIT_PROMPT_VERSION = "deterministic-audit-v1"
 class AuditWorkflowResult:
     run: AuditRun
     findings: tuple[AuditFinding, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _CharacterStateConflictProjection:
+    character_id: str
+    source_boundary_chapter_id: str
+    values: tuple[str, ...]
+    state_event_ids: tuple[str, ...]
 
 
 class AuditWorkflowService:
@@ -140,6 +150,9 @@ class AuditWorkflowService:
                 character_location_conflict_sources=(
                     self._character_location_conflict_sources(chapter_id)
                 ),
+                character_injury_conflict_sources=(
+                    self._character_injury_conflict_sources(chapter_id)
+                ),
             )
         )
         findings = tuple(
@@ -197,6 +210,42 @@ class AuditWorkflowService:
         self,
         chapter_id: str,
     ) -> tuple[CharacterLocationConflictAuditSource, ...]:
+        return tuple(
+            CharacterLocationConflictAuditSource(
+                character_id=projection.character_id,
+                source_boundary_chapter_id=projection.source_boundary_chapter_id,
+                locations=projection.values,
+                state_event_ids=projection.state_event_ids,
+            )
+            for projection in self._character_state_conflict_projections(
+                chapter_id,
+                field="location",
+            )
+        )
+
+    def _character_injury_conflict_sources(
+        self,
+        chapter_id: str,
+    ) -> tuple[CharacterInjuryConflictAuditSource, ...]:
+        return tuple(
+            CharacterInjuryConflictAuditSource(
+                character_id=projection.character_id,
+                source_boundary_chapter_id=projection.source_boundary_chapter_id,
+                injury_statuses=projection.values,
+                state_event_ids=projection.state_event_ids,
+            )
+            for projection in self._character_state_conflict_projections(
+                chapter_id,
+                field="injury_status",
+            )
+        )
+
+    def _character_state_conflict_projections(
+        self,
+        chapter_id: str,
+        *,
+        field: Literal["location", "injury_status"],
+    ) -> tuple[_CharacterStateConflictProjection, ...]:
         if self.character_memory is None:
             return ()
         characters = self.character_memory.list_characters()
@@ -205,31 +254,40 @@ class AuditWorkflowService:
             chapter_id,
             inclusive=False,
         )
-        sources: list[CharacterLocationConflictAuditSource] = []
+        projections: list[_CharacterStateConflictProjection] = []
         for character in characters:
             states = states_by_character.get(character.id, ())
             if len(states) < 2:
                 continue
-            locations = tuple(
+            state_values = tuple(
+                (
+                    state,
+                    (
+                        state.location
+                        if field == "location"
+                        else state.injury_status
+                    ).strip(),
+                )
+                for state in states
+            )
+            conflict_values = tuple(
                 dict.fromkeys(
-                    state.location.strip()
-                    for state in states
-                    if state.location.strip()
+                    value for _, value in state_values if value
                 )
             )
-            if len(locations) < 2:
+            if len(conflict_values) < 2:
                 continue
-            sources.append(
-                CharacterLocationConflictAuditSource(
+            projections.append(
+                _CharacterStateConflictProjection(
                     character_id=character.id,
                     source_boundary_chapter_id=states[0].chapter_id,
-                    locations=locations,
+                    values=conflict_values,
                     state_event_ids=tuple(
-                        state.id for state in states if state.location.strip()
+                        state.id for state, value in state_values if value
                     ),
                 )
             )
-        return tuple(sources)
+        return tuple(projections)
 
     def _source_revision_is_current(
         self,

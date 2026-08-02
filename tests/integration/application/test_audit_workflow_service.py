@@ -124,6 +124,62 @@ def _append_location_state(  # type: ignore[no-untyped-def]
     )
 
 
+def _injury_workspace(tmp_path: Path, target_content: str):  # type: ignore[no-untyped-def]
+    project = ProjectRepository.create(tmp_path / "novel", "Injury Audit Workflow")
+    chapters = ChapterRepository(project)
+    volume_id = project.list_volumes()[0].id
+    source = chapters.create_chapter(volume_id, "Source", "1", "source")
+    latest = chapters.create_chapter(volume_id, "Latest", "2", "latest")
+    target = chapters.create_chapter(volume_id, "Target", "3", target_content)
+    future = chapters.create_chapter(volume_id, "Future", "4", "future")
+    requirements = ChapterRequirementRepository(project)
+    current = requirements.get_or_create(target.id)
+    requirements.update(
+        target.id,
+        "must: find the letter",
+        is_locked=False,
+        expected_revision=current.revision,
+    )
+    audits = AuditRepository(project)
+    memory = CharacterMemoryRepository(project)
+    character = memory.create_character("Injury subject")
+    return (
+        project,
+        chapters,
+        source,
+        latest,
+        target,
+        future,
+        requirements,
+        audits,
+        memory,
+        character,
+    )
+
+
+def _append_injury_state(  # type: ignore[no-untyped-def]
+    memory,
+    *,
+    character_id: str,
+    chapter_id: str,
+    injury_status: str,
+    review_status: ReviewStatus,
+):
+    return memory.append_state(
+        character_id,
+        chapter_id,
+        motivation="protect the archive",
+        psychology="alert",
+        current_goal="find the letter",
+        relationships="trusted",
+        recent_activity="searching",
+        confidence=1.0,
+        source_type=SourceType.HUMAN,
+        review_status=review_status,
+        injury_status=injury_status,
+    )
+
+
 def test_run_deterministic_for_formal_chapter_persists_completed_run_and_findings(
     tmp_path: Path,
 ) -> None:
@@ -473,5 +529,188 @@ def test_contested_character_location_ignores_ineligible_sources_and_text(
     assert result.run.status == AuditRunStatus.COMPLETED
     assert not any(
         finding.category == AuditFindingCategory.TIMELINE
+        for finding in result.findings
+    )
+
+
+def test_contested_prior_character_injury_status_persists_character_warning(
+    tmp_path: Path,
+) -> None:
+    (
+        _,
+        chapters,
+        source,
+        _,
+        target,
+        _,
+        requirements,
+        audits,
+        memory,
+        character,
+    ) = _injury_workspace(
+        tmp_path,
+        "The protagonist finds the letter with a Sprained left ankle.",
+    )
+    first = _append_injury_state(
+        memory,
+        character_id=character.id,
+        chapter_id=source.id,
+        injury_status=" Sprained left ankle ",
+        review_status=ReviewStatus.APPROVED,
+    )
+    second = _append_injury_state(
+        memory,
+        character_id=character.id,
+        chapter_id=source.id,
+        injury_status="Broken wrist",
+        review_status=ReviewStatus.LOCKED,
+    )
+    service = AuditWorkflowService(
+        chapters,
+        requirements,
+        audits,
+        character_memory=memory,
+    )
+
+    result = service.run_deterministic_for_formal_chapter(
+        target.id,
+        mode=CreationMode.STANDARD,
+        audit_policy=AuditPolicy.STANDARD,
+    )
+
+    character_findings = [
+        finding
+        for finding in result.findings
+        if finding.category == AuditFindingCategory.CHARACTER
+    ]
+    assert len(character_findings) == 1
+    finding = character_findings[0]
+    assert result.run.status == AuditRunStatus.COMPLETED
+    assert result.run.mode == CreationMode.STANDARD
+    assert result.run.audit_policy == AuditPolicy.STANDARD
+    assert finding.severity == AuditSeverity.WARNING
+    assert finding.source == AuditFindingSource.DETERMINISTIC
+    assert finding.confidence == 1.0
+    assert finding.evidence == "Sprained left ankle"
+    assert "unresolved" in finding.explanation.lower()
+    assert "injury-status" in finding.explanation.lower()
+    assert "branch" in finding.explanation.lower()
+    assert json.loads(finding.location_json) == {
+        "character_id": character.id,
+        "evidence_kind": "SOURCE_EXCERPT",
+        "quote": "Sprained left ankle",
+        "source_boundary_chapter_id": source.id,
+        "start": chapters.read_content(target.id).index("Sprained left ankle"),
+        "state_field": "injury_status",
+    }
+    assert json.loads(finding.related_source_json) == [
+        {"id": event_id, "type": "character_state_event"}
+        for event_id in sorted((first.id, second.id))
+    ]
+    assert audits.list_findings(result.run.id) == result.findings
+
+
+@pytest.mark.parametrize(
+    "excluded_reason",
+    (
+        "trusted_single",
+        "same_injury_status",
+        "empty_injury_status",
+        "review",
+        "rejected",
+        "current",
+        "future",
+        "deleted_source",
+        "inactive",
+        "older_boundary",
+        "absent",
+        "case_changed",
+        "paraphrased",
+    ),
+)
+def test_contested_character_injury_status_ignores_ineligible_sources_and_text(
+    tmp_path: Path,
+    excluded_reason: str,
+) -> None:
+    target_content = {
+        "absent": "The protagonist finds the letter without an injury mention.",
+        "case_changed": "The protagonist finds the letter with a SPRAINED LEFT ANKLE.",
+        "paraphrased": "The protagonist finds the letter after the injury improved.",
+    }.get(
+        excluded_reason,
+        "The protagonist finds the letter with a Sprained left ankle.",
+    )
+    (
+        project,
+        chapters,
+        source,
+        latest,
+        target,
+        future,
+        requirements,
+        audits,
+        memory,
+        character,
+    ) = _injury_workspace(tmp_path, target_content)
+    state_chapter_id = {
+        "current": target.id,
+        "future": future.id,
+    }.get(excluded_reason, source.id)
+    second_status = {
+        "review": ReviewStatus.REVIEW,
+        "rejected": ReviewStatus.REJECTED,
+    }.get(excluded_reason, ReviewStatus.LOCKED)
+    first_status = "" if excluded_reason == "empty_injury_status" else "Sprained left ankle"
+    second_status_value = {
+        "same_injury_status": " Sprained left ankle ",
+        "empty_injury_status": " ",
+    }.get(excluded_reason, "Broken wrist")
+    _append_injury_state(
+        memory,
+        character_id=character.id,
+        chapter_id=state_chapter_id,
+        injury_status=first_status,
+        review_status=ReviewStatus.APPROVED,
+    )
+    if excluded_reason != "trusted_single":
+        _append_injury_state(
+            memory,
+            character_id=character.id,
+            chapter_id=state_chapter_id,
+            injury_status=second_status_value,
+            review_status=second_status,
+        )
+    if excluded_reason == "older_boundary":
+        _append_injury_state(
+            memory,
+            character_id=character.id,
+            chapter_id=latest.id,
+            injury_status="Healed ankle",
+            review_status=ReviewStatus.APPROVED,
+        )
+    if excluded_reason == "deleted_source":
+        chapters.delete_chapter(source.id)
+    elif excluded_reason == "inactive":
+        with project.database.connect() as connection, connection:
+            connection.execute(
+                "UPDATE subjects SET active = 0 WHERE id = ?",
+                (character.id,),
+            )
+    service = AuditWorkflowService(
+        chapters,
+        requirements,
+        audits,
+        character_memory=memory,
+    )
+
+    result = service.run_deterministic_for_formal_chapter(
+        target.id,
+        mode=CreationMode.STANDARD,
+        audit_policy=AuditPolicy.STANDARD,
+    )
+
+    assert result.run.status == AuditRunStatus.COMPLETED
+    assert not any(
+        finding.category == AuditFindingCategory.CHARACTER
         for finding in result.findings
     )

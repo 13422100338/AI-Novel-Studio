@@ -45,6 +45,14 @@ _EXPECTED_MISSING = "EXPECTED_MISSING"
 _DIAGNOSTIC = "DIAGNOSTIC"
 
 
+def _normalize_conflict_values(values: tuple[str, ...]) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(value.strip() for value in values if value.strip()))
+
+
+def _normalize_event_ids(event_ids: tuple[str, ...]) -> tuple[str, ...]:
+    return tuple(sorted({event_id.strip() for event_id in event_ids if event_id.strip()}))
+
+
 @dataclass(frozen=True, slots=True)
 class ReaderViewAuditSource:
     assertion_id: str
@@ -78,12 +86,8 @@ class CharacterLocationConflictAuditSource:
             raise ValueError("character_id cannot be empty")
         if not source_boundary_chapter_id:
             raise ValueError("source_boundary_chapter_id cannot be empty")
-        locations = tuple(
-            dict.fromkeys(location.strip() for location in self.locations if location.strip())
-        )
-        state_event_ids = tuple(
-            sorted({event_id.strip() for event_id in self.state_event_ids if event_id.strip()})
-        )
+        locations = _normalize_conflict_values(self.locations)
+        state_event_ids = _normalize_event_ids(self.state_event_ids)
         if not state_event_ids:
             raise ValueError("state_event_ids cannot be empty")
         object.__setattr__(self, "character_id", character_id)
@@ -93,6 +97,34 @@ class CharacterLocationConflictAuditSource:
             source_boundary_chapter_id,
         )
         object.__setattr__(self, "locations", locations)
+        object.__setattr__(self, "state_event_ids", state_event_ids)
+
+
+@dataclass(frozen=True, slots=True)
+class CharacterInjuryConflictAuditSource:
+    character_id: str
+    source_boundary_chapter_id: str
+    injury_statuses: tuple[str, ...]
+    state_event_ids: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        character_id = self.character_id.strip()
+        source_boundary_chapter_id = self.source_boundary_chapter_id.strip()
+        if not character_id:
+            raise ValueError("character_id cannot be empty")
+        if not source_boundary_chapter_id:
+            raise ValueError("source_boundary_chapter_id cannot be empty")
+        injury_statuses = _normalize_conflict_values(self.injury_statuses)
+        state_event_ids = _normalize_event_ids(self.state_event_ids)
+        if not state_event_ids:
+            raise ValueError("state_event_ids cannot be empty")
+        object.__setattr__(self, "character_id", character_id)
+        object.__setattr__(
+            self,
+            "source_boundary_chapter_id",
+            source_boundary_chapter_id,
+        )
+        object.__setattr__(self, "injury_statuses", injury_statuses)
         object.__setattr__(self, "state_event_ids", state_event_ids)
 
 
@@ -107,6 +139,9 @@ class DeterministicAuditRequest:
     reader_view_sources: tuple[ReaderViewAuditSource, ...] = ()
     character_location_conflict_sources: tuple[
         CharacterLocationConflictAuditSource, ...
+    ] = ()
+    character_injury_conflict_sources: tuple[
+        CharacterInjuryConflictAuditSource, ...
     ] = ()
 
     def __post_init__(self) -> None:
@@ -183,6 +218,12 @@ class DeterministicAuditService:
                 _contested_character_location_findings(
                     text,
                     sources=request.character_location_conflict_sources,
+                )
+            )
+            findings.extend(
+                _contested_character_injury_status_findings(
+                    text,
+                    sources=request.character_injury_conflict_sources,
                 )
             )
 
@@ -355,45 +396,99 @@ def _contested_character_location_findings(
     findings: list[DeterministicFinding] = []
     matched_character_ids: set[str] = set()
     for source in sources:
-        if source.character_id in matched_character_ids or len(source.locations) < 2:
+        if source.character_id in matched_character_ids:
             continue
-        matches = (
-            (start, location)
-            for location in source.locations
-            if (start := text.find(location)) >= 0
+        finding = _character_state_conflict_finding(
+            text,
+            character_id=source.character_id,
+            source_boundary_chapter_id=source.source_boundary_chapter_id,
+            state_field="location",
+            values=source.locations,
+            state_event_ids=source.state_event_ids,
+            category=AuditFindingCategory.TIMELINE,
+            explanation=(
+                "The audited text uses one location branch from an unresolved "
+                "same-boundary Character State conflict."
+            ),
         )
-        match = min(matches, default=None)
-        if match is None:
+        if finding is None:
             continue
-        start, location = match
-        findings.append(
-            _finding(
-                AuditFindingCategory.TIMELINE,
-                AuditSeverity.WARNING,
-                location,
-                (
-                    "The audited text uses one location branch from an unresolved "
-                    "same-boundary Character State conflict."
-                ),
-                location={
-                    "quote": location,
-                    "start": start,
-                    "character_id": source.character_id,
-                    "state_field": "location",
-                    "source_boundary_chapter_id": (
-                        source.source_boundary_chapter_id
-                    ),
-                },
-                evidence_kind=_SOURCE_EXCERPT,
-                related=[
-                    {"type": "character_state_event", "id": event_id}
-                    for event_id in source.state_event_ids
-                ],
-                confidence=1.0,
-            )
-        )
+        findings.append(finding)
         matched_character_ids.add(source.character_id)
     return tuple(findings)
+
+
+def _contested_character_injury_status_findings(
+    text: str,
+    *,
+    sources: tuple[CharacterInjuryConflictAuditSource, ...],
+) -> tuple[DeterministicFinding, ...]:
+    findings: list[DeterministicFinding] = []
+    matched_character_ids: set[str] = set()
+    for source in sources:
+        if source.character_id in matched_character_ids:
+            continue
+        finding = _character_state_conflict_finding(
+            text,
+            character_id=source.character_id,
+            source_boundary_chapter_id=source.source_boundary_chapter_id,
+            state_field="injury_status",
+            values=source.injury_statuses,
+            state_event_ids=source.state_event_ids,
+            category=AuditFindingCategory.CHARACTER,
+            explanation=(
+                "The audited text uses one injury-status branch from an unresolved "
+                "same-boundary Character State conflict."
+            ),
+        )
+        if finding is None:
+            continue
+        findings.append(finding)
+        matched_character_ids.add(source.character_id)
+    return tuple(findings)
+
+
+def _character_state_conflict_finding(
+    text: str,
+    *,
+    character_id: str,
+    source_boundary_chapter_id: str,
+    state_field: str,
+    values: tuple[str, ...],
+    state_event_ids: tuple[str, ...],
+    category: AuditFindingCategory,
+    explanation: str,
+) -> DeterministicFinding | None:
+    if len(values) < 2:
+        return None
+    matches = (
+        (start, value)
+        for value in values
+        if (start := text.find(value)) >= 0
+    )
+    match = min(matches, default=None)
+    if match is None:
+        return None
+    start, quote = match
+    return _finding(
+        category,
+        AuditSeverity.WARNING,
+        quote,
+        explanation,
+        location={
+            "quote": quote,
+            "start": start,
+            "character_id": character_id,
+            "state_field": state_field,
+            "source_boundary_chapter_id": source_boundary_chapter_id,
+        },
+        evidence_kind=_SOURCE_EXCERPT,
+        related=[
+            {"type": "character_state_event", "id": event_id}
+            for event_id in sorted(state_event_ids)
+        ],
+        confidence=1.0,
+    )
 
 
 def _required_phrases(requirement: str) -> tuple[str, ...]:

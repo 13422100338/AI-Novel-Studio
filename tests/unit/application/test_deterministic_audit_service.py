@@ -3,6 +3,7 @@ import json
 import pytest
 
 from ai_novel_studio.application.deterministic_audit_service import (
+    CharacterInjuryConflictAuditSource,
     CharacterLocationConflictAuditSource,
     DeterministicAuditRequest,
     DeterministicAuditService,
@@ -24,6 +25,9 @@ def _run(
     character_location_conflict_sources: tuple[
         CharacterLocationConflictAuditSource, ...
     ] = (),
+    character_injury_conflict_sources: tuple[
+        CharacterInjuryConflictAuditSource, ...
+    ] = (),
 ):
     request = DeterministicAuditRequest(
         chapter_id="chapter-1",
@@ -34,6 +38,7 @@ def _run(
         chapter_sequence=chapter_sequence,
         reader_view_sources=reader_view_sources,
         character_location_conflict_sources=character_location_conflict_sources,
+        character_injury_conflict_sources=character_injury_conflict_sources,
     )
     return DeterministicAuditService().run(request)
 
@@ -271,4 +276,80 @@ def test_contested_character_location_requires_two_distinct_exact_locations(
 
     assert not any(
         finding.category == AuditFindingCategory.TIMELINE for finding in findings
+    )
+
+
+def test_contested_character_injury_status_uses_earliest_exact_branch_with_provenance() -> None:
+    target = "Sprained left ankle first. Broken wrist later. Sprained left ankle again."
+    findings = _run(
+        target,
+        character_injury_conflict_sources=(
+            CharacterInjuryConflictAuditSource(
+                character_id="character-1",
+                source_boundary_chapter_id="chapter-source",
+                injury_statuses=("  Broken wrist  ", "Sprained left ankle"),
+                state_event_ids=("state-b", "state-a"),
+            ),
+        ),
+    )
+
+    character_findings = [
+        finding
+        for finding in findings
+        if finding.category == AuditFindingCategory.CHARACTER
+    ]
+    assert len(character_findings) == 1
+    finding = character_findings[0]
+    assert finding.severity == AuditSeverity.WARNING
+    assert finding.source == AuditFindingSource.DETERMINISTIC
+    assert finding.confidence == 1.0
+    assert finding.evidence == "Sprained left ankle"
+    assert "unresolved" in finding.explanation.lower()
+    assert "injury-status" in finding.explanation.lower()
+    assert "branch" in finding.explanation.lower()
+    assert "error" not in finding.explanation.lower()
+    assert json.loads(finding.location_json) == {
+        "character_id": "character-1",
+        "evidence_kind": "SOURCE_EXCERPT",
+        "quote": "Sprained left ankle",
+        "source_boundary_chapter_id": "chapter-source",
+        "start": target.index("Sprained left ankle"),
+        "state_field": "injury_status",
+    }
+    assert json.loads(finding.related_source_json) == [
+        {"id": "state-a", "type": "character_state_event"},
+        {"id": "state-b", "type": "character_state_event"},
+    ]
+
+
+@pytest.mark.parametrize(
+    ("target", "injury_statuses"),
+    (
+        ("No listed condition appears.", ("Broken wrist", "Sprained ankle")),
+        ("SPRAINED ANKLE appears.", ("Broken wrist", "Sprained ankle")),
+        ("The injury has improved.", ("Broken wrist", "Sprained ankle")),
+        ("Sprained ankle appears.", ("Sprained ankle",)),
+        ("Sprained ankle appears.", (" Sprained ankle ", "Sprained ankle")),
+        ("Sprained ankle appears.", (" ", "")),
+    ),
+)
+def test_contested_character_injury_status_requires_two_distinct_exact_statuses(
+    target: str,
+    injury_statuses: tuple[str, ...],
+) -> None:
+    findings = _run(
+        target,
+        character_injury_conflict_sources=(
+            CharacterInjuryConflictAuditSource(
+                character_id="character-1",
+                source_boundary_chapter_id="chapter-source",
+                injury_statuses=injury_statuses,
+                state_event_ids=("state-a", "state-b"),
+            ),
+        ),
+    )
+
+    assert not any(
+        finding.category == AuditFindingCategory.CHARACTER
+        for finding in findings
     )
