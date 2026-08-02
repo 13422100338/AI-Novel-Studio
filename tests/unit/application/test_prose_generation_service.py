@@ -1,5 +1,8 @@
+import logging
 from collections.abc import Callable, Iterator
 from pathlib import Path
+
+from pytest import LogCaptureFixture
 
 from ai_novel_studio.application.prose_generation_service import (
     ProseEventKind,
@@ -20,6 +23,7 @@ from ai_novel_studio.infrastructure.llm import (
     TaskPurpose,
 )
 from ai_novel_studio.infrastructure.llm.provider_adapter import ProviderRequestError
+from ai_novel_studio.infrastructure.logging_config import PrivacyFormatter
 from ai_novel_studio.infrastructure.storage.chapter_repository import ChapterRepository
 from ai_novel_studio.infrastructure.storage.checkpoint_repository import CheckpointRepository
 from ai_novel_studio.infrastructure.storage.generation_repository import GenerationRepository
@@ -194,6 +198,33 @@ def test_provider_exception_is_sanitized_and_never_retried_by_service(
     assert [event.message for event in events if event.kind == ProseEventKind.FAILED] == [
         "正文生成失败，请检查连接与模型设置"
     ]
+
+
+def test_provider_exception_logs_redacted_traceback(
+    tmp_path: Path,
+    caplog: LogCaptureFixture,
+) -> None:
+    _, run, runs, checkpoints, _, provider = _ready_run(tmp_path)
+    gateway = FakeGateway(error=ProviderRequestError("sk-live-sensitive"))
+    service = ProseGenerationService(gateway, provider, runs, checkpoints)
+
+    with caplog.at_level(
+        logging.ERROR,
+        logger="ai_novel_studio.application.prose_generation_service",
+    ):
+        tuple(service.stream(run.id))
+
+    records = [
+        record
+        for record in caplog.records
+        if record.name == "ai_novel_studio.application.prose_generation_service"
+    ]
+    assert len(records) == 1
+    assert records[0].exc_info is not None
+    rendered = PrivacyFormatter("%(levelname)s %(name)s %(message)s").format(records[0])
+    assert run.id in rendered
+    assert "sk-live-sensitive" not in rendered
+    assert "Traceback" in rendered
 
 
 def test_cancellation_keeps_received_text_and_starts_no_second_request(

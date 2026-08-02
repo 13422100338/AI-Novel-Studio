@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Iterator
 
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal, Slot
@@ -14,6 +15,8 @@ from ai_novel_studio.infrastructure.llm import (
     ProviderError,
     StreamEventKind,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class _ResultJob(QRunnable):
@@ -151,6 +154,11 @@ class ModelTaskCoordinator(QObject):
         self.thread_pool.start(_ResultJob(function, success, self._emit_failure))
 
     def _emit_failure(self, error: BaseException) -> None:
+        logger.error(
+            "Model task failed (error_type=%s)",
+            type(error).__name__,
+            exc_info=(type(error), error, error.__traceback__),
+        )
         safe_types = (
             ContractValidationError,
             MissingCredentialError,

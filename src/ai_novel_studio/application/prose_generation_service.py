@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterator
 from dataclasses import dataclass
 from enum import StrEnum
@@ -16,6 +17,8 @@ from ai_novel_studio.infrastructure.llm import (
 )
 from ai_novel_studio.infrastructure.storage.checkpoint_repository import CheckpointRepository
 from ai_novel_studio.infrastructure.storage.generation_repository import GenerationRepository
+
+logger = logging.getLogger(__name__)
 
 
 class ProseGateway(Protocol):
@@ -192,6 +195,7 @@ class ProseGenerationService:
                     safe_message=_SAFE_PARTIAL_FAILURE if buffer else _SAFE_FAILURE,
                 )
         except Exception:
+            logger.exception("Prose generation stream failed (run_id=%s)", run.id)
             yield from self._interrupt(
                 run.id,
                 buffer,
@@ -219,6 +223,11 @@ class ProseGenerationService:
                 self.checkpoints.append(run_id, buffer, finish_reason=code.lower())
                 durable_text = True
             except Exception:
+                logger.exception(
+                    "Failed to persist generation checkpoint (run_id=%s, code=%s)",
+                    run_id,
+                    code,
+                )
                 durable_text = saved_length > 0
         target = GenerationStatus.PARTIAL if durable_text else GenerationStatus.FAILED
         changed = self.runs.transition(

@@ -4,12 +4,16 @@ import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from ai_novel_studio.infrastructure.privacy.redaction import redact_private_paths
+from ai_novel_studio.infrastructure.privacy.redaction import (
+    redact_credentials,
+    redact_private_paths,
+)
 
 
 class PrivacyFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
-        return redact_private_paths(super().format(record), Path.home())
+        rendered = redact_private_paths(super().format(record), Path.home())
+        return redact_credentials(rendered)
 
 
 def configure_logging(log_path: Path) -> None:

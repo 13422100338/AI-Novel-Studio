@@ -1,4 +1,5 @@
 import logging
+import sys
 from pathlib import Path
 
 from ai_novel_studio.infrastructure.logging_config import PrivacyFormatter
@@ -31,3 +32,25 @@ def test_privacy_formatter_redacts_log_record() -> None:
 
     assert "private-user" not in rendered
     assert "<USER_HOME>" in rendered
+
+
+def test_privacy_formatter_redacts_api_key_from_traceback() -> None:
+    formatter = PrivacyFormatter("%(levelname)s %(message)s")
+    try:
+        raise RuntimeError("provider echoed sk-live-sensitive")
+    except RuntimeError:
+        record = logging.LogRecord(
+            "test",
+            logging.ERROR,
+            __file__,
+            1,
+            "model task failed",
+            (),
+            sys.exc_info(),
+        )
+
+    rendered = formatter.format(record)
+
+    assert "sk-live-sensitive" not in rendered
+    assert "<REDACTED_CREDENTIAL>" in rendered
+    assert "Traceback" in rendered

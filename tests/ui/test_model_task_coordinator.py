@@ -1,5 +1,7 @@
+import logging
 from collections.abc import Iterator
 
+from pytest import LogCaptureFixture
 from pytestqt.qtbot import QtBot
 
 from ai_novel_studio.application.model_tasks import (
@@ -8,6 +10,7 @@ from ai_novel_studio.application.model_tasks import (
     StyleAuditResult,
 )
 from ai_novel_studio.infrastructure.llm import LLMMessage, LLMStreamEvent, StreamEventKind
+from ai_novel_studio.infrastructure.logging_config import PrivacyFormatter
 from ai_novel_studio.ui.qt.model_task_coordinator import ModelTaskCoordinator
 
 
@@ -64,11 +67,29 @@ class FailingTaskService(FakeTaskService):
         raise RuntimeError("provider echoed sk-private-value")
 
 
-def test_coordinator_sanitizes_unexpected_worker_errors(qtbot: QtBot) -> None:
+def test_coordinator_sanitizes_unexpected_worker_errors(
+    qtbot: QtBot,
+    caplog: LogCaptureFixture,
+) -> None:
     coordinator = ModelTaskCoordinator(FailingTaskService())  # type: ignore[arg-type]
 
-    with qtbot.waitSignal(coordinator.task_failed, timeout=2000) as signal:
-        coordinator.start_requirement((LLMMessage("user", "讨论"),), "正文", 1000)
+    with caplog.at_level(
+        logging.ERROR,
+        logger="ai_novel_studio.ui.qt.model_task_coordinator",
+    ):
+        with qtbot.waitSignal(coordinator.task_failed, timeout=2000) as signal:
+            coordinator.start_requirement((LLMMessage("user", "讨论"),), "正文", 1000)
 
     assert "sk-private-value" not in signal.args[0]
     assert "模型任务失败" in signal.args[0]
+    records = [
+        record
+        for record in caplog.records
+        if record.name == "ai_novel_studio.ui.qt.model_task_coordinator"
+    ]
+    assert len(records) == 1
+    assert records[0].exc_info is not None
+    rendered = PrivacyFormatter("%(levelname)s %(name)s %(message)s").format(records[0])
+    assert "sk-private-value" not in rendered
+    assert "<REDACTED_CREDENTIAL>" in rendered
+    assert "Traceback" in rendered
