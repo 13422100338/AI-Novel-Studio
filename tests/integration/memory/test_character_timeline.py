@@ -6,14 +6,12 @@ import pytest
 
 from ai_novel_studio.application.character_card_context_service import (
     CharacterCardContextService,
+    CharacterCardProjection,
 )
 from ai_novel_studio.application.character_status_service import (
     CharacterStatusCard,
     CharacterStatusRecord,
     CharacterStatusService,
-)
-from ai_novel_studio.application.generation_memory_context_provider import (
-    GenerationMemoryContextProvider,
 )
 from ai_novel_studio.core.memory.character_timeline import CharacterTimeline
 from ai_novel_studio.domain.memory import (
@@ -195,7 +193,7 @@ def test_character_status_projects_trusted_physical_state_and_empty_defaults(
     assert cards[without_state.id].injury_status == ""
 
 
-def test_physical_state_does_not_change_character_card_or_writer_content(
+def test_writer_projection_adds_physical_state_without_changing_legacy_card(
     tmp_path: Path,
 ) -> None:
     def build_projection(
@@ -226,22 +224,18 @@ def test_physical_state_does_not_change_character_card_or_writer_content(
             review_status=ReviewStatus.APPROVED,
         )
         card = CharacterStatusService(repository).list_cards_for_chapter(target.id)[0]
-        item = CharacterCardContextService(project).items_before(target.id)[0]
-        writer_block = next(
-            block
-            for block in GenerationMemoryContextProvider(project).blocks(
-                target.id,
-                "Eric visits Mara.",
-                (),
-            )
-            if block.id == f"character-card-{character.id}"
-        )
+        service = CharacterCardContextService(project)
+        legacy_item = service.items_before(target.id)[0]
+        writer_item = service.items_before(
+            target.id,
+            projection=CharacterCardProjection.WRITER_PHYSICAL_V1,
+        )[0]
         return (
             card,
-            item.content,
-            item.content_hash,
-            writer_block.content,
-            writer_block.source_hash,
+            legacy_item.content,
+            legacy_item.content_hash,
+            writer_item.content,
+            writer_item.content_hash,
         )
 
     first = build_projection(
@@ -254,22 +248,35 @@ def test_physical_state_does_not_change_character_card_or_writer_content(
         location="Old harbor",
         injury_status="Bandaged right hand",
     )
+    empty = build_projection(
+        tmp_path / "empty",
+        location="",
+        injury_status="",
+    )
 
     assert first[0].location == "Clock tower"
     assert first[0].injury_status == "Sprained left ankle"
     assert second[0].location == "Old harbor"
     assert second[0].injury_status == "Bandaged right hand"
-    assert first[1:] == second[1:]
-    for marker in (
-        "Clock tower",
-        "Sprained left ankle",
-        "Old harbor",
-        "Bandaged right hand",
-    ):
-        assert marker not in first[1]
-        assert marker not in first[3]
-        assert marker not in second[1]
-        assert marker not in second[3]
+    assert first[1:3] == second[1:3] == empty[1:3]
+    assert "Clock tower" not in first[1]
+    assert "Sprained left ankle" not in first[1]
+    assert "Old harbor" not in second[1]
+    assert "Bandaged right hand" not in second[1]
+    assert "当前位置：Clock tower" in first[3]
+    assert "伤势状态：Sprained left ankle" in first[3]
+    assert "当前位置：Old harbor" in second[3]
+    assert "伤势状态：Bandaged right hand" in second[3]
+    assert first[3].index("当前动机：") < first[3].index("当前位置：")
+    assert first[3].index("当前位置：") < first[3].index("伤势状态：")
+    assert first[3].index("伤势状态：") < first[3].index("人物关系：")
+    assert first[4] == hashlib.sha256(first[3].encode("utf-8")).hexdigest()
+    assert second[4] == hashlib.sha256(second[3].encode("utf-8")).hexdigest()
+    assert first[4] != second[4]
+    assert empty[3] == empty[1]
+    assert empty[4] == empty[2]
+    assert "当前位置：" not in empty[3]
+    assert "伤势状态：" not in empty[3]
 
 
 def test_physical_state_projection_preserves_old_dto_and_save_contracts() -> None:

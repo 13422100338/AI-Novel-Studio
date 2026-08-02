@@ -1,3 +1,4 @@
+import hashlib
 from dataclasses import replace
 from pathlib import Path
 
@@ -26,6 +27,7 @@ from ai_novel_studio.domain.generation import (
     CreationMode,
     GenerationStatus,
 )
+from ai_novel_studio.domain.memory import ReviewStatus, SourceType
 from ai_novel_studio.domain.view import (
     EpistemicStatus,
     ViewAssertionDraft,
@@ -152,6 +154,60 @@ def test_basic_preparation_preserves_output_limit_and_links_manifest(
     assert prepared.manifest.target_chapter_revision == workspace["current"].revision
     assert prepared.manifest.requirement_revision == workspace["requirement"].revision
     assert workspace["manifests"].load(prepared.manifest.id) == prepared.manifest
+
+
+def test_writer_prompt_and_manifest_use_physical_character_state_projection(
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    memory = CharacterMemoryRepository(workspace["project"])
+    character = memory.create_character("Eric")
+    memory.append_state(
+        character.id,
+        workspace["recent"].id,
+        motivation="Protect the town",
+        psychology="Guarded",
+        current_goal="Reach the archive",
+        relationships="Distrusts Mara",
+        recent_activity="Crossed the old harbor",
+        location="Clock tower",
+        injury_status="Sprained left ankle",
+        confidence=1,
+        source_type=SourceType.HUMAN,
+        review_status=ReviewStatus.APPROVED,
+    )
+
+    prepared = workspace["service"].prepare(_request(workspace))
+
+    block = next(
+        item
+        for item in prepared.selected_blocks
+        if item.source_type == "CHARACTER_STATE"
+        and item.source_id == character.id
+    )
+    selected = next(
+        item
+        for item in prepared.manifest.selected
+        if item.block_id == block.id
+    )
+    memory_message = next(
+        message
+        for message in prepared.messages
+        if message.content.startswith("人物、知识、线索、正典和文风：")
+    )
+
+    assert "当前位置：Clock tower" in block.content
+    assert "伤势状态：Sprained left ankle" in block.content
+    assert block.content.index("当前动机：") < block.content.index("当前位置：")
+    assert block.content.index("当前位置：") < block.content.index("伤势状态：")
+    assert block.content.index("伤势状态：") < block.content.index("人物关系：")
+    assert "当前位置：Clock tower" in memory_message.content
+    assert "伤势状态：Sprained left ankle" in memory_message.content
+    assert selected.source_hash == hashlib.sha256(
+        block.content.encode("utf-8")
+    ).hexdigest()
+    assert prepared.manifest.schema_version == 2
+    assert prepared.manifest.compiler_version == "context-compiler/2.0"
 
 
 def test_preparation_persists_deep_policy_without_strict_mode(tmp_path: Path) -> None:

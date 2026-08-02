@@ -8,6 +8,7 @@ from ai_novel_studio.application.canon_card_context_service import (
 )
 from ai_novel_studio.application.character_card_context_service import (
     CharacterCardContextService,
+    CharacterCardProjection,
 )
 from ai_novel_studio.application.plot_memory_context_service import (
     PlotMemoryContextService,
@@ -198,7 +199,10 @@ class GenerationMemoryContextProvider:
         self,
         chapter_id: str,
     ) -> tuple[ContextBlock, ...]:
-        items = self.character_cards.items_before(chapter_id)
+        items = self.character_cards.items_before(
+            chapter_id,
+            projection=CharacterCardProjection.WRITER_PHYSICAL_V1,
+        )
         blocks = [
             ContextBlock(
                 f"character-card-{item.character_id}",

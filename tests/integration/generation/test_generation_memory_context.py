@@ -420,7 +420,7 @@ def test_unapproved_style_samples_are_manifested_without_loading_candidate_bodie
     assert "REJECTED_SAMPLE_SECRET_MARKER" not in writer_prompt
 
 
-def test_plot_and_prose_share_the_same_time_bounded_character_card_context(
+def test_plot_keeps_legacy_card_while_prose_uses_physical_writer_projection(
     tmp_path: Path,
 ) -> None:
     project = ProjectRepository.create(tmp_path / "novel", "Novel")
@@ -435,10 +435,22 @@ def test_plot_and_prose_share_the_same_time_bounded_character_card_context(
         ("Eric",),
         "Restrained voice; rubs his cuff when anxious.",
     )
-    for chapter_id, psychology, goal in (
-        (prologue.id, "Afraid", "Survive the storm"),
-        (first.id, "Guarded", "Find the letter's sender"),
-        (current.id, "Angry", "Confront the sender"),
+    for chapter_id, psychology, goal, location, injury_status in (
+        (prologue.id, "Afraid", "Survive the storm", "Town square", ""),
+        (
+            first.id,
+            "Guarded",
+            "Find the letter's sender",
+            "Old harbor",
+            "Bandaged right hand",
+        ),
+        (
+            current.id,
+            "Angry",
+            "Confront the sender",
+            "CURRENT_LOCATION_SECRET",
+            "CURRENT_INJURY_SECRET",
+        ),
     ):
         memory.append_state(
             eric.id,
@@ -448,6 +460,8 @@ def test_plot_and_prose_share_the_same_time_bounded_character_card_context(
             current_goal=goal,
             relationships="Cautiously trusts Alice",
             recent_activity=f"Working to {goal}",
+            location=location,
+            injury_status=injury_status,
             confidence=1,
             source_type=SourceType.HUMAN,
             review_status=ReviewStatus.APPROVED,
@@ -460,6 +474,8 @@ def test_plot_and_prose_share_the_same_time_bounded_character_card_context(
         current_goal="REVIEW_STATE_SECRET_GOAL",
         relationships="REVIEW_STATE_SECRET_RELATIONSHIPS",
         recent_activity="REVIEW_STATE_SECRET_RECENT",
+        location="REVIEW_LOCATION_SECRET",
+        injury_status="REVIEW_INJURY_SECRET",
         confidence=0.8,
         source_type=SourceType.MODEL,
         review_status=ReviewStatus.REVIEW,
@@ -472,6 +488,8 @@ def test_plot_and_prose_share_the_same_time_bounded_character_card_context(
         current_goal="",
         relationships="",
         recent_activity="",
+        location="CURRENT_REVIEW_LOCATION_SECRET",
+        injury_status="CURRENT_REVIEW_INJURY_SECRET",
         confidence=0.8,
         source_type=SourceType.MODEL,
         review_status=ReviewStatus.REVIEW,
@@ -488,12 +506,31 @@ def test_plot_and_prose_share_the_same_time_bounded_character_card_context(
     assert len(shared) == 1
     assert plot.message is not None
     assert plot.message.content.count(shared[0].content) == 1
-    assert [
-        block.content
+    writer_block = next(
+        block
         for block in prose_blocks
         if block.source_type == "CHARACTER_STATE"
         and block.eligibility.authority_allowed
-    ] == [shared[0].content]
+    )
+    assert writer_block.content != shared[0].content
+    assert "当前位置：Old harbor" in writer_block.content
+    assert "伤势状态：Bandaged right hand" in writer_block.content
+    assert writer_block.content.index("当前动机：") < writer_block.content.index(
+        "当前位置："
+    )
+    assert writer_block.content.index("当前位置：") < writer_block.content.index(
+        "伤势状态："
+    )
+    assert writer_block.content.index("伤势状态：") < writer_block.content.index(
+        "人物关系："
+    )
+    assert writer_block.source_hash == hashlib.sha256(
+        writer_block.content.encode("utf-8")
+    ).hexdigest()
+    assert "Old harbor" not in shared[0].content
+    assert "Bandaged right hand" not in shared[0].content
+    assert "Old harbor" not in plot.message.content
+    assert "Bandaged right hand" not in plot.message.content
     candidate = next(
         block
         for block in prose_blocks
@@ -539,6 +576,17 @@ def test_plot_and_prose_share_the_same_time_bounded_character_card_context(
     assert review.current_goal not in built.text
     assert current_review.motivation not in built.text
     assert review.motivation not in plot.message.content
+    for forbidden in (
+        "REVIEW_LOCATION_SECRET",
+        "REVIEW_INJURY_SECRET",
+        "CURRENT_LOCATION_SECRET",
+        "CURRENT_INJURY_SECRET",
+        "CURRENT_REVIEW_LOCATION_SECRET",
+        "CURRENT_REVIEW_INJURY_SECRET",
+    ):
+        assert forbidden not in writer_block.content
+        assert forbidden not in built.text
+        assert forbidden not in plot.message.content
     assert "Restrained voice; rubs his cuff when anxious." in shared[0].content
     assert "Survive the storm" in shared[0].content
     past_journey = shared[0].content.split("过往心路历程：", maxsplit=1)[1]
