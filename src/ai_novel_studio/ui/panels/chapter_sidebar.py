@@ -251,6 +251,10 @@ class ChapterSidebar(QFrame):
         self.goal_edit = self._labeled_editor(layout, container, "当前目标")
         self.relationships_edit = self._labeled_editor(layout, container, "人物关系")
         self.recent_edit = self._labeled_editor(layout, container, "最近活动")
+        self.location_display = self._labeled_editor(layout, container, "当前位置")
+        self.location_display.setReadOnly(True)
+        self.injury_status_display = self._labeled_editor(layout, container, "伤势状态")
+        self.injury_status_display.setReadOnly(True)
         self.journey_edit = self._labeled_editor(layout, container, "过往心路历程")
         self.journey_edit.setReadOnly(True)
         self.journey_edit.setFixedHeight(104)
@@ -354,6 +358,10 @@ class ChapterSidebar(QFrame):
         self.goal_edit.setPlainText(record["goal"])
         self.relationships_edit.setPlainText(record.get("relationships", ""))
         self.recent_edit.setPlainText(record["recent"])
+        self.location_display.setPlainText(record.get("location", "") or "未记录")
+        self.injury_status_display.setPlainText(
+            record.get("injury_status", "") or "未记录"
+        )
         self.journey_edit.setPlainText(record.get("journey", ""))
 
     def _clear_character_fields(self) -> None:
@@ -363,6 +371,8 @@ class ChapterSidebar(QFrame):
         self.goal_edit.clear()
         self.relationships_edit.clear()
         self.recent_edit.clear()
+        self.location_display.setPlainText("未记录")
+        self.injury_status_display.setPlainText("未记录")
         self.journey_edit.clear()
 
     @staticmethod
@@ -392,6 +402,8 @@ class ChapterSidebar(QFrame):
                 "goal": str(record.goal),
                 "relationships": str(getattr(record, "relationships", "")),
                 "recent": str(record.recent),
+                "location": str(getattr(record, "location", "") or ""),
+                "injury_status": str(getattr(record, "injury_status", "") or ""),
                 "journey": self._format_character_journey(
                     getattr(record, "journey", ())
                 ),

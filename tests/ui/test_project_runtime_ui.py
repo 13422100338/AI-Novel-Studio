@@ -604,9 +604,9 @@ def test_main_window_displays_one_time_bounded_card_per_character(
     )
     repository = CharacterMemoryRepository(runtime.project)
     character = repository.create_character("林默", ("阿默",), "谨慎的调查者")
-    for chapter_id, psychology, goal in (
-        (first_chapter_id, "保持警惕", "检查旧信"),
-        (second.id, "开始动摇", "进入钟楼"),
+    for chapter_id, psychology, goal, location, injury_status in (
+        (first_chapter_id, "保持警惕", "检查旧信", "", ""),
+        (second.id, "开始动摇", "进入钟楼", "钟楼入口", "左臂包扎"),
     ):
         repository.append_state(
             character.id,
@@ -619,6 +619,8 @@ def test_main_window_displays_one_time_bounded_card_per_character(
             confidence=1,
             source_type=SourceType.HUMAN,
             review_status=ReviewStatus.APPROVED,
+            location=location,
+            injury_status=injury_status,
         )
 
     window = MainWindow(model_runtime=UiModelRuntime(tmp_path), project_runtime=runtime)
@@ -634,6 +636,15 @@ def test_main_window_displays_one_time_bounded_card_per_character(
     assert "进入钟楼" in status["journey"]
     assert window.chapter_sidebar.journey_edit.isReadOnly()
     assert window.chapter_sidebar.journey_edit.toPlainText() == status["journey"]
+    assert window.chapter_sidebar.location_display.toPlainText() == "钟楼入口"
+    assert window.chapter_sidebar.injury_status_display.toPlainText() == "左臂包扎"
+    assert window.chapter_sidebar.location_display.isReadOnly()
+    assert window.chapter_sidebar.injury_status_display.isReadOnly()
+
+    window.load_project_chapter(first_chapter_id)
+
+    assert window.chapter_sidebar.location_display.toPlainText() == "未记录"
+    assert window.chapter_sidebar.injury_status_display.toPlainText() == "未记录"
 
 
 def test_main_window_saves_sidebar_character_state_to_project_memory(
@@ -643,6 +654,8 @@ def test_main_window_saves_sidebar_character_state_to_project_memory(
     window = MainWindow(model_runtime=UiModelRuntime(tmp_path), project_runtime=runtime)
     qtbot.addWidget(window)
     window.load_project_chapter(chapter_id)
+    payloads: list[object] = []
+    window.chapter_sidebar.character_edit_applied.connect(payloads.append)
 
     window.chapter_sidebar.begin_new_character("林默")
     window.chapter_sidebar.profile_edit.setPlainText(
@@ -654,6 +667,12 @@ def test_main_window_saves_sidebar_character_state_to_project_memory(
     window.chapter_sidebar.relationships_edit.setPlainText("暂不信任来信者")
     window.chapter_sidebar.recent_edit.setPlainText("刚收到匿名来信")
     window.chapter_sidebar.apply_character_edit()
+
+    assert payloads
+    payload = payloads[0]
+    assert isinstance(payload, dict)
+    assert "location" not in payload
+    assert "injury_status" not in payload
 
     repository = CharacterMemoryRepository(runtime.project)
     character = repository.list_characters()[0]
@@ -667,6 +686,8 @@ def test_main_window_saves_sidebar_character_state_to_project_memory(
     assert state.current_goal == "进入档案室"
     assert state.relationships == "暂不信任来信者"
     assert state.recent_activity == "刚收到匿名来信"
+    assert state.location == ""
+    assert state.injury_status == ""
     assert window.chapter_sidebar.character_feedback_label.text() == (
         "人物状态已保存到当前章节节点。"
     )
