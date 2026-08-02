@@ -47,6 +47,7 @@ ApplicationWindow {
 
             Rectangle {
                 id: sidebarHost
+                objectName: "sidebarHost"
                 Layout.preferredWidth: window.sidebarVisible ? 280 : 0
                 Layout.fillHeight: true
                 color: Theme.tokens.color.bgSidebar
@@ -96,6 +97,12 @@ ApplicationWindow {
                 anchors.leftMargin: 10
                 anchors.rightMargin: 10
                 spacing: 8
+
+                AppButton {
+                    objectName: "sidebarToggle"
+                    text: window.sidebarVisible ? "收起侧栏" : "展开侧栏"
+                    onClicked: window.sidebarVisible = !window.sidebarVisible
+                }
 
                 StatusChip {
                     label: "字数"

@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from PySide6.QtCore import QUrl
+from PySide6.QtCore import QMetaObject, QUrl
 from PySide6.QtQml import QQmlApplicationEngine
 from pytestqt.qtbot import QtBot
 
@@ -80,3 +80,22 @@ def test_navigation_placeholder_page(qtbot: QtBot) -> None:
     engine, facade, _ = _load_engine(qtbot)
     facade.setActiveNav("settings")
     assert facade.property("activeNav") == "settings"
+
+
+def test_sidebar_toggle_toggles_state_and_label(qtbot: QtBot) -> None:
+    engine, _, _ = _load_engine(qtbot)
+    window = engine.rootObjects()[0]
+    toggle = window.findChild(object, "sidebarToggle")
+    assert toggle is not None
+    assert window.findChild(object, "sidebarHost") is not None
+
+    assert window.property("sidebarVisible") is True
+    assert toggle.property("text") == "收起侧栏"
+
+    QMetaObject.invokeMethod(toggle, "clicked")
+    assert window.property("sidebarVisible") is False
+    assert toggle.property("text") == "展开侧栏"
+
+    QMetaObject.invokeMethod(toggle, "clicked")
+    assert window.property("sidebarVisible") is True
+    assert toggle.property("text") == "收起侧栏"

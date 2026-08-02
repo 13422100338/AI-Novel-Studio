@@ -4,6 +4,9 @@
 > 日期：2026-08-02
 > 原则：最小正确改动、前后端隔离、不改后端接口、不改现有 QWidget UI。
 
+> 增量 F1.1（2026-08-02）：状态栏新增「收起/展开侧栏」切换按钮，侧栏宽度折叠
+> 带动画并遵守 reduce-motion；对应 QML 交互测试 +1（45 个测试）。
+
 ## 1. 本轮交付内容
 
 - 现代单窗口 QML Shell：`ApplicationWindow` + Navigation Rail + 可折叠上下文侧栏 + 中央工作区 + 右侧可折叠 AI Drawer + 状态栏；
@@ -12,7 +15,7 @@
 - `MockNovelStudioFacade`：QML 唯一数据边界（项目、卷章、编辑器状态机、AI 建议候选层、导航、减少动效），全部确定性 Mock，零后端调用；
 - `ChapterListModel` / `SuggestionListModel`：`QAbstractListModel` roles，UI 线程模型变更；
 - 一个正文工作区垂直切片：`WritingPage`（卷/章标题、字数、修订、CLEAN/DIRTY/SAVING 状态、保存、章节信息/AI 参考/生成草稿、AI 建议采用/放弃）；
-- 前端测试 `tests/ui_qml`（44 个）；截图脚本与 4 张截图。
+- 前端测试 `tests/ui_qml`（45 个）；截图脚本与 4 张截图。
 
 ## 2. 实际修改文件（全部为新增）
 
@@ -55,7 +58,7 @@ docs/frontend/
 | 门禁 | 命令 | 结果 |
 |---|---|---|
 | QML 冒烟 | offscreen + software 加载 App.qml，交互链 | 加载成功，0 个 QML 错误 |
-| 前端测试 | `pytest tests/ui_qml -q --basetemp .test-temp/pytest-base` | 44 passed |
+| 前端测试 | `pytest tests/ui_qml -q --basetemp .test-temp/pytest-base` | 45 passed |
 | 完整测试 | `pytest -q --basetemp .test-temp/pytest-base` | 866 passed（含旧 UI 全部回归） |
 | Ruff | `ruff check src tests scripts` | 通过 |
 | MyPy | `mypy`（MYPYPATH=src） | 通过，193 个源文件 |
@@ -76,6 +79,8 @@ docs/frontend/
 
 截图由 `scripts/capture_frontend_f1_screenshots.py` 在 offscreen + software 渲染下生成
 （1440×900），已验证各主题像素亮度差异显著，非空白图。
+
+> 提交历史：`7f42052`（F1 主体）→ F1.1（侧栏折叠交互，本记录同步更新）。
 
 ## 5. 本轮延期事项（不变更）
 
