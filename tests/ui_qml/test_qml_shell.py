@@ -2,11 +2,27 @@ from pathlib import Path
 
 from PySide6.QtCore import QMetaObject, QUrl
 from PySide6.QtQml import QQmlApplicationEngine
+from PySide6.QtQuick import QQuickItem
 from pytestqt.qtbot import QtBot
 
 from ai_novel_studio.ui_qml.bootstrap import app_qml_path, register_frontend_types
 from ai_novel_studio.ui_qml.bridge.mock_novel_studio_facade import MockNovelStudioFacade
 from ai_novel_studio.ui_qml.bridge.theme_provider import ThemeProvider
+
+
+def _find_quick_item(root: QQuickItem, name: str) -> QQuickItem | None:
+    """Find a QML item by objectName through the QQuickItem hierarchy.
+
+    QObject.findChild cannot see Repeater delegate items in PySide6; walking
+    childItems() covers both regular items and delegated list content.
+    """
+    if root.objectName() == name:
+        return root
+    for child in root.childItems():
+        found = _find_quick_item(child, name)
+        if found is not None:
+            return found
+    return None
 
 
 def _load_engine(
@@ -99,3 +115,56 @@ def test_sidebar_toggle_toggles_state_and_label(qtbot: QtBot) -> None:
     QMetaObject.invokeMethod(toggle, "clicked")
     assert window.property("sidebarVisible") is True
     assert toggle.property("text") == "收起侧栏"
+
+
+def test_navigation_rail_button_switches_page(qtbot: QtBot) -> None:
+    engine, facade, _ = _load_engine(qtbot)
+    window = engine.rootObjects()[0]
+    memory_button = _find_quick_item(window.contentItem(), "nav-memory")
+    assert memory_button is not None
+    QMetaObject.invokeMethod(memory_button, "clicked")
+    assert facade.property("activeNav") == "memory"
+
+
+def test_sidebar_search_filters_chapter_list(qtbot: QtBot) -> None:
+    engine, facade, _ = _load_engine(qtbot)
+    window = engine.rootObjects()[0]
+    search = window.findChild(object, "sidebarSearch")
+    assert search is not None
+    search.setProperty("text", "灯塔")
+    model = facade.property("chapters")
+    assert model.rowCount() == 2
+    search.setProperty("text", "")
+    assert model.rowCount() == 7
+
+
+def test_theme_button_cycles_theme(qtbot: QtBot) -> None:
+    engine, _, theme = _load_engine(qtbot)
+    window = engine.rootObjects()[0]
+    theme_button = window.findChild(object, "themeButton")
+    assert theme.property("themeName") == "paper"
+    QMetaObject.invokeMethod(theme_button, "clicked")
+    assert theme.property("themeName") == "light"
+    QMetaObject.invokeMethod(theme_button, "clicked")
+    assert theme.property("themeName") == "dark"
+
+
+def test_draft_button_opens_drawer(qtbot: QtBot) -> None:
+    engine, facade, _ = _load_engine(qtbot)
+    window = engine.rootObjects()[0]
+    draft_button = window.findChild(object, "draftButton")
+    assert draft_button is not None
+    QMetaObject.invokeMethod(draft_button, "clicked")
+    assert facade.property("aiDrawerOpen") is True
+    assert facade.property("suggestions").rowCount() == 1
+
+
+def test_drawer_close_button_closes_drawer(qtbot: QtBot) -> None:
+    engine, facade, _ = _load_engine(qtbot)
+    window = engine.rootObjects()[0]
+    facade.requestDraft()
+    assert facade.property("aiDrawerOpen") is True
+    close_button = window.findChild(object, "drawerCloseButton")
+    assert close_button is not None
+    QMetaObject.invokeMethod(close_button, "clicked")
+    assert facade.property("aiDrawerOpen") is False

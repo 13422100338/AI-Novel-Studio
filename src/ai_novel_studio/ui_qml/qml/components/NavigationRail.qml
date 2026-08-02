@@ -36,6 +36,7 @@ Item {
                 Layout.preferredWidth: 44
                 Layout.preferredHeight: 48
                 Layout.alignment: Qt.AlignHCenter
+                objectName: "nav-" + modelData.id
                 iconText: modelData.icon
                 text: modelData.label
                 selected: Facade.activeNav === modelData.id
@@ -48,4 +49,3 @@ Item {
         }
     }
 }
-

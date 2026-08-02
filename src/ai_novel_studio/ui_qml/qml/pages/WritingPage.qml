@@ -53,6 +53,7 @@ Item {
                 onClicked: Facade.toggleAiDrawer(true)
             }
             AppButton {
+                objectName: "draftButton"
                 text: "生成草稿"
                 onClicked: Facade.requestDraft()
             }

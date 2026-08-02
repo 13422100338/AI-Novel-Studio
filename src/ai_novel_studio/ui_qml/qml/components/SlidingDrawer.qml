@@ -62,6 +62,7 @@ Item {
                     color: Theme.tokens.color.textPrimary
                 }
                 AppButton {
+                    objectName: "drawerCloseButton"
                     text: "关闭"
                     onClicked: root.closed()
                 }
@@ -133,4 +134,3 @@ Item {
         }
     }
 }
-
