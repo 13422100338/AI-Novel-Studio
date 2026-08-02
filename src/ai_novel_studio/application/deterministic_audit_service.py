@@ -129,6 +129,34 @@ class CharacterInjuryConflictAuditSource:
 
 
 @dataclass(frozen=True, slots=True)
+class CharacterGoalConflictAuditSource:
+    character_id: str
+    source_boundary_chapter_id: str
+    current_goals: tuple[str, ...]
+    state_event_ids: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        character_id = self.character_id.strip()
+        source_boundary_chapter_id = self.source_boundary_chapter_id.strip()
+        if not character_id:
+            raise ValueError("character_id cannot be empty")
+        if not source_boundary_chapter_id:
+            raise ValueError("source_boundary_chapter_id cannot be empty")
+        current_goals = _normalize_conflict_values(self.current_goals)
+        state_event_ids = _normalize_event_ids(self.state_event_ids)
+        if not state_event_ids:
+            raise ValueError("state_event_ids cannot be empty")
+        object.__setattr__(self, "character_id", character_id)
+        object.__setattr__(
+            self,
+            "source_boundary_chapter_id",
+            source_boundary_chapter_id,
+        )
+        object.__setattr__(self, "current_goals", current_goals)
+        object.__setattr__(self, "state_event_ids", state_event_ids)
+
+
+@dataclass(frozen=True, slots=True)
 class DeterministicAuditRequest:
     chapter_id: str
     target_text: str
@@ -142,6 +170,9 @@ class DeterministicAuditRequest:
     ] = ()
     character_injury_conflict_sources: tuple[
         CharacterInjuryConflictAuditSource, ...
+    ] = ()
+    character_goal_conflict_sources: tuple[
+        CharacterGoalConflictAuditSource, ...
     ] = ()
 
     def __post_init__(self) -> None:
@@ -224,6 +255,12 @@ class DeterministicAuditService:
                 _contested_character_injury_status_findings(
                     text,
                     sources=request.character_injury_conflict_sources,
+                )
+            )
+            findings.extend(
+                _contested_character_current_goal_findings(
+                    text,
+                    sources=request.character_goal_conflict_sources,
                 )
             )
 
@@ -439,6 +476,36 @@ def _contested_character_injury_status_findings(
             explanation=(
                 "The audited text uses one injury-status branch from an unresolved "
                 "same-boundary Character State conflict."
+            ),
+        )
+        if finding is None:
+            continue
+        findings.append(finding)
+        matched_character_ids.add(source.character_id)
+    return tuple(findings)
+
+
+def _contested_character_current_goal_findings(
+    text: str,
+    *,
+    sources: tuple[CharacterGoalConflictAuditSource, ...],
+) -> tuple[DeterministicFinding, ...]:
+    findings: list[DeterministicFinding] = []
+    matched_character_ids: set[str] = set()
+    for source in sources:
+        if source.character_id in matched_character_ids:
+            continue
+        finding = _character_state_conflict_finding(
+            text,
+            character_id=source.character_id,
+            source_boundary_chapter_id=source.source_boundary_chapter_id,
+            state_field="current_goal",
+            values=source.current_goals,
+            state_event_ids=source.state_event_ids,
+            category=AuditFindingCategory.CHARACTER,
+            explanation=(
+                "The audited text uses an unresolved same-boundary "
+                "Character State current-goal branch."
             ),
         )
         if finding is None:

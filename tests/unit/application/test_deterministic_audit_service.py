@@ -3,6 +3,7 @@ import json
 import pytest
 
 from ai_novel_studio.application.deterministic_audit_service import (
+    CharacterGoalConflictAuditSource,
     CharacterInjuryConflictAuditSource,
     CharacterLocationConflictAuditSource,
     DeterministicAuditRequest,
@@ -28,6 +29,9 @@ def _run(
     character_injury_conflict_sources: tuple[
         CharacterInjuryConflictAuditSource, ...
     ] = (),
+    character_goal_conflict_sources: tuple[
+        CharacterGoalConflictAuditSource, ...
+    ] = (),
 ):
     request = DeterministicAuditRequest(
         chapter_id="chapter-1",
@@ -39,6 +43,7 @@ def _run(
         reader_view_sources=reader_view_sources,
         character_location_conflict_sources=character_location_conflict_sources,
         character_injury_conflict_sources=character_injury_conflict_sources,
+        character_goal_conflict_sources=character_goal_conflict_sources,
     )
     return DeterministicAuditService().run(request)
 
@@ -344,6 +349,87 @@ def test_contested_character_injury_status_requires_two_distinct_exact_statuses(
                 character_id="character-1",
                 source_boundary_chapter_id="chapter-source",
                 injury_statuses=injury_statuses,
+                state_event_ids=("state-a", "state-b"),
+            ),
+        ),
+    )
+
+    assert not any(
+        finding.category == AuditFindingCategory.CHARACTER
+        for finding in findings
+    )
+
+
+def test_contested_character_current_goal_uses_earliest_exact_branch_with_provenance() -> None:
+    target = "Guard the archive first. Find the sender later. Guard the archive again."
+    findings = _run(
+        target,
+        character_goal_conflict_sources=(
+            CharacterGoalConflictAuditSource(
+                character_id="character-1",
+                source_boundary_chapter_id="chapter-source",
+                current_goals=("  Find the sender  ", "Guard the archive"),
+                state_event_ids=("state-b", "state-a"),
+            ),
+        ),
+    )
+
+    character_findings = [
+        finding
+        for finding in findings
+        if finding.category == AuditFindingCategory.CHARACTER
+    ]
+    assert len(character_findings) == 1
+    finding = character_findings[0]
+    assert finding.severity == AuditSeverity.WARNING
+    assert finding.source == AuditFindingSource.DETERMINISTIC
+    assert finding.confidence == 1.0
+    assert finding.evidence == "Guard the archive"
+    assert "unresolved" in finding.explanation.lower()
+    assert "current-goal" in finding.explanation.lower()
+    assert "branch" in finding.explanation.lower()
+    assert "intent miss" not in finding.explanation.lower()
+    assert "contradiction" not in finding.explanation.lower()
+    assert "error" not in finding.explanation.lower()
+    assert json.loads(finding.location_json) == {
+        "character_id": "character-1",
+        "evidence_kind": "SOURCE_EXCERPT",
+        "quote": "Guard the archive",
+        "source_boundary_chapter_id": "chapter-source",
+        "start": target.index("Guard the archive"),
+        "state_field": "current_goal",
+    }
+    assert json.loads(finding.related_source_json) == [
+        {"id": "state-a", "type": "character_state_event"},
+        {"id": "state-b", "type": "character_state_event"},
+    ]
+
+
+@pytest.mark.parametrize(
+    ("target", "current_goals"),
+    (
+        ("No listed goal appears.", ("Find the sender", "Guard the archive")),
+        ("GUARD THE ARCHIVE appears.", ("Find the sender", "Guard the archive")),
+        ("The character changes plans.", ("Find the sender", "Guard the archive")),
+        ("Guard the archive appears.", ("Guard the archive",)),
+        (
+            "Guard the archive appears.",
+            (" Guard the archive ", "Guard the archive"),
+        ),
+        ("Guard the archive appears.", (" ", "")),
+    ),
+)
+def test_contested_character_current_goal_requires_two_distinct_exact_goals(
+    target: str,
+    current_goals: tuple[str, ...],
+) -> None:
+    findings = _run(
+        target,
+        character_goal_conflict_sources=(
+            CharacterGoalConflictAuditSource(
+                character_id="character-1",
+                source_boundary_chapter_id="chapter-source",
+                current_goals=current_goals,
                 state_event_ids=("state-a", "state-b"),
             ),
         ),

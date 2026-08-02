@@ -180,6 +180,61 @@ def _append_injury_state(  # type: ignore[no-untyped-def]
     )
 
 
+def _goal_workspace(tmp_path: Path, target_content: str):  # type: ignore[no-untyped-def]
+    project = ProjectRepository.create(tmp_path / "novel", "Goal Audit Workflow")
+    chapters = ChapterRepository(project)
+    volume_id = project.list_volumes()[0].id
+    source = chapters.create_chapter(volume_id, "Source", "1", "source")
+    latest = chapters.create_chapter(volume_id, "Latest", "2", "latest")
+    target = chapters.create_chapter(volume_id, "Target", "3", target_content)
+    future = chapters.create_chapter(volume_id, "Future", "4", "future")
+    requirements = ChapterRequirementRepository(project)
+    current = requirements.get_or_create(target.id)
+    requirements.update(
+        target.id,
+        "must: find the letter",
+        is_locked=False,
+        expected_revision=current.revision,
+    )
+    audits = AuditRepository(project)
+    memory = CharacterMemoryRepository(project)
+    character = memory.create_character("Goal subject")
+    return (
+        project,
+        chapters,
+        source,
+        latest,
+        target,
+        future,
+        requirements,
+        audits,
+        memory,
+        character,
+    )
+
+
+def _append_goal_state(  # type: ignore[no-untyped-def]
+    memory,
+    *,
+    character_id: str,
+    chapter_id: str,
+    current_goal: str,
+    review_status: ReviewStatus,
+):
+    return memory.append_state(
+        character_id,
+        chapter_id,
+        motivation="protect the archive",
+        psychology="alert",
+        current_goal=current_goal,
+        relationships="trusted",
+        recent_activity="searching",
+        confidence=1.0,
+        source_type=SourceType.HUMAN,
+        review_status=review_status,
+    )
+
+
 def test_run_deterministic_for_formal_chapter_persists_completed_run_and_findings(
     tmp_path: Path,
 ) -> None:
@@ -686,6 +741,252 @@ def test_contested_character_injury_status_ignores_ineligible_sources_and_text(
             character_id=character.id,
             chapter_id=latest.id,
             injury_status="Healed ankle",
+            review_status=ReviewStatus.APPROVED,
+        )
+    if excluded_reason == "deleted_source":
+        chapters.delete_chapter(source.id)
+    elif excluded_reason == "inactive":
+        with project.database.connect() as connection, connection:
+            connection.execute(
+                "UPDATE subjects SET active = 0 WHERE id = ?",
+                (character.id,),
+            )
+    service = AuditWorkflowService(
+        chapters,
+        requirements,
+        audits,
+        character_memory=memory,
+    )
+
+    result = service.run_deterministic_for_formal_chapter(
+        target.id,
+        mode=CreationMode.STANDARD,
+        audit_policy=AuditPolicy.STANDARD,
+    )
+
+    assert result.run.status == AuditRunStatus.COMPLETED
+    assert not any(
+        finding.category == AuditFindingCategory.CHARACTER
+        for finding in result.findings
+    )
+
+
+def test_contested_prior_character_current_goal_persists_formal_warning(
+    tmp_path: Path,
+) -> None:
+    (
+        _,
+        chapters,
+        source,
+        _,
+        target,
+        _,
+        requirements,
+        audits,
+        memory,
+        character,
+    ) = _goal_workspace(
+        tmp_path,
+        "The guard chooses Guard the archive before leaving.",
+    )
+    first = _append_goal_state(
+        memory,
+        character_id=character.id,
+        chapter_id=source.id,
+        current_goal=" Guard the archive ",
+        review_status=ReviewStatus.APPROVED,
+    )
+    second = _append_goal_state(
+        memory,
+        character_id=character.id,
+        chapter_id=source.id,
+        current_goal="Find the sender",
+        review_status=ReviewStatus.LOCKED,
+    )
+    service = AuditWorkflowService(
+        chapters,
+        requirements,
+        audits,
+        character_memory=memory,
+    )
+
+    result = service.run_deterministic_for_formal_chapter(
+        target.id,
+        mode=CreationMode.STANDARD,
+        audit_policy=AuditPolicy.STANDARD,
+    )
+
+    character_findings = [
+        finding
+        for finding in result.findings
+        if finding.category == AuditFindingCategory.CHARACTER
+    ]
+    assert len(character_findings) == 1
+    finding = character_findings[0]
+    assert result.run.status == AuditRunStatus.COMPLETED
+    assert result.run.target_kind == AuditTargetKind.FORMAL_CHAPTER
+    assert result.run.mode == CreationMode.STANDARD
+    assert result.run.audit_policy == AuditPolicy.STANDARD
+    assert finding.severity == AuditSeverity.WARNING
+    assert finding.source == AuditFindingSource.DETERMINISTIC
+    assert finding.confidence == 1.0
+    assert finding.evidence == "Guard the archive"
+    assert "unresolved" in finding.explanation.lower()
+    assert "current-goal" in finding.explanation.lower()
+    assert "branch" in finding.explanation.lower()
+    assert "intent miss" not in finding.explanation.lower()
+    assert "contradiction" not in finding.explanation.lower()
+    assert "error" not in finding.explanation.lower()
+    assert json.loads(finding.location_json) == {
+        "character_id": character.id,
+        "evidence_kind": "SOURCE_EXCERPT",
+        "quote": "Guard the archive",
+        "source_boundary_chapter_id": source.id,
+        "start": chapters.read_content(target.id).index("Guard the archive"),
+        "state_field": "current_goal",
+    }
+    assert json.loads(finding.related_source_json) == [
+        {"id": event_id, "type": "character_state_event"}
+        for event_id in sorted((first.id, second.id))
+    ]
+    assert audits.list_findings(result.run.id) == result.findings
+
+
+def test_contested_prior_character_current_goal_persists_draft_warning(
+    tmp_path: Path,
+) -> None:
+    (
+        _,
+        chapters,
+        source,
+        _,
+        target,
+        _,
+        requirements,
+        audits,
+        memory,
+        character,
+    ) = _goal_workspace(tmp_path, "saved chapter")
+    _append_goal_state(
+        memory,
+        character_id=character.id,
+        chapter_id=source.id,
+        current_goal="Guard the archive",
+        review_status=ReviewStatus.APPROVED,
+    )
+    _append_goal_state(
+        memory,
+        character_id=character.id,
+        chapter_id=source.id,
+        current_goal="Find the sender",
+        review_status=ReviewStatus.LOCKED,
+    )
+    service = AuditWorkflowService(
+        chapters,
+        requirements,
+        audits,
+        character_memory=memory,
+    )
+    draft = "Guard the archive and find the letter."
+
+    result = service.run_deterministic_for_draft(
+        chapter_id=target.id,
+        generation_run_id="generation-goal-draft",
+        draft_text=draft,
+        base_chapter_revision=target.revision,
+        mode=CreationMode.STANDARD,
+        audit_policy=AuditPolicy.STANDARD,
+    )
+
+    character_findings = [
+        finding
+        for finding in result.findings
+        if finding.category == AuditFindingCategory.CHARACTER
+    ]
+    assert len(character_findings) == 1
+    assert result.run.status == AuditRunStatus.COMPLETED
+    assert result.run.target_kind == AuditTargetKind.GENERATED_DRAFT
+    assert result.run.target_id == "generation-goal-draft"
+    assert character_findings[0].evidence == "Guard the archive"
+    assert audits.list_findings(result.run.id) == result.findings
+
+
+@pytest.mark.parametrize(
+    "excluded_reason",
+    (
+        "trusted_single",
+        "same_current_goal",
+        "empty_current_goal",
+        "review",
+        "rejected",
+        "current",
+        "future",
+        "deleted_source",
+        "inactive",
+        "older_boundary",
+        "absent",
+        "case_changed",
+        "paraphrased",
+    ),
+)
+def test_contested_character_current_goal_ignores_ineligible_sources_and_text(
+    tmp_path: Path,
+    excluded_reason: str,
+) -> None:
+    target_content = {
+        "absent": "The guard leaves without a stated goal.",
+        "case_changed": "The guard chooses GUARD THE ARCHIVE.",
+        "paraphrased": "The guard changes plans before leaving.",
+    }.get(
+        excluded_reason,
+        "The guard chooses Guard the archive before leaving.",
+    )
+    (
+        project,
+        chapters,
+        source,
+        latest,
+        target,
+        future,
+        requirements,
+        audits,
+        memory,
+        character,
+    ) = _goal_workspace(tmp_path, target_content)
+    state_chapter_id = {
+        "current": target.id,
+        "future": future.id,
+    }.get(excluded_reason, source.id)
+    second_status = {
+        "review": ReviewStatus.REVIEW,
+        "rejected": ReviewStatus.REJECTED,
+    }.get(excluded_reason, ReviewStatus.LOCKED)
+    first_goal = "" if excluded_reason == "empty_current_goal" else "Guard the archive"
+    second_goal = {
+        "same_current_goal": " Guard the archive ",
+        "empty_current_goal": " ",
+    }.get(excluded_reason, "Find the sender")
+    _append_goal_state(
+        memory,
+        character_id=character.id,
+        chapter_id=state_chapter_id,
+        current_goal=first_goal,
+        review_status=ReviewStatus.APPROVED,
+    )
+    if excluded_reason != "trusted_single":
+        _append_goal_state(
+            memory,
+            character_id=character.id,
+            chapter_id=state_chapter_id,
+            current_goal=second_goal,
+            review_status=second_status,
+        )
+    if excluded_reason == "older_boundary":
+        _append_goal_state(
+            memory,
+            character_id=character.id,
+            chapter_id=latest.id,
+            current_goal="Stay here",
             review_status=ReviewStatus.APPROVED,
         )
     if excluded_reason == "deleted_source":

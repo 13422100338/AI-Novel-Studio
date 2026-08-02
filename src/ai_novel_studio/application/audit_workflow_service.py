@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from ai_novel_studio.application.deterministic_audit_service import (
+    CharacterGoalConflictAuditSource,
     CharacterInjuryConflictAuditSource,
     CharacterLocationConflictAuditSource,
     DeterministicAuditRequest,
@@ -153,6 +154,9 @@ class AuditWorkflowService:
                 character_injury_conflict_sources=(
                     self._character_injury_conflict_sources(chapter_id)
                 ),
+                character_goal_conflict_sources=(
+                    self._character_goal_conflict_sources(chapter_id)
+                ),
             )
         )
         findings = tuple(
@@ -240,11 +244,28 @@ class AuditWorkflowService:
             )
         )
 
+    def _character_goal_conflict_sources(
+        self,
+        chapter_id: str,
+    ) -> tuple[CharacterGoalConflictAuditSource, ...]:
+        return tuple(
+            CharacterGoalConflictAuditSource(
+                character_id=projection.character_id,
+                source_boundary_chapter_id=projection.source_boundary_chapter_id,
+                current_goals=projection.values,
+                state_event_ids=projection.state_event_ids,
+            )
+            for projection in self._character_state_conflict_projections(
+                chapter_id,
+                field="current_goal",
+            )
+        )
+
     def _character_state_conflict_projections(
         self,
         chapter_id: str,
         *,
-        field: Literal["location", "injury_status"],
+        field: Literal["location", "injury_status", "current_goal"],
     ) -> tuple[_CharacterStateConflictProjection, ...]:
         if self.character_memory is None:
             return ()
@@ -254,20 +275,22 @@ class AuditWorkflowService:
             chapter_id,
             inclusive=False,
         )
+        field_attributes: dict[
+            Literal["location", "injury_status", "current_goal"],
+            Literal["location", "injury_status", "current_goal"],
+        ] = {
+            "location": "location",
+            "injury_status": "injury_status",
+            "current_goal": "current_goal",
+        }
+        selected_attribute = field_attributes[field]
         projections: list[_CharacterStateConflictProjection] = []
         for character in characters:
             states = states_by_character.get(character.id, ())
             if len(states) < 2:
                 continue
             state_values = tuple(
-                (
-                    state,
-                    (
-                        state.location
-                        if field == "location"
-                        else state.injury_status
-                    ).strip(),
-                )
+                (state, getattr(state, selected_attribute).strip())
                 for state in states
             )
             conflict_values = tuple(
