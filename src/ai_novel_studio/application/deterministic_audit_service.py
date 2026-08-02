@@ -163,6 +163,9 @@ class DeterministicAuditRequest:
     target_revision: int
     target_hash: str
     requirement_content: str
+    requirement_id: str | None = None
+    requirement_revision: int | None = None
+    requirement_content_hash: str | None = None
     chapter_sequence: int = 0
     reader_view_sources: tuple[ReaderViewAuditSource, ...] = ()
     character_location_conflict_sources: tuple[
@@ -182,6 +185,24 @@ class DeterministicAuditRequest:
             raise ValueError("target_revision cannot be negative")
         if not self.target_hash.strip():
             raise ValueError("target_hash cannot be empty")
+        requirement_metadata = (
+            self.requirement_id,
+            self.requirement_revision,
+            self.requirement_content_hash,
+        )
+        if any(value is not None for value in requirement_metadata) and not all(
+            value is not None for value in requirement_metadata
+        ):
+            raise ValueError("requirement provenance metadata must be complete")
+        if self.requirement_id is not None and not self.requirement_id.strip():
+            raise ValueError("requirement_id cannot be empty")
+        if self.requirement_revision is not None and self.requirement_revision < 0:
+            raise ValueError("requirement_revision cannot be negative")
+        if (
+            self.requirement_content_hash is not None
+            and not self.requirement_content_hash.strip()
+        ):
+            raise ValueError("requirement_content_hash cannot be empty")
         if self.chapter_sequence < 0:
             raise ValueError("chapter_sequence cannot be negative")
 
@@ -265,7 +286,15 @@ class DeterministicAuditService:
             )
 
         if text.strip() and requirement.strip():
-            findings.extend(_missing_required_phrase_findings(text, requirement))
+            findings.extend(
+                _missing_required_phrase_findings(
+                    text,
+                    requirement,
+                    requirement_id=request.requirement_id,
+                    requirement_revision=request.requirement_revision,
+                    requirement_content_hash=request.requirement_content_hash,
+                )
+            )
 
         return tuple(findings)
 
@@ -370,22 +399,52 @@ def _unbalanced_pair_findings(text: str) -> tuple[DeterministicFinding, ...]:
 
 
 def _missing_required_phrase_findings(
-    text: str, requirement: str
+    text: str,
+    requirement: str,
+    *,
+    requirement_id: str | None = None,
+    requirement_revision: int | None = None,
+    requirement_content_hash: str | None = None,
 ) -> tuple[DeterministicFinding, ...]:
     normalized_text = _normalize_for_match(text)
     findings: list[DeterministicFinding] = []
+    has_provenance = all(
+        value is not None
+        for value in (requirement_id, requirement_revision, requirement_content_hash)
+    )
     for phrase in _required_phrases(requirement):
         if _normalize_for_match(phrase) in normalized_text:
             continue
+        location: dict[str, object] = {"scope": "requirement", "phrase": phrase}
+        related = [{"type": "chapter_requirement", "id": "current"}]
+        if has_provenance:
+            assert requirement_id is not None
+            assert requirement_revision is not None
+            assert requirement_content_hash is not None
+            location.update(
+                {
+                    "requirement_id": requirement_id,
+                    "requirement_revision": requirement_revision,
+                    "requirement_content_hash": requirement_content_hash,
+                }
+            )
+            related = [
+                {
+                    "type": "chapter_requirement",
+                    "id": requirement_id,
+                    "revision": str(requirement_revision),
+                    "content_hash": requirement_content_hash,
+                }
+            ]
         findings.append(
             _finding(
                 AuditFindingCategory.REQUIREMENT,
                 AuditSeverity.WARNING,
                 phrase,
                 "Required requirement phrase was not found by deterministic coarse match.",
-                location={"scope": "requirement", "phrase": phrase},
+                location=location,
                 evidence_kind=_EXPECTED_MISSING,
-                related=[{"type": "chapter_requirement", "id": "current"}],
+                related=related,
                 confidence=0.65,
             )
         )

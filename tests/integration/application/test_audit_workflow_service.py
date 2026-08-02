@@ -346,6 +346,103 @@ def test_run_deterministic_can_audit_generated_draft_without_changing_formal_cha
     ]
 
 
+@pytest.mark.parametrize("is_locked", (False, True))
+def test_missing_requirement_finding_persists_current_source_provenance_for_formal_and_draft(
+    tmp_path: Path,
+    is_locked: bool,
+) -> None:
+    _, chapters, chapter, requirements, audits = _workspace(
+        tmp_path,
+        "formal text without the acceptance phrase",
+        "must: find the letter",
+    )
+    requirement = requirements.get(chapter.id)
+    if is_locked:
+        requirement = requirements.update(
+            chapter.id,
+            requirement.content,
+            is_locked=True,
+            expected_revision=requirement.revision,
+        )
+    service = AuditWorkflowService(chapters, requirements, audits)
+
+    def assert_provenance(result: object) -> None:
+        missing = next(
+            finding
+            for finding in result.findings  # type: ignore[union-attr]
+            if finding.category == AuditFindingCategory.REQUIREMENT
+            and finding.severity == AuditSeverity.WARNING
+            and "find the letter" in finding.evidence
+        )
+        assert json.loads(missing.location_json) == {
+            "evidence_kind": "EXPECTED_MISSING",
+            "phrase": "find the letter",
+            "requirement_content_hash": requirement.content_hash,
+            "requirement_id": requirement.id,
+            "requirement_revision": requirement.revision,
+            "scope": "requirement",
+        }
+        assert json.loads(missing.related_source_json) == [
+            {
+                "content_hash": requirement.content_hash,
+                "id": requirement.id,
+                "revision": str(requirement.revision),
+                "type": "chapter_requirement",
+            }
+        ]
+        assert audits.list_findings(result.run.id) == result.findings  # type: ignore[union-attr]
+
+    formal = service.run_deterministic_for_formal_chapter(
+        chapter.id,
+        mode=CreationMode.BASIC,
+        requirement_content=requirement.content,
+    )
+    assert_provenance(formal)
+
+    draft = service.run_deterministic_for_draft(
+        chapter_id=chapter.id,
+        generation_run_id="generation-requirement-provenance",
+        draft_text="draft text without the acceptance phrase",
+        base_chapter_revision=chapter.revision,
+        mode=CreationMode.BASIC,
+    )
+    assert draft.run.target_kind == AuditTargetKind.GENERATED_DRAFT
+    assert_provenance(draft)
+
+
+def test_explicit_requirement_override_does_not_fabricate_persisted_provenance(
+    tmp_path: Path,
+) -> None:
+    _, chapters, chapter, requirements, audits = _workspace(
+        tmp_path,
+        "formal text",
+        "must: persisted phrase",
+    )
+    service = AuditWorkflowService(chapters, requirements, audits)
+
+    result = service.run_deterministic_for_formal_chapter(
+        chapter.id,
+        mode=CreationMode.BASIC,
+        requirement_content="must: preview phrase",
+    )
+
+    missing = next(
+        finding
+        for finding in result.findings
+        if finding.category == AuditFindingCategory.REQUIREMENT
+        and finding.severity == AuditSeverity.WARNING
+        and "preview phrase" in finding.evidence
+    )
+    assert json.loads(missing.location_json) == {
+        "evidence_kind": "EXPECTED_MISSING",
+        "phrase": "preview phrase",
+        "scope": "requirement",
+    }
+    assert json.loads(missing.related_source_json) == [
+        {"id": "current", "type": "chapter_requirement"}
+    ]
+
+
 @pytest.mark.parametrize(
     "excluded_reason",
     (

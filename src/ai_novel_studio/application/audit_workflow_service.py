@@ -134,8 +134,21 @@ class AuditWorkflowService:
             status=AuditRunStatus.PREPARING,
             prompt_version=DETERMINISTIC_AUDIT_PROMPT_VERSION,
         )
+        current_requirement = None
         if requirement_content is None:
-            requirement_content = self.requirements.get_or_create(chapter_id).content
+            current_requirement = self.requirements.get_or_create(chapter_id)
+            requirement_content = current_requirement.content
+        else:
+            try:
+                current_requirement = self.requirements.get(chapter_id)
+            except KeyError:
+                pass
+        requirement_source = (
+            current_requirement
+            if current_requirement is not None
+            and requirement_content == current_requirement.content
+            else None
+        )
         chapter_sequence = len(self.chapters.list_before(chapter_id)) + 1
         candidates = self.deterministic.run(
             DeterministicAuditRequest(
@@ -144,6 +157,19 @@ class AuditWorkflowService:
                 target_revision=target_revision,
                 target_hash=target_hash,
                 requirement_content=requirement_content,
+                requirement_id=(
+                    requirement_source.id if requirement_source is not None else None
+                ),
+                requirement_revision=(
+                    requirement_source.revision
+                    if requirement_source is not None
+                    else None
+                ),
+                requirement_content_hash=(
+                    requirement_source.content_hash
+                    if requirement_source is not None
+                    else None
+                ),
                 chapter_sequence=chapter_sequence,
                 reader_view_sources=self._reader_view_sources(
                     chapter_sequence=chapter_sequence

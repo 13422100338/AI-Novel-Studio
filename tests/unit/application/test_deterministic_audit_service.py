@@ -32,6 +32,9 @@ def _run(
     character_goal_conflict_sources: tuple[
         CharacterGoalConflictAuditSource, ...
     ] = (),
+    requirement_id: str | None = None,
+    requirement_revision: int | None = None,
+    requirement_content_hash: str | None = None,
 ):
     request = DeterministicAuditRequest(
         chapter_id="chapter-1",
@@ -39,6 +42,9 @@ def _run(
         target_revision=2,
         target_hash="target-hash",
         requirement_content=requirement,
+        requirement_id=requirement_id,
+        requirement_revision=requirement_revision,
+        requirement_content_hash=requirement_content_hash,
         chapter_sequence=chapter_sequence,
         reader_view_sources=reader_view_sources,
         character_location_conflict_sources=character_location_conflict_sources,
@@ -107,6 +113,61 @@ def test_missing_required_requirement_phrase_is_reported() -> None:
     )
 
     assert any(
+        finding.category == AuditFindingCategory.REQUIREMENT
+        and finding.severity == AuditSeverity.WARNING
+        and "find the letter" in finding.evidence
+        for finding in findings
+    )
+
+
+def test_missing_required_requirement_phrase_keeps_current_source_provenance() -> None:
+    findings = _run(
+        "The protagonist searches the empty archive.",
+        requirement="must: find the letter",
+        requirement_id="requirement-1",
+        requirement_revision=4,
+        requirement_content_hash="hash-1",
+    )
+
+    finding = next(
+        finding
+        for finding in findings
+        if finding.category == AuditFindingCategory.REQUIREMENT
+        and finding.severity == AuditSeverity.WARNING
+        and "find the letter" in finding.evidence
+    )
+    assert json.loads(finding.location_json) == {
+        "evidence_kind": "EXPECTED_MISSING",
+        "phrase": "find the letter",
+        "requirement_content_hash": "hash-1",
+        "requirement_id": "requirement-1",
+        "requirement_revision": 4,
+        "scope": "requirement",
+    }
+    assert json.loads(finding.related_source_json) == [
+        {
+            "content_hash": "hash-1",
+            "id": "requirement-1",
+            "revision": "4",
+            "type": "chapter_requirement",
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    "target",
+    (
+        "The protagonist FIND THE LETTER in the archive.",
+        "The protagonist find-the-letter clue is recorded.",
+        "The protagonist finds the letters in the archive.",
+    ),
+)
+def test_required_requirement_phrase_retains_tolerant_matching(
+    target: str,
+) -> None:
+    findings = _run(target, requirement="must: find the letter")
+
+    assert not any(
         finding.category == AuditFindingCategory.REQUIREMENT
         and finding.severity == AuditSeverity.WARNING
         and "find the letter" in finding.evidence
