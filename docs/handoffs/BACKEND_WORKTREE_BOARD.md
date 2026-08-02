@@ -8,7 +8,7 @@
 - Superpowers: disabled for this project workflow.
 - Initial business-code baseline: `e35b50d` (the backend code state before the governance-only dispatch commit).
 - Wave 1 dispatched baseline: `3382dd36c2a4aeb4acdab411e9211885b633e678`.
-- Latest integrated business commit: `1fc4fed` (SE2a read-only physical Character State DTO projection, including prior A1-A4, B1-B10, C1-C12, M1, E1a, E1b-SR1, E1b-SS1, E1b-CR1, E1b-CS1, E1b-CE1, E1b-SM1, and SE1 increments).
+- Latest integrated business commit: `8d4e9bd` (C13 read-only physical Character State sidebar display, including prior A1-A4, B1-B10, C1-C12, M1, E1a, E1b-SR1, E1b-SS1, E1b-CR1, E1b-CS1, E1b-CE1, E1b-SM1, SE1, and SE2a increments).
 - Planning sources:
   - `docs/handoffs/2026-07-22-backend-refactor-handoff.md`
   - `C:\Users\钟子诚\Downloads\AI_Novel_Studio_后端改进方案_Subject_View_Time_Context_Compiler_修订版.md`
@@ -66,6 +66,7 @@ All Wave 1 tasks were dispatched from `3382dd36c2a4aeb4acdab411e9211885b633e678`
   - `generation-profile-audit-policy` increment B10 (deterministic premature Reader View exposure audit), merged as `139126d`.
   - `manifest-eligibility-v2` increment SE1 (schema-v18 physical Character State foundation), merged as `ef894fd`.
   - `manifest-eligibility-v2` increment SE2a (read-only physical Character State DTO projection), merged as `1fc4fed`.
+  - `view-operations-ui` increment C13 (read-only physical Character State sidebar display), merged as `8d4e9bd`.
 - Active schema owner: none.
 
 | Task | Model / reasoning | Thread | Worktree | Assigned branch | HEAD state | Status |
@@ -75,9 +76,9 @@ All Wave 1 tasks were dispatched from `3382dd36c2a4aeb4acdab411e9211885b633e678`
 | `generation-profile-audit-policy` | `gpt-5.6-terra` / `medium` | `019f87e8-696e-7f11-bcfe-1552f51cabc3` | `C:\Users\钟子诚\.codex\worktrees\4df4\AI-Novel-Studio` | `codex/generation-profile-audit-policy-b5` | branch | B1-B7 merged; B7 is `663f932`; lane paused pending explicit instruction |
 | `view-operations-ui` | `gpt-5.6-luna` / `medium` | `019f87e8-7a77-7902-b3d1-a38f32240136` | `C:\Users\钟子诚\.codex\worktrees\8802\AI-Novel-Studio` | `codex/view-operations-ui` | branch | C1-C10 merged; C10 is `bc41148`; lane paused pending explicit instruction |
 
-Current dispatch override: `manifest-eligibility-v2` is paused after SE2a; `generation-profile-audit-policy` is implementing B11; `view-operations-ui` is paused pending C13's now-satisfied projection dependency and a separate implementation authorization.
+Current dispatch override: `manifest-eligibility-v2` is paused after SE2a; `generation-profile-audit-policy` is implementing B11; `view-operations-ui` is paused after C13.
 
-E1a, E1b-SR1, E1b-SS1, E1b-CR1, E1b-CS1, E1b-CE1, E1b-SM1, SE1, SE2a, C6a, C6b, C7, C8, C9, C10, C11, C12, B4, B5, B6, B7, B8, B9, and B10 are integrated. Every later increment still requires a new user decision.
+E1a, E1b-SR1, E1b-SS1, E1b-CR1, E1b-CS1, E1b-CE1, E1b-SM1, SE1, SE2a, C6a, C6b, C7, C8, C9, C10, C11, C12, C13, B4, B5, B6, B7, B8, B9, and B10 are integrated. Every later increment still requires a new user decision.
 
 ## Later Waves and Dependencies
 
