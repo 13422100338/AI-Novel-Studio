@@ -81,6 +81,8 @@ All Wave 1 tasks were dispatched from `3382dd36c2a4aeb4acdab411e9211885b633e678`
 
 Current dispatch override: `manifest-eligibility-v2` is paused after SE2a; `generation-profile-audit-policy` is paused after B13; `view-operations-ui` is paused after C13.
 
+Product decision: Manual Pins are immutable materialized snapshots. They never automatically re-resolve or refresh from their source; authors update them only by removing and re-pinning. Do not add a live-pointer, automatic stale gate, or refresh behavior without a new explicit decision.
+
 E1a, E1b-SR1, E1b-SS1, E1b-CR1, E1b-CS1, E1b-CE1, E1b-SM1, SE1, SE2a, C6a, C6b, C7, C8, C9, C10, C11, C12, C13, B4, B5, B6, B7, B8, B9, B10, B11, B12, and B13 are integrated. Every later increment still requires a new user decision.
 
 ## Later Waves and Dependencies
