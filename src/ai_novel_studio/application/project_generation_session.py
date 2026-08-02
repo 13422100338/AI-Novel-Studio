@@ -45,6 +45,9 @@ from ai_novel_studio.infrastructure.storage.chapter_requirement_repository impor
 from ai_novel_studio.infrastructure.storage.checkpoint_repository import CheckpointRepository
 from ai_novel_studio.infrastructure.storage.generation_repository import GenerationRepository
 from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
+from ai_novel_studio.infrastructure.storage.view_assertion_repository import (
+    ViewAssertionRepository,
+)
 
 
 class PreparedMessageStore:
@@ -127,6 +130,7 @@ class ProjectGenerationSession:
             self.chapters,
             self.requirements,
             AuditRepository(project),
+            view_assertions=ViewAssertionRepository(project),
         )
         self.project_audits = ProjectAuditService(project)
         self.current_chapter_id: str | None = None

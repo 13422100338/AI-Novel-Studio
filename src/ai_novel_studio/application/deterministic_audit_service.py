@@ -46,12 +46,33 @@ _DIAGNOSTIC = "DIAGNOSTIC"
 
 
 @dataclass(frozen=True, slots=True)
+class ReaderViewAuditSource:
+    assertion_id: str
+    content: str
+    visible_from_sequence: int
+
+    def __post_init__(self) -> None:
+        assertion_id = self.assertion_id.strip()
+        content = self.content.strip()
+        if not assertion_id:
+            raise ValueError("assertion_id cannot be empty")
+        if not content:
+            raise ValueError("content cannot be empty")
+        if self.visible_from_sequence < 0:
+            raise ValueError("visible_from_sequence cannot be negative")
+        object.__setattr__(self, "assertion_id", assertion_id)
+        object.__setattr__(self, "content", content)
+
+
+@dataclass(frozen=True, slots=True)
 class DeterministicAuditRequest:
     chapter_id: str
     target_text: str
     target_revision: int
     target_hash: str
     requirement_content: str
+    chapter_sequence: int = 0
+    reader_view_sources: tuple[ReaderViewAuditSource, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.chapter_id.strip():
@@ -60,6 +81,8 @@ class DeterministicAuditRequest:
             raise ValueError("target_revision cannot be negative")
         if not self.target_hash.strip():
             raise ValueError("target_hash cannot be empty")
+        if self.chapter_sequence < 0:
+            raise ValueError("chapter_sequence cannot be negative")
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,6 +137,13 @@ class DeterministicAuditService:
             findings.extend(_model_residue_findings(text))
             findings.extend(_duplicate_paragraph_findings(text))
             findings.extend(_unbalanced_pair_findings(text))
+            findings.extend(
+                _premature_reader_view_exposure_findings(
+                    text,
+                    chapter_sequence=request.chapter_sequence,
+                    sources=request.reader_view_sources,
+                )
+            )
 
         if text.strip() and requirement.strip():
             findings.extend(_missing_required_phrase_findings(text, requirement))
@@ -238,6 +268,39 @@ def _missing_required_phrase_findings(
                 evidence_kind=_EXPECTED_MISSING,
                 related=[{"type": "chapter_requirement", "id": "current"}],
                 confidence=0.65,
+            )
+        )
+    return tuple(findings)
+
+
+def _premature_reader_view_exposure_findings(
+    text: str,
+    *,
+    chapter_sequence: int,
+    sources: tuple[ReaderViewAuditSource, ...],
+) -> tuple[DeterministicFinding, ...]:
+    findings: list[DeterministicFinding] = []
+    for source in sources:
+        if source.visible_from_sequence <= chapter_sequence:
+            continue
+        start = text.find(source.content)
+        if start < 0:
+            continue
+        findings.append(
+            _finding(
+                AuditFindingCategory.KNOWLEDGE,
+                AuditSeverity.WARNING,
+                source.content,
+                "Approved Reader View content appears before its narrative visibility sequence.",
+                location={
+                    "quote": source.content,
+                    "start": start,
+                    "current_sequence": chapter_sequence,
+                    "visible_from_sequence": source.visible_from_sequence,
+                },
+                evidence_kind=_SOURCE_EXCERPT,
+                related=[{"type": "view_assertion", "id": source.assertion_id}],
+                confidence=1.0,
             )
         )
     return tuple(findings)

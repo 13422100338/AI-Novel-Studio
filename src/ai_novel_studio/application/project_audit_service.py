@@ -40,6 +40,9 @@ from ai_novel_studio.infrastructure.storage.character_memory_repository import (
 )
 from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
 from ai_novel_studio.infrastructure.storage.summary_repository import SummaryRepository
+from ai_novel_studio.infrastructure.storage.view_assertion_repository import (
+    ViewAssertionRepository,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +80,7 @@ class ProjectAuditService:
             self.chapters,
             ChapterRequirementRepository(project),
             self.repository,
+            view_assertions=ViewAssertionRepository(project),
         )
         self.model_audits = ModelAuditService(self.repository)
         self.repairs = RepairApplicationService(self.chapters, self.repository)

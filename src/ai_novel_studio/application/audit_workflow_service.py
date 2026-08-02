@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from ai_novel_studio.application.deterministic_audit_service import (
     DeterministicAuditRequest,
     DeterministicAuditService,
+    ReaderViewAuditSource,
 )
 from ai_novel_studio.domain.audit import (
     AuditFinding,
@@ -14,10 +15,15 @@ from ai_novel_studio.domain.audit import (
     AuditTargetKind,
 )
 from ai_novel_studio.domain.generation import AuditPolicy, CreationMode
+from ai_novel_studio.domain.memory import ReviewStatus
+from ai_novel_studio.domain.view import ViewType
 from ai_novel_studio.infrastructure.storage.audit_repository import AuditRepository
 from ai_novel_studio.infrastructure.storage.chapter_repository import ChapterRepository
 from ai_novel_studio.infrastructure.storage.chapter_requirement_repository import (
     ChapterRequirementRepository,
+)
+from ai_novel_studio.infrastructure.storage.view_assertion_repository import (
+    ViewAssertionRepository,
 )
 
 DETERMINISTIC_AUDIT_PROMPT_VERSION = "deterministic-audit-v1"
@@ -36,11 +42,13 @@ class AuditWorkflowService:
         requirements: ChapterRequirementRepository,
         audits: AuditRepository,
         deterministic: DeterministicAuditService | None = None,
+        view_assertions: ViewAssertionRepository | None = None,
     ) -> None:
         self.chapters = chapters
         self.requirements = requirements
         self.audits = audits
         self.deterministic = deterministic or DeterministicAuditService()
+        self.view_assertions = view_assertions
 
     def run_deterministic_for_formal_chapter(
         self,
@@ -111,6 +119,7 @@ class AuditWorkflowService:
         )
         if requirement_content is None:
             requirement_content = self.requirements.get_or_create(chapter_id).content
+        chapter_sequence = len(self.chapters.list_before(chapter_id)) + 1
         candidates = self.deterministic.run(
             DeterministicAuditRequest(
                 chapter_id=chapter_id,
@@ -118,6 +127,10 @@ class AuditWorkflowService:
                 target_revision=target_revision,
                 target_hash=target_hash,
                 requirement_content=requirement_content,
+                chapter_sequence=chapter_sequence,
+                reader_view_sources=self._reader_view_sources(
+                    chapter_sequence=chapter_sequence
+                ),
             )
         )
         findings = tuple(
@@ -136,6 +149,57 @@ class AuditWorkflowService:
         )
         completed = self.audits.update_run_status(run.id, AuditRunStatus.COMPLETED)
         return AuditWorkflowResult(completed, findings)
+
+    def _reader_view_sources(
+        self,
+        *,
+        chapter_sequence: int,
+    ) -> tuple[ReaderViewAuditSource, ...]:
+        if self.view_assertions is None:
+            return ()
+        trusted_statuses = {ReviewStatus.APPROVED, ReviewStatus.LOCKED}
+        sources: list[ReaderViewAuditSource] = []
+        for assertion in self.view_assertions.list_context_candidates(
+            view_type=ViewType.READER_VIEW
+        ):
+            visible_from = assertion.narrative_visible_from_sequence
+            if (
+                assertion.review_status not in trusted_statuses
+                or assertion.stale
+                or assertion.source_changed
+                or visible_from is None
+                or visible_from <= chapter_sequence
+                or not self._source_revision_is_current(
+                    assertion.source_id,
+                    assertion.source_revision,
+                )
+            ):
+                continue
+            sources.append(
+                ReaderViewAuditSource(
+                    assertion_id=assertion.id,
+                    content=assertion.content,
+                    visible_from_sequence=visible_from,
+                )
+            )
+        return tuple(sources)
+
+    def _source_revision_is_current(
+        self,
+        source_id: str,
+        source_revision: int,
+    ) -> bool:
+        try:
+            source_chapter = self.chapters.get_chapter(
+                source_id,
+                include_deleted=True,
+            )
+        except (KeyError, ValueError):
+            return True
+        return (
+            not source_chapter.is_deleted
+            and source_chapter.revision == source_revision
+        )
 
 
 def _hash(text: str) -> str:
