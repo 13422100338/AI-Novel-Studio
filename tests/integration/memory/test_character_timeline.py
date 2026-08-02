@@ -1,9 +1,20 @@
 import hashlib
+from inspect import signature
 from pathlib import Path
 
 import pytest
 
-from ai_novel_studio.application.character_status_service import CharacterStatusService
+from ai_novel_studio.application.character_card_context_service import (
+    CharacterCardContextService,
+)
+from ai_novel_studio.application.character_status_service import (
+    CharacterStatusCard,
+    CharacterStatusRecord,
+    CharacterStatusService,
+)
+from ai_novel_studio.application.generation_memory_context_provider import (
+    GenerationMemoryContextProvider,
+)
 from ai_novel_studio.core.memory.character_timeline import CharacterTimeline
 from ai_novel_studio.domain.memory import (
     Authority,
@@ -15,6 +26,7 @@ from ai_novel_studio.domain.memory import (
 from ai_novel_studio.infrastructure.storage.chapter_repository import ChapterRepository
 from ai_novel_studio.infrastructure.storage.character_memory_repository import (
     CharacterMemoryRepository,
+    MemoryConflictError,
 )
 from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
 
@@ -115,6 +127,181 @@ def test_physical_state_round_trips_through_existing_derived_snapshot(
     assert snapshot.state is not None
     assert snapshot.state.location == "Clock tower"
     assert snapshot.state.injury_status == "Sprained left ankle"
+
+
+def test_character_status_projects_trusted_physical_state_and_empty_defaults(
+    tmp_path: Path,
+) -> None:
+    project, chapters = _project_with_three_chapters(tmp_path)
+    repository = CharacterMemoryRepository(project)
+    selected = repository.create_character("Eric")
+    without_state = repository.create_character("Mara")
+    repository.append_state(
+        selected.id,
+        chapters[0].id,
+        motivation="Protect the town",
+        psychology="Guarded",
+        current_goal="Reach the archive",
+        relationships="Distrusts Mara",
+        recent_activity="Crossed the old harbor",
+        location="Clock tower",
+        injury_status="Sprained left ankle",
+        confidence=1,
+        source_type=SourceType.HUMAN,
+        review_status=ReviewStatus.APPROVED,
+    )
+    repository.append_state(
+        selected.id,
+        chapters[0].id,
+        motivation="REVIEW SECRET",
+        psychology="REVIEW SECRET",
+        current_goal="REVIEW SECRET",
+        relationships="REVIEW SECRET",
+        recent_activity="REVIEW SECRET",
+        location="REVIEW LOCATION SECRET",
+        injury_status="REVIEW INJURY SECRET",
+        confidence=0.8,
+        source_type=SourceType.MODEL,
+        review_status=ReviewStatus.REVIEW,
+    )
+    repository.append_state(
+        selected.id,
+        chapters[2].id,
+        motivation="FUTURE SECRET",
+        psychology="FUTURE SECRET",
+        current_goal="FUTURE SECRET",
+        relationships="FUTURE SECRET",
+        recent_activity="FUTURE SECRET",
+        location="FUTURE LOCATION SECRET",
+        injury_status="FUTURE INJURY SECRET",
+        confidence=1,
+        source_type=SourceType.HUMAN,
+        review_status=ReviewStatus.APPROVED,
+    )
+
+    service = CharacterStatusService(repository)
+    records = {item.id: item for item in service.list_for_chapter(chapters[1].id)}
+    cards = {
+        item.id: item for item in service.list_cards_for_chapter(chapters[1].id)
+    }
+
+    assert records[selected.id].location == "Clock tower"
+    assert records[selected.id].injury_status == "Sprained left ankle"
+    assert cards[selected.id].location == "Clock tower"
+    assert cards[selected.id].injury_status == "Sprained left ankle"
+    assert records[without_state.id].location == ""
+    assert records[without_state.id].injury_status == ""
+    assert cards[without_state.id].location == ""
+    assert cards[without_state.id].injury_status == ""
+
+
+def test_physical_state_does_not_change_character_card_or_writer_content(
+    tmp_path: Path,
+) -> None:
+    def build_projection(
+        root: Path,
+        *,
+        location: str,
+        injury_status: str,
+    ) -> tuple[CharacterStatusCard, str, str, str, str]:
+        project = ProjectRepository.create(root, "Novel")
+        volume = project.list_volumes()[0]
+        chapters = ChapterRepository(project)
+        previous = chapters.create_chapter(volume.id, "Opening", "1")
+        target = chapters.create_chapter(volume.id, "Visit", "2")
+        repository = CharacterMemoryRepository(project)
+        character = repository.create_character("Eric")
+        repository.append_state(
+            character.id,
+            previous.id,
+            motivation="Protect the town",
+            psychology="Guarded",
+            current_goal="Reach the archive",
+            relationships="Distrusts Mara",
+            recent_activity="Crossed the old harbor",
+            location=location,
+            injury_status=injury_status,
+            confidence=1,
+            source_type=SourceType.HUMAN,
+            review_status=ReviewStatus.APPROVED,
+        )
+        card = CharacterStatusService(repository).list_cards_for_chapter(target.id)[0]
+        item = CharacterCardContextService(project).items_before(target.id)[0]
+        writer_block = next(
+            block
+            for block in GenerationMemoryContextProvider(project).blocks(
+                target.id,
+                "Eric visits Mara.",
+                (),
+            )
+            if block.id == f"character-card-{character.id}"
+        )
+        return (
+            card,
+            item.content,
+            item.content_hash,
+            writer_block.content,
+            writer_block.source_hash,
+        )
+
+    first = build_projection(
+        tmp_path / "first",
+        location="Clock tower",
+        injury_status="Sprained left ankle",
+    )
+    second = build_projection(
+        tmp_path / "second",
+        location="Old harbor",
+        injury_status="Bandaged right hand",
+    )
+
+    assert first[0].location == "Clock tower"
+    assert first[0].injury_status == "Sprained left ankle"
+    assert second[0].location == "Old harbor"
+    assert second[0].injury_status == "Bandaged right hand"
+    assert first[1:] == second[1:]
+    for marker in (
+        "Clock tower",
+        "Sprained left ankle",
+        "Old harbor",
+        "Bandaged right hand",
+    ):
+        assert marker not in first[1]
+        assert marker not in first[3]
+        assert marker not in second[1]
+        assert marker not in second[3]
+
+
+def test_physical_state_projection_preserves_old_dto_and_save_contracts() -> None:
+    record = CharacterStatusRecord(
+        "character-1",
+        "Eric",
+        "Investigator",
+        "Protect the town",
+        "Guarded",
+        "Reach the archive",
+        "Distrusts Mara",
+        "Crossed the old harbor",
+    )
+    card = CharacterStatusCard(
+        "character-1",
+        "Eric",
+        ("the investigator",),
+        "Investigator",
+        "Protect the town",
+        "Guarded",
+        "Reach the archive",
+        "Distrusts Mara",
+        "Crossed the old harbor",
+        (),
+    )
+
+    assert record.location == ""
+    assert record.injury_status == ""
+    assert card.location == ""
+    assert card.injury_status == ""
+    assert "location" not in signature(CharacterStatusService.save).parameters
+    assert "injury_status" not in signature(CharacterStatusService.save).parameters
 
 
 def test_character_states_can_be_loaded_in_one_batch(tmp_path: Path) -> None:
@@ -309,7 +496,7 @@ def test_character_status_save_without_profile_preserves_existing_profile(
         profile="Restrained voice and deliberate movements.",
     )
 
-    CharacterStatusService(repository).save(
+    saved = CharacterStatusService(repository).save(
         chapters[0].id,
         character_id=character.id,
         name=character.canonical_name,
@@ -320,6 +507,8 @@ def test_character_status_save_without_profile_preserves_existing_profile(
         recent="Returned to the old harbor",
     )
 
+    assert saved.location == ""
+    assert saved.injury_status == ""
     assert repository.get_character(character.id).profile == (
         "Restrained voice and deliberate movements."
     )
@@ -445,5 +634,7 @@ def test_timeline_reports_same_boundary_conflicts_instead_of_guessing(tmp_path: 
 
     snapshot = CharacterTimeline(repository).snapshot((character.id,), chapters[1].id)[0]
 
+    with pytest.raises(MemoryConflictError):
+        CharacterStatusService(repository).list_cards_for_chapter(chapters[1].id)
     assert snapshot.state is None
     assert {event.psychology for event in snapshot.conflicting_states} == {"冷静", "恐慌"}

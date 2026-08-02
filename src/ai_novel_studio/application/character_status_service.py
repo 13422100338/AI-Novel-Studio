@@ -19,6 +19,8 @@ class CharacterStatusRecord:
     goal: str
     relationships: str
     recent: str
+    location: str = ""
+    injury_status: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,6 +46,8 @@ class CharacterStatusCard:
     relationships: str
     recent: str
     journey: tuple[CharacterJourneyEntry, ...]
+    location: str = ""
+    injury_status: str = ""
 
 
 class CharacterStatusService:
@@ -73,6 +77,8 @@ class CharacterStatusService:
                     goal=state.current_goal if state is not None else "",
                     relationships=state.relationships if state is not None else "",
                     recent=state.recent_activity if state is not None else "",
+                    location=state.location if state is not None else "",
+                    injury_status=state.injury_status if state is not None else "",
                 )
             )
         return tuple(records)
@@ -126,6 +132,8 @@ class CharacterStatusService:
                     relationships=state.relationships if state is not None else "",
                     recent=state.recent_activity if state is not None else "",
                     journey=journey,
+                    location=state.location if state is not None else "",
+                    injury_status=state.injury_status if state is not None else "",
                 )
             )
         return tuple(cards)
@@ -182,4 +190,6 @@ class CharacterStatusService:
             goal=event.current_goal,
             relationships=event.relationships,
             recent=event.recent_activity,
+            location=event.location,
+            injury_status=event.injury_status,
         )
