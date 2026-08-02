@@ -271,6 +271,8 @@ class ManuscriptMemoryBuildService:
                 current_goal=candidate.current_goal,
                 relationships=candidate.relationships,
                 recent_activity=candidate.recent_activity,
+                location=candidate.location,
+                injury_status=candidate.injury_status,
                 confidence=0.8,
                 source_type=SourceType.MODEL,
                 review_status=ReviewStatus.REVIEW,
@@ -499,6 +501,7 @@ def _character_state_exists(
             "SELECT 1 FROM character_state_events WHERE character_id = ? "
             "AND chapter_id = ? AND motivation = ? AND psychology = ? "
             "AND current_goal = ? AND relationships = ? AND recent_activity = ? "
+            "AND location = ? AND injury_status = ? "
             "AND source_type = 'MODEL' AND review_status = 'REVIEW'",
             (
                 character_id,
@@ -508,6 +511,8 @@ def _character_state_exists(
                 candidate.current_goal,
                 candidate.relationships,
                 candidate.recent_activity,
+                candidate.location,
+                candidate.injury_status,
             ),
         ).fetchone()
     return row is not None

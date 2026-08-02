@@ -47,6 +47,8 @@ def _valid_payload() -> str:
                     "current_goal": "核对暗号",
                     "relationships": "暂未变化",
                     "recent_activity": "收到来信",
+                    "location": "钟楼入口",
+                    "injury_status": "右臂擦伤",
                 }
             ],
             "canon": [{"title": "暗号", "detail": "暗号属于失踪者。"}],
@@ -99,6 +101,8 @@ def test_extracts_review_candidates_with_source_provenance_and_ordered_prompt() 
     assert result.authority == Authority.MODEL_EXTRACTED
     assert result.review_status == ReviewStatus.REVIEW
     assert result.character_states[0].current_goal == "核对暗号"
+    assert result.character_states[0].location == "钟楼入口"
+    assert result.character_states[0].injury_status == "右臂擦伤"
     assert result.clues[0].clue_type.value == "FORESHADOW"
     assert result.knowledge[0].state.value == "KNOWN"
     assert len(result.knowledge) == 1
@@ -163,6 +167,8 @@ def test_memory_prompt_declares_nested_enum_values_and_structured_summary() -> N
     assert "## 剧情概况" in system_prompt
     assert "## 细节摘录" in system_prompt
     assert "## 伏笔与未决问题" not in system_prompt
+    assert "location" in system_prompt
+    assert "injury_status" in system_prompt
 
 
 def test_rejects_summary_missing_required_section() -> None:
@@ -251,6 +257,19 @@ def test_character_state_normalizes_unknown_null_to_empty_string() -> None:
     result = service.extract_candidates("chapter-1", 0, "原稿正文")
 
     assert result.character_states[0].relationships == ""
+
+
+def test_character_state_defaults_missing_physical_fields_to_empty_strings() -> None:
+    payload = json.loads(_valid_payload())
+    payload["character_states"][0].pop("location")
+    payload["character_states"][0].pop("injury_status")
+    gateway = RecordingGateway([json.dumps(payload, ensure_ascii=False)])
+    service = MemoryAnalysisService(LLMContractRunner(gateway))  # type: ignore[arg-type]
+
+    result = service.extract_candidates("chapter-1", 0, "原稿正文")
+
+    assert result.character_states[0].location == ""
+    assert result.character_states[0].injury_status == ""
 
 
 def test_character_state_normalizes_relationship_object_to_readable_text() -> None:

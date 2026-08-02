@@ -41,6 +41,8 @@ class CharacterStateCandidate:
     current_goal: str
     relationships: str
     recent_activity: str
+    location: str = ""
+    injury_status: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,7 +122,8 @@ _SYSTEM_PROMPT = """你是长篇小说记忆提取器。只分析用户给出的
   ## 连续性要点
   ## 细节摘录
 - character_states: 数组。每项字段为 character_name、motivation、psychology、
-  current_goal、relationships、recent_activity。
+  current_goal、relationships、recent_activity、location、injury_status。location 和
+  injury_status 不确定或未提及时填空字符串，不要推测或从更早章节补全。
 - canon: 数组。每项字段为 title、detail。
 - clues: 数组。每项字段为 clue_type、title、detail、action。
   clue_type 只能是 FORESHADOW、MISDIRECTION、OPEN_QUESTION、AUTHOR_PROMISE、
@@ -146,7 +149,8 @@ _SYSTEM_PROMPT += (
     '\\n## 细节摘录\\n- 原文：正文原句","character_states":['
     '{"character_name":"甲","motivation":"查明真相","psychology":"警惕",'
     '"current_goal":"核对线索","relationships":"暂不信任乙",'
-    '"recent_activity":"收到来信"}],"canon":[],"clues":[],'
+    '"recent_activity":"收到来信","location":"档案室","injury_status":"右臂擦伤"}],'
+    '"canon":[],"clues":[],'
     '"knowledge":[]}\n'
 )
 
@@ -366,6 +370,8 @@ def _character_state(value: object, index: int) -> CharacterStateCandidate:
         _string(item, "current_goal", path=path),
         _string(item, "relationships", path=path),
         _string(item, "recent_activity", path=path),
+        _string(item, "location", path=path),
+        _string(item, "injury_status", path=path),
     )
 
 

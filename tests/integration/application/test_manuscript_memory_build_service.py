@@ -53,6 +53,8 @@ class FakeMemoryAnalyzer:
                     current_goal="前往旧港档案室",
                     relationships="仍不信任来信者",
                     recent_activity="收到匿名旧信",
+                    location="旧港档案室",
+                    injury_status="无明显外伤",
                 ),
             ),
             canon=(),
@@ -132,6 +134,8 @@ def test_build_all_uses_model_memory_candidates_and_updates_character_states(
     assert character.canonical_name == "林默"
     assert state.psychology == "警惕但被失踪兄长牵动"
     assert state.current_goal == "前往旧港档案室"
+    assert state.location == "旧港档案室"
+    assert state.injury_status == "无明显外伤"
     assert state.review_status == ReviewStatus.REVIEW
 
 
