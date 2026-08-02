@@ -161,6 +161,10 @@ pyproject.toml                  （仅新增 ai-novel-studio-qml gui-script 入�
 | AI 建议 / 草稿 | `SuggestionListModel` mock 建议 + 本地采用 | `ProjectGenerationSession` + `GenerationAcceptanceService`（F4） |
 | 状态栏 Token / 费用 | 静态 Mock 占位 | `infrastructure.llm.UsageSnapshot`（复用 `TopBar.update_usage` 语义） |
 
+> F2 进展（2026-08-02）：卷章树、正文/修订号已通过 `ProjectWorkspaceService` 只读接线
+> （见 `2026-08-02-frontend-wave-f2-readonly-wiring.md`）；项目标题/路径使用
+> `summary()`；保存、AI 建议、Token 仍未接线。
+
 ## 9. 结论
 
 当前前端最大的架构债务是 `MainWindow` 组合根与 demo 数据直灌面板；现有 `ui/qt` 适配模式和测试合同是可靠资产。F1 以纯新增方式建立 QML 壳、Design Tokens、Mock Facade 与写作垂直切片，不改旧 UI、不改后端，为 F2 起的渐进接线保留一条可验证的迁移通道。

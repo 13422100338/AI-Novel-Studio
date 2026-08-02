@@ -123,6 +123,11 @@ ApplicationWindow {
                     value: "Mock"
                     tone: "accent"
                 }
+                StatusChip {
+                    label: "数据源"
+                    value: Facade.projectSource === "project" ? "项目" : "演示"
+                    tone: Facade.projectSource === "project" ? "accent" : "neutral"
+                }
 
                 Item {
                     Layout.fillWidth: true

@@ -1,18 +1,22 @@
-"""Mock facade for Frontend Wave F1.
+"""QML facade for the new frontend.
 
-The facade is the only object QML talks to in this wave. Every value is
-deterministic mock data; nothing touches a repository, database, or model
-gateway. Future waves replace the internals with ``ProjectRuntime`` calls while
-keeping the same presentation DTO shape (see docs/frontend audit, section 8).
+The facade is the only object QML talks to. By default it serves deterministic
+mock data; since Frontend Wave F2 it can also open a real project through the
+read-only application service ``ProjectWorkspaceService`` (volume tree, chapter
+loading, summary). It never writes project files, never touches repositories or
+the model gateway directly, and keeps the same presentation DTO shape for both
+modes (see docs/frontend audit, section 8).
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
+from pathlib import Path
 from uuid import uuid4
 
-from PySide6.QtCore import Property, QObject, Signal, Slot
+from PySide6.QtCore import Property, QObject, QUrl, Signal, Slot
 
+from ai_novel_studio.application.project_workspace_service import ProjectWorkspaceService
 from ai_novel_studio.ui_qml.bridge.dtos import ChapterDto, SuggestionDto, VolumeDto
 from ai_novel_studio.ui_qml.bridge.models.chapter_list_model import ChapterListModel
 from ai_novel_studio.ui_qml.bridge.models.suggestion_list_model import SuggestionListModel
@@ -118,6 +122,7 @@ class MockNovelStudioFacade(QObject):
         self._revision = self._chapters[0].revision
         self._editor_state = "CLEAN"
         self._save_status = "已载入 · 暂无未保存更改"
+        self._workspace: ProjectWorkspaceService | None = None
         self._ai_drawer_open = False
         self._active_nav = "writing"
         self._reduce_motion = False
@@ -126,11 +131,19 @@ class MockNovelStudioFacade(QObject):
 
     @Property(str, notify=project_changed)
     def projectTitle(self) -> str:
+        if self._workspace is not None:
+            return self._workspace.summary().title
         return "雾港来信"
 
     @Property(str, notify=project_changed)
     def projectPath(self) -> str:
+        if self._workspace is not None:
+            return str(self._workspace.summary().root)
         return "C:\\Users\\demo\\Novels\\雾港来信"
+
+    @Property(str, notify=project_changed)
+    def projectSource(self) -> str:
+        return "project" if self._workspace is not None else "mock"
 
     @Property(int, notify=project_changed)
     def chapterCount(self) -> int:
@@ -209,11 +222,7 @@ class MockNovelStudioFacade(QObject):
             for index, candidate in enumerate(self._chapters)
             if candidate.id == chapter.id
         )
-        self._body_text = chapter.body
-        self._saved_body = self._body_text
-        self._revision = chapter.revision
-        self._editor_state = "CLEAN"
-        self._save_status = "已载入 · 暂无未保存更改"
+        self._load_current_chapter_document()
         self.chapter_changed.emit()
         self.editor_state_changed.emit()
 
@@ -236,6 +245,19 @@ class MockNovelStudioFacade(QObject):
 
     @Slot()
     def requestSave(self) -> None:
+        if self._workspace is not None:
+            # F3 wiring point: real persistence is deferred. Keep the editor
+            # state machine honest without claiming a disk write.
+            if self._editor_state == "CLEAN":
+                self._save_status = "会话内已保存 · 未写入磁盘（F3 接线点）"
+            else:
+                self._editor_state = "SAVING"
+                self.editor_state_changed.emit()
+                self._saved_body = self._body_text
+                self._editor_state = "CLEAN"
+                self._save_status = "会话内已保存 · 未写入磁盘（F3 接线点）"
+            self.editor_state_changed.emit()
+            return
         if self._editor_state == "CLEAN":
             self._save_status = f"已保存 · 修订 {self._revision}"
             self.editor_state_changed.emit()
@@ -306,6 +328,87 @@ class MockNovelStudioFacade(QObject):
     @Slot(str)
     def setChapterFilter(self, query: str) -> None:
         self._chapters_model.set_filter(query)
+
+    @Slot(str, result=str)
+    def openProject(self, root: str) -> str:
+        """Open a real project read-only. Returns an error message or empty."""
+        try:
+            workspace = ProjectWorkspaceService()
+            workspace.open_project(Path(root))
+        except Exception as exc:  # noqa: BLE001 - surfaced as UI copy, logged by caller if needed
+            return f"打开项目失败：{exc}"
+        if self._workspace is not None:
+            self._workspace.close_project()
+        self._workspace = workspace
+        self._volumes = self._volumes_from_workspace()
+        self._chapters = tuple(
+            chapter for volume in self._volumes for chapter in volume.chapters
+        )
+        self._chapters_model.set_volumes(self._volumes)
+        if self._chapters:
+            self._current_index = 0
+            self._load_current_chapter_document()
+        self.project_changed.emit()
+        self.chapter_changed.emit()
+        self.editor_state_changed.emit()
+        return ""
+
+    @Slot(QUrl, result=str)
+    def openProjectFromUrl(self, url: QUrl | str) -> str:
+        """FolderDialog helper: convert a QML URL to a local path."""
+        local_path = url.toLocalFile() if isinstance(url, QUrl) else url
+        return self.openProject(local_path)
+
+    @Slot()
+    def closeProject(self) -> None:
+        if self._workspace is not None:
+            self._workspace.close_project()
+            self._workspace = None
+        self._volumes = _mock_volumes()
+        self._chapters = tuple(
+            chapter for volume in self._volumes for chapter in volume.chapters
+        )
+        self._chapters_model.set_volumes(self._volumes)
+        self._current_index = 0
+        self._load_current_chapter_document()
+        self.project_changed.emit()
+        self.chapter_changed.emit()
+        self.editor_state_changed.emit()
+
+    def _load_current_chapter_document(self) -> None:
+        chapter = self._chapters[self._current_index]
+        if self._workspace is not None:
+            workspace = self._workspace.load_chapter(chapter.id)
+            self._body_text = workspace.content
+            self._revision = workspace.revision
+        else:
+            self._body_text = chapter.body
+            self._revision = chapter.revision
+        self._saved_body = self._body_text
+        self._editor_state = "CLEAN"
+        self._save_status = "已载入 · 暂无未保存更改"
+
+    def _volumes_from_workspace(self) -> tuple[VolumeDto, ...]:
+        if self._workspace is None:
+            return ()
+        return tuple(
+            VolumeDto(
+                id=volume.id,
+                title=volume.title,
+                chapters=tuple(
+                    ChapterDto(
+                        id=chapter.id,
+                        title=chapter.title,
+                        status="draft",
+                        revision=chapter.revision,
+                        declared_number=chapter.declared_number,
+                        word_count=chapter.word_count,
+                    )
+                    for chapter in volume.chapters
+                ),
+            )
+            for volume in self._workspace.volume_tree()
+        )
 
     def volumes(self) -> Sequence[VolumeDto]:
         return self._volumes

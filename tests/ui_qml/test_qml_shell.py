@@ -10,6 +10,26 @@ from ai_novel_studio.ui_qml.bridge.mock_novel_studio_facade import MockNovelStud
 from ai_novel_studio.ui_qml.bridge.theme_provider import ThemeProvider
 
 
+def _create_temp_project(root: Path) -> Path:
+    """Minimal real-project fixture (mirrors test_project_wiring)."""
+    from ai_novel_studio.application.project_workspace_service import (
+        ProjectWorkspaceService,
+    )
+
+    service = ProjectWorkspaceService()
+    service.create_project(root, "测试小说")
+    volume = service.volume_tree()[0]
+    chapter = service.create_chapter(volume.id, "第一章 起风", "第 1 章")
+    service.save_chapter(
+        chapter.id,
+        "这是测试正文。\n\n第二段。",
+        expected_revision=chapter.revision,
+    )
+    service.close_project()
+    return root
+
+
+
 def _find_quick_item(root: QQuickItem, name: str) -> QQuickItem | None:
     """Find a QML item by objectName through the QQuickItem hierarchy.
 
@@ -168,3 +188,36 @@ def test_drawer_close_button_closes_drawer(qtbot: QtBot) -> None:
     assert close_button is not None
     QMetaObject.invokeMethod(close_button, "clicked")
     assert facade.property("aiDrawerOpen") is False
+
+
+def test_project_controls_exist_in_sidebar(qtbot: QtBot) -> None:
+    engine, _, _ = _load_engine(qtbot)
+    window = engine.rootObjects()[0]
+    for name in ("openProjectButton", "resetDemoButton", "projectOpenDialog", "projectMessage"):
+        assert window.findChild(object, name) is not None, f"missing {name}"
+
+
+def test_real_project_loads_into_editor(qtbot: QtBot, tmp_path: Path) -> None:
+    root = _create_temp_project(tmp_path / "novel")
+    engine, facade, _ = _load_engine(qtbot)
+    window = engine.rootObjects()[0]
+    editor = window.findChild(object, "manuscriptEditor")
+
+    error = facade.openProject(str(root))
+
+    assert error == ""
+    assert "这是测试正文" in editor.property("text")
+    assert facade.property("projectSource") == "project"
+
+
+def test_reset_demo_restores_mock_editor(qtbot: QtBot, tmp_path: Path) -> None:
+    root = _create_temp_project(tmp_path / "novel")
+    engine, facade, _ = _load_engine(qtbot)
+    window = engine.rootObjects()[0]
+    editor = window.findChild(object, "manuscriptEditor")
+    facade.openProject(str(root))
+
+    facade.closeProject()
+
+    assert facade.property("projectSource") == "mock"
+    assert "清晨的雾港" in editor.property("text")

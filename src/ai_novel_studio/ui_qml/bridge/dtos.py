@@ -6,7 +6,7 @@ domain behavior so QML can consume them without touching repositories or service
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from ai_novel_studio.ui_qml.bridge.text_utils import count_words
 
@@ -15,13 +15,15 @@ from ai_novel_studio.ui_qml.bridge.text_utils import count_words
 class ChapterDto:
     id: str
     title: str
-    body: str
+    body: str = ""
     status: str = "draft"
     revision: int = 1
-    word_count: int = field(init=False)
+    declared_number: str = ""
+    word_count: int = 0
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "word_count", count_words(self.body))
+        if self.body and self.word_count <= 0:
+            object.__setattr__(self, "word_count", count_words(self.body))
 
 
 @dataclass(frozen=True, slots=True)

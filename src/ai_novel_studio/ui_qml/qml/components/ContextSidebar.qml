@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Dialogs
 import QtQuick.Layouts
 
 Item {
@@ -35,6 +36,36 @@ Item {
             font.pixelSize: 10
             elide: Text.ElideMiddle
             color: Theme.tokens.color.textSecondary
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 6
+
+            AppButton {
+                objectName: "openProjectButton"
+                text: "打开项目"
+                onClicked: openFolderDialog.open()
+            }
+            AppButton {
+                objectName: "resetDemoButton"
+                text: "重置演示"
+                onClicked: {
+                    projectMessage.text = ""
+                    Facade.closeProject()
+                }
+            }
+        }
+
+        Text {
+            id: projectMessage
+            objectName: "projectMessage"
+            Layout.fillWidth: true
+            text: ""
+            font.pixelSize: 11
+            wrapMode: Text.WordWrap
+            color: Theme.tokens.color.danger
+            visible: text !== ""
         }
 
         SearchField {
@@ -95,5 +126,14 @@ Item {
             }
         }
     }
-}
 
+    FolderDialog {
+        id: openFolderDialog
+        objectName: "projectOpenDialog"
+        title: "选择项目目录"
+        onAccepted: {
+            var error = Facade.openProjectFromUrl(openFolderDialog.selectedFolder)
+            projectMessage.text = error
+        }
+    }
+}
