@@ -1,5 +1,12 @@
 import sqlite3
 
+import pytest
+
+from ai_novel_studio.infrastructure.storage import migration_manager as migration_module
+from ai_novel_studio.infrastructure.storage.chapter_repository import ChapterRepository
+from ai_novel_studio.infrastructure.storage.character_memory_repository import (
+    CharacterMemoryRepository,
+)
 from ai_novel_studio.infrastructure.storage.migration_manager import (
     LATEST_SCHEMA_VERSION,
     MigrationManager,
@@ -107,4 +114,80 @@ def test_memory_migration_is_idempotent_and_fts5_is_queryable(tmp_path) -> None:
         ).fetchone()[0]
 
     assert result[0] == "doc-1"
+    assert migration_count == 1
+
+
+def test_schema_v18_adds_physical_state_columns_and_preserves_v17_rows(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:  # type: ignore[no-untyped-def]
+    root = tmp_path / "legacy-v17"
+    monkeypatch.setattr(migration_module, "LATEST_SCHEMA_VERSION", 17)
+    project = ProjectRepository.create(root, "Legacy v17")
+    chapter = ChapterRepository(project).create_chapter(
+        project.list_volumes()[0].id,
+        "Chapter",
+        "1",
+    )
+    character = CharacterMemoryRepository(project).create_character("Lin Yu")
+    timestamp = "2026-08-02T00:00:00+00:00"
+    with project.database.connect() as connection, connection:
+        connection.execute(
+            """
+            INSERT INTO character_state_events (
+                id,
+                character_id,
+                chapter_id,
+                motivation,
+                psychology,
+                current_goal,
+                relationships,
+                recent_activity,
+                confidence,
+                source_type,
+                review_status,
+                created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "state-v17",
+                character.id,
+                chapter.id,
+                "Find the truth",
+                "Guarded",
+                "Reach the archive",
+                "Distrusts the guide",
+                "Crossed the old harbor",
+                1,
+                "HUMAN",
+                "APPROVED",
+                timestamp,
+            ),
+        )
+
+    monkeypatch.setattr(migration_module, "LATEST_SCHEMA_VERSION", 18)
+    migrated = ProjectRepository.open(root)
+    reopened = ProjectRepository.open(migrated.layout.root)
+
+    with reopened.database.connect() as connection:
+        version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+        columns = {
+            str(row[1])
+            for row in connection.execute("PRAGMA table_info(character_state_events)")
+        }
+        row = connection.execute(
+            """
+            SELECT motivation, location, injury_status
+            FROM character_state_events
+            WHERE id = 'state-v17'
+            """
+        ).fetchone()
+        migration_count = int(
+            connection.execute(
+                "SELECT COUNT(*) FROM schema_migrations WHERE version = 18"
+            ).fetchone()[0]
+        )
+
+    assert version == LATEST_SCHEMA_VERSION == 18
+    assert {"location", "injury_status"} <= columns
+    assert tuple(row) == ("Find the truth", "", "")
     assert migration_count == 1

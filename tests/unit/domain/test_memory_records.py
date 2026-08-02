@@ -44,6 +44,26 @@ def test_character_normalizes_aliases_and_rejects_empty_name() -> None:
         Character("character-2", "  ", (), "")
 
 
+def test_character_state_defaults_physical_state_to_unspecified() -> None:
+    event = CharacterStateEvent(
+        id="state-1",
+        character_id="character-1",
+        chapter_id="chapter-1",
+        motivation="Find the truth",
+        psychology="Guarded",
+        current_goal="Enter the archive",
+        relationships="Distrusts the guide",
+        recent_activity="Found a sealed letter",
+        confidence=1,
+        source_type=SourceType.HUMAN,
+        review_status=ReviewStatus.APPROVED,
+        created_at=datetime.now(UTC),
+    )
+
+    assert event.location == ""
+    assert event.injury_status == ""
+
+
 def test_character_state_rejects_confidence_outside_zero_to_one() -> None:
     with pytest.raises(ValueError, match="confidence"):
         CharacterStateEvent(
@@ -60,4 +80,3 @@ def test_character_state_rejects_confidence_outside_zero_to_one() -> None:
             review_status=ReviewStatus.REVIEW,
             created_at=datetime.now(UTC),
         )
-

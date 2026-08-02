@@ -163,6 +163,8 @@ class CharacterMemoryRepository:
         confidence: float,
         source_type: SourceType,
         review_status: ReviewStatus,
+        location: str = "",
+        injury_status: str = "",
     ) -> CharacterStateEvent:
         event = CharacterStateEvent(
             id=new_id(),
@@ -177,11 +179,28 @@ class CharacterMemoryRepository:
             source_type=source_type,
             review_status=review_status,
             created_at=_now(),
+            location=location,
+            injury_status=injury_status,
         )
         with self.project.database.connect() as connection, connection:
             connection.execute(
                 """
-                INSERT INTO character_state_events VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO character_state_events (
+                    id,
+                    character_id,
+                    chapter_id,
+                    motivation,
+                    psychology,
+                    current_goal,
+                    relationships,
+                    recent_activity,
+                    confidence,
+                    source_type,
+                    review_status,
+                    created_at,
+                    location,
+                    injury_status
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     event.id,
@@ -196,6 +215,8 @@ class CharacterMemoryRepository:
                     event.source_type.value,
                     event.review_status.value,
                     event.created_at.isoformat(),
+                    event.location,
+                    event.injury_status,
                 ),
             )
         return event
@@ -673,6 +694,8 @@ class CharacterMemoryRepository:
             SourceType(row["source_type"]),
             ReviewStatus(row["review_status"]),
             _time(row["created_at"]),
+            row["location"],
+            row["injury_status"],
         )
 
     @staticmethod

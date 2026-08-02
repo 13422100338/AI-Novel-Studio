@@ -81,6 +81,42 @@ def test_character_state_is_append_only_and_excludes_current_future_events(tmp_p
     assert repository.get_character(character.id).aliases == ("阿岚",)
 
 
+def test_physical_state_round_trips_through_existing_derived_snapshot(
+    tmp_path: Path,
+) -> None:
+    project, chapters = _project_with_three_chapters(tmp_path)
+    repository = CharacterMemoryRepository(project)
+    character = repository.create_character("Lin Yu")
+    stored = repository.append_state(
+        character.id,
+        chapters[0].id,
+        motivation="Find the truth",
+        psychology="Guarded",
+        current_goal="Reach the archive",
+        relationships="Distrusts the guide",
+        recent_activity="Crossed the old harbor",
+        location="Clock tower",
+        injury_status="Sprained left ankle",
+        confidence=1,
+        source_type=SourceType.HUMAN,
+        review_status=ReviewStatus.APPROVED,
+    )
+
+    history = repository.state_history(character.id)
+    snapshot = CharacterTimeline(repository).snapshot(
+        (character.id,),
+        chapters[1].id,
+    )[0]
+
+    assert stored.location == "Clock tower"
+    assert stored.injury_status == "Sprained left ankle"
+    assert history[0].location == "Clock tower"
+    assert history[0].injury_status == "Sprained left ankle"
+    assert snapshot.state is not None
+    assert snapshot.state.location == "Clock tower"
+    assert snapshot.state.injury_status == "Sprained left ankle"
+
+
 def test_character_states_can_be_loaded_in_one_batch(tmp_path: Path) -> None:
     project, chapters = _project_with_three_chapters(tmp_path)
     repository = CharacterMemoryRepository(project)

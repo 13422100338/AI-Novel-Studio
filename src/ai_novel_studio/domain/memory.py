@@ -149,6 +149,8 @@ class CharacterStateEvent:
     source_type: SourceType
     review_status: ReviewStatus
     created_at: datetime
+    location: str = ""
+    injury_status: str = ""
 
     def __post_init__(self) -> None:
         _required(self.id, "状态 ID")
