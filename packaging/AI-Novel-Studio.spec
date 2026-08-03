@@ -7,8 +7,26 @@ a = Analysis(
     [str(project_root / "src" / "ai_novel_studio" / "__main__.py")],
     pathex=[str(project_root / "src")],
     binaries=[],
-    datas=[],
-    hiddenimports=[],
+    datas=[
+        (
+            str(
+                project_root
+                / "src"
+                / "ai_novel_studio"
+                / "ui_qml"
+                / "qml"
+            ),
+            "ai_novel_studio/ui_qml/qml",
+        ),
+    ],
+    hiddenimports=[
+        "PySide6.QtQml",
+        "PySide6.QtQuick",
+        "PySide6.QtQuickControls2",
+        "PySide6.QtQuickLayouts",
+        "PySide6.QtQuickDialogs",
+        "PySide6.QtQmlModels",
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
