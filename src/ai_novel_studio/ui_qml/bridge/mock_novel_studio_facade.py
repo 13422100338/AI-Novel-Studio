@@ -50,6 +50,7 @@ from ai_novel_studio.ui_qml.bridge.paragraph_diff import (
 )
 from ai_novel_studio.ui_qml.bridge.readonly_views import (
     CharacterViewDto,
+    MemoryViewDto,
     ReadonlyViews,
     readonly_views,
 )
@@ -147,6 +148,7 @@ class MockNovelStudioFacade(QObject):
     overview_changed = Signal()
     readonly_views_changed = Signal()
     character_detail_changed = Signal()
+    memory_detail_changed = Signal()
     evidenceRevealRequested = Signal(str, int, int)
 
     def __init__(
@@ -167,6 +169,7 @@ class MockNovelStudioFacade(QObject):
         self._memories_model = MemoryListModel(self)
         self._audits_model = AuditListModel(self)
         self._selected_character: CharacterViewDto | None = None
+        self._selected_memory: MemoryViewDto | None = None
         self._draft_diff_model = DraftDiffModel(self)
         self._draft_view = "draft"
         self._draft_base_body = ""
@@ -355,6 +358,42 @@ class MockNovelStudioFacade(QObject):
     @Property(str, notify=character_detail_changed)
     def characterDetailInjury(self) -> str:
         return self._selected_character.injury_status if self._selected_character else ""
+
+    @Property(bool, notify=memory_detail_changed)
+    def memoryDetailVisible(self) -> bool:
+        return self._selected_memory is not None
+
+    @Property(str, notify=memory_detail_changed)
+    def memoryDetailTitle(self) -> str:
+        return self._selected_memory.title if self._selected_memory else ""
+
+    @Property(str, notify=memory_detail_changed)
+    def memoryDetailCategory(self) -> str:
+        return self._selected_memory.category if self._selected_memory else ""
+
+    @Property(str, notify=memory_detail_changed)
+    def memoryDetailContent(self) -> str:
+        return self._selected_memory.content if self._selected_memory else ""
+
+    @Property(str, notify=memory_detail_changed)
+    def memoryDetailSourceType(self) -> str:
+        return self._selected_memory.source_type if self._selected_memory else ""
+
+    @Property(str, notify=memory_detail_changed)
+    def memoryDetailAuthority(self) -> str:
+        return str(self._selected_memory.authority) if self._selected_memory else ""
+
+    @Property(str, notify=memory_detail_changed)
+    def memoryDetailReview(self) -> str:
+        return str(self._selected_memory.review_status) if self._selected_memory else ""
+
+    @Property(str, notify=memory_detail_changed)
+    def memoryDetailStatus(self) -> str:
+        return str(self._selected_memory.status) if self._selected_memory else ""
+
+    @Property(int, notify=memory_detail_changed)
+    def memoryDetailRevision(self) -> int:
+        return self._selected_memory.revision if self._selected_memory else 0
 
     @Property(QObject, constant=True)
     def memoryViews(self) -> MemoryListModel:
@@ -604,6 +643,21 @@ class MockNovelStudioFacade(QObject):
         self.character_detail_changed.emit()
 
     @Slot(int)
+    def selectMemory(self, row: int) -> None:
+        memory = self._memories_model.memory_at_row(row)
+        if memory is None:
+            return
+        self._selected_memory = memory
+        self.memory_detail_changed.emit()
+
+    @Slot()
+    def closeMemoryDetail(self) -> None:
+        if self._selected_memory is None:
+            return
+        self._selected_memory = None
+        self.memory_detail_changed.emit()
+
+    @Slot(int)
     def revealAuditEvidence(self, row: int) -> None:
         """Locate an audit finding's evidence in the current chapter body."""
         finding = self._audits_model.audit_at_row(row)
@@ -789,6 +843,8 @@ class MockNovelStudioFacade(QObject):
         self._selected_character = None
         self._journey_model.set_items(())
         self.character_detail_changed.emit()
+        self._selected_memory = None
+        self.memory_detail_changed.emit()
         chapter = self._chapters[self._current_index]
         if self._workspace is not None:
             workspace = self._workspace.load_chapter(chapter.id)

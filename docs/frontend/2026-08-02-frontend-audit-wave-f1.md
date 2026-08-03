@@ -225,6 +225,10 @@ pyproject.toml                  （仅新增 ai-novel-studio-qml gui-script 入�
 > `2026-08-03-frontend-wave-f15-audit-evidence-locate.md`）。F13 打包票、F14 人物
 > 时间线、F15 审校定位三项全部完成。
 
+> F16 进展（2026-08-03）：记忆页升级为「列表 + 详情面板」（严格 before 边界，与
+> 旧 UI 记忆窗口一致，见 `2026-08-03-frontend-wave-f16-memory-detail.md`）；
+> 审校写操作、草稿「编辑后接受」仍未接线。
+
 ## 9. 结论
 
 当前前端最大的架构债务是 `MainWindow` 组合根与 demo 数据直灌面板；现有 `ui/qt` 适配模式和测试合同是可靠资产。F1 以纯新增方式建立 QML 壳、Design Tokens、Mock Facade 与写作垂直切片，不改旧 UI、不改后端，为 F2 起的渐进接线保留一条可验证的迁移通道。

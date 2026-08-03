@@ -14,12 +14,13 @@ from ai_novel_studio.domain.audit import (
     AuditTargetKind,
 )
 from ai_novel_studio.domain.generation import CreationMode
-from ai_novel_studio.domain.memory import ReviewStatus, SourceType
+from ai_novel_studio.domain.memory import ReviewStatus, SourceType, SummaryLevel
 from ai_novel_studio.infrastructure.storage.audit_repository import AuditRepository
 from ai_novel_studio.infrastructure.storage.chapter_repository import ChapterRepository
 from ai_novel_studio.infrastructure.storage.character_memory_repository import (
     CharacterMemoryRepository,
 )
+from ai_novel_studio.infrastructure.storage.summary_repository import SummaryRepository
 from ai_novel_studio.ui_qml.bridge.mock_novel_studio_facade import MockNovelStudioFacade
 from ai_novel_studio.ui_qml.bridge.models.readonly_list_models import (
     AuditListModel,
@@ -115,6 +116,31 @@ def create_project_with_audit(tmp_path: Path) -> Path:
         related_source_json="{}",
         confidence=0.8,
         status=AuditFindingStatus.OPEN,
+    )
+    service.close_project()
+    return root
+
+
+def create_project_with_memory(tmp_path: Path) -> Path:
+    """Create a project whose first chapter has a summary candidate.
+
+    The gateway loads memory strictly *before* the query chapter, so the query
+    boundary must be the second chapter for the first chapter's summary to show.
+    """
+    root = create_temp_project(tmp_path / "novel")
+    service = ProjectWorkspaceService()
+    service.open_project(root)
+    project = service.project
+    chapters = ChapterRepository(project)
+    volume = project.list_volumes()[0]
+    chapters.create_chapter(volume.id, "第二章 钟声", "第 2 章")
+    first_chapter = service.volume_tree()[0].chapters[0]
+    SummaryRepository(project).add_candidate(
+        SummaryLevel.CHAPTER,
+        first_chapter.id,
+        "灯塔是故事的核心意象。",
+        (first_chapter.id,),
+        model_profile_id="local-import-baseline",
     )
     service.close_project()
     return root
@@ -329,3 +355,41 @@ def test_reveal_audit_evidence_missing_reports_status(tmp_path: Path) -> None:
     facade.revealAuditEvidence(0)
 
     assert "未找到" in facade.property("saveStatusText")
+
+
+def test_readonly_views_carry_memory_records(tmp_path: Path) -> None:
+    root = create_project_with_memory(tmp_path)
+    service = ProjectWorkspaceService()
+    service.open_project(root)
+    second_chapter = service.volume_tree()[0].chapters[1].id
+
+    views = readonly_views(service.project, second_chapter)
+
+    assert len(views.memories) == 1
+    assert "灯塔" in views.memories[0].content
+    assert views.memories[0].category != ""
+    service.close_project()
+
+
+def test_facade_select_memory_shows_detail(tmp_path: Path) -> None:
+    root = create_project_with_memory(tmp_path)
+    facade = MockNovelStudioFacade()
+    facade.openProject(str(root))
+    facade.selectChapter(2)
+
+    facade.selectMemory(0)
+
+    assert facade.property("memoryDetailVisible") is True
+    assert "灯塔" in facade.property("memoryDetailContent")
+    assert facade.property("memoryDetailCategory") != ""
+    assert facade.property("memoryDetailRevision") >= 0
+
+    facade.closeMemoryDetail()
+    assert facade.property("memoryDetailVisible") is False
+
+
+def test_memory_model_memory_at_row() -> None:
+    model = MemoryListModel()
+    model.set_items((MemoryViewDto(id="m1", category="压缩前文", title="摘要", revision=1),))
+    assert model.memory_at_row(0).title == "摘要"
+    assert model.memory_at_row(1) is None

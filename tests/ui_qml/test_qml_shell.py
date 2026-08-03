@@ -529,3 +529,32 @@ def test_audit_evidence_reveal_selects_text_in_editor(
         lambda: editor.property("selectedText") == "第二段。",
         timeout=5000,
     )
+
+
+def test_memory_detail_panel_shows_after_selection(
+    qtbot: QtBot, tmp_path: Path
+) -> None:
+    from .test_readonly_views import create_project_with_memory
+
+    root = create_project_with_memory(tmp_path)
+    facade = MockNovelStudioFacade()
+    facade.openProject(str(root))
+    facade.selectChapter(2)
+    engine, facade, _ = _load_engine(qtbot, facade)
+    window = engine.rootObjects()[0]
+    detail = window.findChild(object, "memoryDetail")
+    assert detail is not None
+
+    facade.setActiveNav("memory")
+    facade.selectMemory(0)
+
+    assert facade.property("memoryDetailVisible") is True
+    qtbot.waitUntil(lambda: detail.property("visible") is True, timeout=5000)
+    assert "灯塔" in facade.property("memoryDetailContent")
+
+    close_button = window.findChild(object, "closeMemoryDetailButton")
+    assert close_button is not None
+    from PySide6.QtCore import QMetaObject
+
+    QMetaObject.invokeMethod(close_button, "clicked")
+    assert facade.property("memoryDetailVisible") is False

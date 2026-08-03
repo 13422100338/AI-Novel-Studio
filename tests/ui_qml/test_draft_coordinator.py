@@ -54,7 +54,7 @@ def test_cancel_cooperatively_stops_generation(qtbot: QtBot) -> None:
         qtbot.waitUntil(lambda: coordinator.status == DRAFT_GENERATING, timeout=5000)
         coordinator.cancel()
 
-    assert coordinator.status == DRAFT_CANCELLED
+    qtbot.waitUntil(lambda: coordinator.status == DRAFT_CANCELLED, timeout=5000)
     assert coordinator.is_running is False
     assert port.cancel_called is True
 

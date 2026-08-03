@@ -156,6 +156,11 @@ class MemoryListModel(QAbstractListModel):
         super().__init__(parent)
         self._items: list[MemoryViewDto] = []
 
+    def memory_at_row(self, row: int) -> MemoryViewDto | None:
+        if not (0 <= row < len(self._items)):
+            return None
+        return self._items[row]
+
     def set_items(self, items: Sequence[MemoryViewDto]) -> None:
         self.beginResetModel()
         self._items = list(items)
