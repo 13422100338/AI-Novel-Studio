@@ -24,6 +24,17 @@ from ai_novel_studio.infrastructure.storage.project_repository import ProjectRep
 
 
 @dataclass(frozen=True, slots=True)
+class CharacterJourneyViewDto:
+    state_id: str
+    chapter_id: str
+    motivation: str = ""
+    psychology: str = ""
+    goal: str = ""
+    relationships: str = ""
+    recent_activity: str = ""
+
+
+@dataclass(frozen=True, slots=True)
 class CharacterViewDto:
     id: str
     name: str
@@ -36,6 +47,7 @@ class CharacterViewDto:
     recent: str = ""
     location: str = ""
     injury_status: str = ""
+    journey: tuple[CharacterJourneyViewDto, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,6 +107,18 @@ def readonly_views(
                 recent=card.recent,
                 location=card.location,
                 injury_status=card.injury_status,
+                journey=tuple(
+                    CharacterJourneyViewDto(
+                        state_id=entry.state_id,
+                        chapter_id=entry.chapter_id,
+                        motivation=entry.motivation,
+                        psychology=entry.psychology,
+                        goal=entry.goal,
+                        relationships=entry.relationships,
+                        recent_activity=entry.recent_activity,
+                    )
+                    for entry in card.journey
+                ),
             )
             for card in cards
         )
@@ -144,4 +168,3 @@ def readonly_views(
         memories=memories,
         audits=audits,
     )
-

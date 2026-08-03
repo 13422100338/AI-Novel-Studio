@@ -15,6 +15,7 @@ from PySide6.QtCore import (
 
 from ai_novel_studio.ui_qml.bridge.readonly_views import (
     AuditViewDto,
+    CharacterJourneyViewDto,
     CharacterViewDto,
     MemoryViewDto,
 )
@@ -33,6 +34,11 @@ class CharacterListModel(QAbstractListModel):
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self._items: list[CharacterViewDto] = []
+
+    def character_at_row(self, row: int) -> CharacterViewDto | None:
+        if not (0 <= row < len(self._items)):
+            return None
+        return self._items[row]
 
     def set_items(self, items: Sequence[CharacterViewDto]) -> None:
         self.beginResetModel()
@@ -73,6 +79,65 @@ class CharacterListModel(QAbstractListModel):
             self.ROLE_PROFILE: QByteArray(b"profile"),
             self.ROLE_MOTIVATION: QByteArray(b"motivation"),
             self.ROLE_GOAL: QByteArray(b"goal"),
+            self.ROLE_RECENT: QByteArray(b"recent"),
+        }
+
+
+class CharacterJourneyListModel(QAbstractListModel):
+    ROLE_STATE_ID = Qt.ItemDataRole.UserRole + 1
+    ROLE_CHAPTER_ID = Qt.ItemDataRole.UserRole + 2
+    ROLE_MOTIVATION = Qt.ItemDataRole.UserRole + 3
+    ROLE_PSYCHOLOGY = Qt.ItemDataRole.UserRole + 4
+    ROLE_GOAL = Qt.ItemDataRole.UserRole + 5
+    ROLE_RELATIONSHIPS = Qt.ItemDataRole.UserRole + 6
+    ROLE_RECENT = Qt.ItemDataRole.UserRole + 7
+
+    def __init__(self, parent: QObject | None = None) -> None:
+        super().__init__(parent)
+        self._items: list[CharacterJourneyViewDto] = []
+
+    def set_items(self, items: Sequence[CharacterJourneyViewDto]) -> None:
+        self.beginResetModel()
+        self._items = list(items)
+        self.endResetModel()
+
+    def rowCount(
+        self, parent: QModelIndex | QPersistentModelIndex = _INVALID_INDEX
+    ) -> int:
+        return 0 if parent.isValid() else len(self._items)
+
+    def data(
+        self,
+        index: QModelIndex | QPersistentModelIndex,
+        role: int = Qt.ItemDataRole.DisplayRole,
+    ) -> object:
+        if not index.isValid() or not (0 <= index.row() < len(self._items)):
+            return None
+        item = self._items[index.row()]
+        if role == self.ROLE_STATE_ID:
+            return item.state_id
+        if role == self.ROLE_CHAPTER_ID:
+            return item.chapter_id
+        if role == self.ROLE_MOTIVATION:
+            return item.motivation
+        if role == self.ROLE_PSYCHOLOGY:
+            return item.psychology
+        if role == self.ROLE_GOAL:
+            return item.goal
+        if role == self.ROLE_RELATIONSHIPS:
+            return item.relationships
+        if role == self.ROLE_RECENT:
+            return item.recent_activity
+        return None
+
+    def roleNames(self) -> dict[int, QByteArray]:
+        return {
+            self.ROLE_STATE_ID: QByteArray(b"stateId"),
+            self.ROLE_CHAPTER_ID: QByteArray(b"chapterId"),
+            self.ROLE_MOTIVATION: QByteArray(b"motivation"),
+            self.ROLE_PSYCHOLOGY: QByteArray(b"psychology"),
+            self.ROLE_GOAL: QByteArray(b"goal"),
+            self.ROLE_RELATIONSHIPS: QByteArray(b"relationships"),
             self.ROLE_RECENT: QByteArray(b"recent"),
         }
 
@@ -197,4 +262,3 @@ class AuditListModel(QAbstractListModel):
             self.ROLE_CONFIDENCE: QByteArray(b"confidence"),
             self.ROLE_STATUS: QByteArray(b"status"),
         }
-

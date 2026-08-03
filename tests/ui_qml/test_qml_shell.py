@@ -476,3 +476,34 @@ def test_readonly_lists_exist_and_show_empty_state(
     assert memory_list is not None
     assert memory_list.property("count") == 0
     assert facade.property("memoryViews").rowCount() == 0
+
+
+def test_character_detail_panel_shows_after_selection(
+    qtbot: QtBot, tmp_path: Path
+) -> None:
+    from .test_readonly_views import create_project_with_character
+
+    root, _ = create_project_with_character(tmp_path)
+    facade = MockNovelStudioFacade()
+    facade.openProject(str(root))
+    facade.selectChapter(1)
+    engine, facade, _ = _load_engine(qtbot, facade)
+    window = engine.rootObjects()[0]
+    detail = window.findChild(object, "characterDetail")
+    assert detail is not None
+
+    facade.setActiveNav("characters")
+    facade.selectCharacter(0)
+
+    assert facade.property("characterDetailVisible") is True
+    qtbot.waitUntil(lambda: detail.property("visible") is True, timeout=5000)
+    journey_list = window.findChild(object, "characterJourneyList")
+    assert journey_list is not None
+    assert facade.property("characterJourney").rowCount() == 1
+
+    close_button = window.findChild(object, "closeCharacterDetailButton")
+    assert close_button is not None
+    from PySide6.QtCore import QMetaObject
+
+    QMetaObject.invokeMethod(close_button, "clicked")
+    assert facade.property("characterDetailVisible") is False

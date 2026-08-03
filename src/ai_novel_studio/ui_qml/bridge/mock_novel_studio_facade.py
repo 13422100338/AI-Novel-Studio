@@ -34,6 +34,7 @@ from ai_novel_studio.ui_qml.bridge.models.chapter_list_model import ChapterListM
 from ai_novel_studio.ui_qml.bridge.models.draft_diff_model import DraftDiffModel
 from ai_novel_studio.ui_qml.bridge.models.readonly_list_models import (
     AuditListModel,
+    CharacterJourneyListModel,
     CharacterListModel,
     MemoryListModel,
 )
@@ -48,6 +49,7 @@ from ai_novel_studio.ui_qml.bridge.paragraph_diff import (
     diff_paragraphs,
 )
 from ai_novel_studio.ui_qml.bridge.readonly_views import (
+    CharacterViewDto,
     ReadonlyViews,
     readonly_views,
 )
@@ -144,6 +146,7 @@ class MockNovelStudioFacade(QObject):
     usage_changed = Signal()
     overview_changed = Signal()
     readonly_views_changed = Signal()
+    character_detail_changed = Signal()
 
     def __init__(
         self,
@@ -159,8 +162,10 @@ class MockNovelStudioFacade(QObject):
         self._overview = OverviewCounts()
         self._readonly_views = ReadonlyViews()
         self._characters_model = CharacterListModel(self)
+        self._journey_model = CharacterJourneyListModel(self)
         self._memories_model = MemoryListModel(self)
         self._audits_model = AuditListModel(self)
+        self._selected_character: CharacterViewDto | None = None
         self._draft_diff_model = DraftDiffModel(self)
         self._draft_view = "draft"
         self._draft_base_body = ""
@@ -305,6 +310,50 @@ class MockNovelStudioFacade(QObject):
     @Property(QObject, constant=True)
     def characterViews(self) -> CharacterListModel:
         return self._characters_model
+
+    @Property(QObject, constant=True)
+    def characterJourney(self) -> CharacterJourneyListModel:
+        return self._journey_model
+
+    @Property(bool, notify=character_detail_changed)
+    def characterDetailVisible(self) -> bool:
+        return self._selected_character is not None
+
+    @Property(str, notify=character_detail_changed)
+    def characterDetailName(self) -> str:
+        return self._selected_character.name if self._selected_character else ""
+
+    @Property(str, notify=character_detail_changed)
+    def characterDetailProfile(self) -> str:
+        return self._selected_character.profile if self._selected_character else ""
+
+    @Property(str, notify=character_detail_changed)
+    def characterDetailMotivation(self) -> str:
+        return self._selected_character.motivation if self._selected_character else ""
+
+    @Property(str, notify=character_detail_changed)
+    def characterDetailPsychology(self) -> str:
+        return self._selected_character.psychology if self._selected_character else ""
+
+    @Property(str, notify=character_detail_changed)
+    def characterDetailGoal(self) -> str:
+        return self._selected_character.goal if self._selected_character else ""
+
+    @Property(str, notify=character_detail_changed)
+    def characterDetailRelationships(self) -> str:
+        return self._selected_character.relationships if self._selected_character else ""
+
+    @Property(str, notify=character_detail_changed)
+    def characterDetailRecent(self) -> str:
+        return self._selected_character.recent if self._selected_character else ""
+
+    @Property(str, notify=character_detail_changed)
+    def characterDetailLocation(self) -> str:
+        return self._selected_character.location if self._selected_character else ""
+
+    @Property(str, notify=character_detail_changed)
+    def characterDetailInjury(self) -> str:
+        return self._selected_character.injury_status if self._selected_character else ""
 
     @Property(QObject, constant=True)
     def memoryViews(self) -> MemoryListModel:
@@ -536,6 +585,23 @@ class MockNovelStudioFacade(QObject):
         self._active_nav = nav_id
         self.active_nav_changed.emit()
 
+    @Slot(int)
+    def selectCharacter(self, row: int) -> None:
+        character = self._characters_model.character_at_row(row)
+        if character is None:
+            return
+        self._selected_character = character
+        self._journey_model.set_items(character.journey)
+        self.character_detail_changed.emit()
+
+    @Slot()
+    def closeCharacterDetail(self) -> None:
+        if self._selected_character is None:
+            return
+        self._selected_character = None
+        self._journey_model.set_items(())
+        self.character_detail_changed.emit()
+
     @Slot(bool)
     def setReduceMotion(self, enabled: bool) -> None:
         if self._reduce_motion == enabled:
@@ -701,6 +767,9 @@ class MockNovelStudioFacade(QObject):
 
     def _load_current_chapter_document(self) -> None:
         self._clear_draft_review_state()
+        self._selected_character = None
+        self._journey_model.set_items(())
+        self.character_detail_changed.emit()
         chapter = self._chapters[self._current_index]
         if self._workspace is not None:
             workspace = self._workspace.load_chapter(chapter.id)
