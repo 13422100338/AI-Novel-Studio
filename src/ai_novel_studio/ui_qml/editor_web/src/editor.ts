@@ -285,3 +285,14 @@ export function boot(
 }
 
 export { markdownCodec, NOVEL_SCHEMA, Node };
+
+// Auto-boot the editor on page load. In the plain-browser prototype the save
+// payload is logged; the QML host replaces this via the WebChannel bridge.
+if (typeof document !== "undefined") {
+  const mount = document.getElementById("editor-mount");
+  if (mount) {
+    boot(mount, (payload) => {
+      console.log("[editor] save-requested", payload);
+    });
+  }
+}
