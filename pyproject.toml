@@ -35,6 +35,9 @@ ai_novel_studio = [
   "py.typed",
   "ui_qml/qml/**/*.qml",
   "ui_qml/qml/**/qmldir",
+  "ui_qml/editor_web/dist/*.js",
+  "ui_qml/editor_web/dist/*.css",
+  "ui_qml/editor_web/dist/*.html",
 ]
 
 [tool.pytest.ini_options]

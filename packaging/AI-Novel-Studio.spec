@@ -18,6 +18,17 @@ a = Analysis(
             ),
             "ai_novel_studio/ui_qml/qml",
         ),
+        (
+            str(
+                project_root
+                / "src"
+                / "ai_novel_studio"
+                / "ui_qml"
+                / "editor_web"
+                / "dist"
+            ),
+            "ai_novel_studio/ui_qml/editor_web/dist",
+        ),
     ],
     hiddenimports=[
         "PySide6.QtQml",
@@ -26,6 +37,9 @@ a = Analysis(
         "PySide6.QtQuickLayouts",
         "PySide6.QtQuickDialogs",
         "PySide6.QtQmlModels",
+        "PySide6.QtWebEngineQuick",
+        "PySide6.QtWebEngineCore",
+        "PySide6.QtWebChannel",
     ],
     hookspath=[],
     hooksconfig={},
