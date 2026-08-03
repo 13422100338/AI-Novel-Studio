@@ -1,4 +1,4 @@
-"""Frontend Wave F2: read-only real-project wiring through the facade."""
+"""Frontend Wave F2/F3: real-project wiring through the facade."""
 
 from __future__ import annotations
 
@@ -7,6 +7,8 @@ from pathlib import Path
 from PySide6.QtCore import QUrl
 
 from ai_novel_studio.application.project_workspace_service import ProjectWorkspaceService
+from ai_novel_studio.infrastructure.storage.chapter_repository import ChapterRepository
+from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
 from ai_novel_studio.ui_qml.bridge.mock_novel_studio_facade import MockNovelStudioFacade
 
 
@@ -23,6 +25,23 @@ def create_temp_project(root: Path) -> Path:
     )
     service.close_project()
     return root
+
+
+def _external_edit(root: Path, chapter_id: str, content: str, expected_revision: int) -> None:
+    """Simulate an external writer changing the chapter on disk.
+
+    The project writer lock is exclusive per open, so an external change is
+    applied through the chapter repository directly (same persisted store the
+    workspace writes to). This is test fixture code only.
+    """
+    project = ProjectRepository.open(root)
+    ChapterRepository(project).save_content(
+        chapter_id,
+        content,
+        source="user_edit",
+        reason="external edit",
+        expected_revision=expected_revision,
+    )
 
 
 def test_open_project_loads_real_tree_and_document(tmp_path: Path) -> None:
@@ -71,18 +90,88 @@ def test_close_project_restores_mock_state(tmp_path: Path) -> None:
     assert facade.property("currentRevision") == 3
 
 
-def test_save_in_project_mode_is_session_local_and_honest(tmp_path: Path) -> None:
+def test_save_persists_to_disk_and_bumps_revision(tmp_path: Path) -> None:
     root = create_temp_project(tmp_path / "novel")
     facade = MockNovelStudioFacade()
     facade.openProject(str(root))
+    chapter_id = facade.property("currentChapterId")
 
     facade.editorTextChanged("修改后的正文")
     assert facade.property("editorState") == "DIRTY"
     facade.requestSave()
 
     assert facade.property("editorState") == "CLEAN"
-    assert facade.property("currentRevision") == 1  # unchanged: no disk write
-    assert "F3" in facade.property("saveStatusText")
+    assert facade.property("currentRevision") == 2
+    assert "修订 2" in facade.property("saveStatusText")
+
+    facade.closeProject()
+    verify = ProjectWorkspaceService()
+    verify.open_project(root)
+    workspace = verify.load_chapter(chapter_id)
+    assert workspace.content == "修改后的正文"
+    assert workspace.revision == 2
+    verify.close_project()
+
+
+def test_save_detects_stale_revision_conflict(tmp_path: Path) -> None:
+    root = create_temp_project(tmp_path / "novel")
+    facade = MockNovelStudioFacade()
+    facade.openProject(str(root))
+    chapter_id = facade.property("currentChapterId")
+
+    _external_edit(root, chapter_id, "外部写入的正文", expected_revision=1)
+    facade.editorTextChanged("本地编辑的正文")
+    facade.requestSave()
+
+    assert facade.property("editorState") == "CONFLICT"
+    assert "修订冲突" in facade.property("saveStatusText")
+    assert "未覆盖" in facade.property("saveStatusText")
+    # Local edits were not written over the external content.
+    assert facade.property("currentChapterBody") == "本地编辑的正文"
+
+
+def test_reload_chapter_recovers_after_conflict(tmp_path: Path) -> None:
+    root = create_temp_project(tmp_path / "novel")
+    facade = MockNovelStudioFacade()
+    facade.openProject(str(root))
+    chapter_id = facade.property("currentChapterId")
+    _external_edit(root, chapter_id, "外部写入的正文", expected_revision=1)
+    facade.editorTextChanged("本地编辑的正文")
+    facade.requestSave()
+    assert facade.property("editorState") == "CONFLICT"
+
+    facade.reloadChapter()
+
+    assert facade.property("editorState") == "CLEAN"
+    assert facade.property("currentRevision") == 2
+    assert facade.property("currentChapterBody") == "外部写入的正文"
+    assert "重新载入" in facade.property("saveStatusText")
+
+
+def test_reload_chapter_is_noop_outside_conflict(tmp_path: Path) -> None:
+    root = create_temp_project(tmp_path / "novel")
+    facade = MockNovelStudioFacade()
+    facade.openProject(str(root))
+
+    facade.reloadChapter()
+
+    assert facade.property("editorState") == "CLEAN"
+    assert facade.property("currentRevision") == 1
+
+
+def test_editing_during_conflict_keeps_conflict_state(tmp_path: Path) -> None:
+    root = create_temp_project(tmp_path / "novel")
+    facade = MockNovelStudioFacade()
+    facade.openProject(str(root))
+    chapter_id = facade.property("currentChapterId")
+    _external_edit(root, chapter_id, "外部写入的正文", expected_revision=1)
+    facade.editorTextChanged("本地编辑的正文")
+    facade.requestSave()
+    assert facade.property("editorState") == "CONFLICT"
+
+    facade.editorTextChanged("冲突期间继续打字")
+
+    assert facade.property("editorState") == "CONFLICT"
 
 
 def test_open_project_twice_replaces_previous_workspace(tmp_path: Path) -> None:

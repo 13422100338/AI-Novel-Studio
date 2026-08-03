@@ -221,3 +221,43 @@ def test_reset_demo_restores_mock_editor(qtbot: QtBot, tmp_path: Path) -> None:
 
     assert facade.property("projectSource") == "mock"
     assert "清晨的雾港" in editor.property("text")
+
+
+def test_save_conflict_shows_reload_button_and_recovers(
+    qtbot: QtBot, tmp_path: Path
+) -> None:
+    from ai_novel_studio.infrastructure.storage.chapter_repository import (
+        ChapterRepository,
+    )
+    from ai_novel_studio.infrastructure.storage.project_repository import (
+        ProjectRepository,
+    )
+
+    root = _create_temp_project(tmp_path / "novel")
+    engine, facade, _ = _load_engine(qtbot)
+    window = engine.rootObjects()[0]
+    editor = window.findChild(object, "manuscriptEditor")
+    save_button = window.findChild(object, "saveButton")
+    reload_button = window.findChild(object, "reloadButton")
+    facade.openProject(str(root))
+    chapter_id = facade.property("currentChapterId")
+
+    project = ProjectRepository.open(root)
+    ChapterRepository(project).save_content(
+        chapter_id,
+        "外部写入的正文",
+        source="user_edit",
+        reason="external edit",
+        expected_revision=1,
+    )
+    editor.setProperty("text", "本地编辑的正文")
+    assert facade.property("editorState") == "DIRTY"
+
+    QMetaObject.invokeMethod(save_button, "clicked")
+    assert facade.property("editorState") == "CONFLICT"
+    assert reload_button.property("visible") is True
+
+    QMetaObject.invokeMethod(reload_button, "clicked")
+    assert facade.property("editorState") == "CLEAN"
+    assert "外部写入的正文" in editor.property("text")
+    assert facade.property("currentRevision") == 2

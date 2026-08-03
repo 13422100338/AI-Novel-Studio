@@ -31,6 +31,18 @@ ApplicationWindow {
         return map[navId] || "写作"
     }
 
+    function autoSaveText(state) {
+        if (state === "CLEAN") return "已保存"
+        if (state === "CONFLICT") return "冲突"
+        return "等待保存"
+    }
+
+    function autoSaveTone(state) {
+        if (state === "CLEAN") return "success"
+        if (state === "CONFLICT") return "danger"
+        return "warning"
+    }
+
     ColumnLayout {
         anchors.fill: parent
         spacing: 0
@@ -111,8 +123,8 @@ ApplicationWindow {
                 }
                 StatusChip {
                     label: "自动保存"
-                    value: Facade.editorState === "CLEAN" ? "已保存" : "等待保存"
-                    tone: Facade.editorState === "CLEAN" ? "success" : "warning"
+                    value: window.autoSaveText(Facade.editorState)
+                    tone: window.autoSaveTone(Facade.editorState)
                 }
                 StatusChip {
                     label: "任务"

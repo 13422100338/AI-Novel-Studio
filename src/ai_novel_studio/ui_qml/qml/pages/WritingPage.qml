@@ -129,18 +129,26 @@ Item {
                 primary: true
                 onClicked: Facade.requestSave()
             }
+            AppButton {
+                objectName: "reloadButton"
+                text: "放弃本地修改并重新载入"
+                visible: Facade.editorState === "CONFLICT"
+                onClicked: Facade.reloadChapter()
+            }
         }
     }
 
     function statusText(state) {
         if (state === "DIRTY") return "编辑中"
         if (state === "SAVING") return "保存中"
+        if (state === "CONFLICT") return "修订冲突"
         return "已保存"
     }
 
     function stateTone(state) {
         if (state === "DIRTY") return "warning"
         if (state === "SAVING") return "accent"
+        if (state === "CONFLICT") return "danger"
         return "success"
     }
 }

@@ -156,7 +156,7 @@ pyproject.toml                  （仅新增 ai-novel-studio-qml gui-script 入�
 | 项目标题 / 路径 | `MockNovelStudioFacade.projectTitle/projectPath` | `ProjectRuntime.workspace.summary()` |
 | 卷章树 | `ChapterListModel`（flat rows, kind=volume/chapter） | `ProjectRuntime.workspace.volume_tree()` |
 | 正文 / 修订号 | `ChapterDto.body/revision` | `ProjectRuntime.workspace.load_chapter(id)` → `ChapterWorkspace` |
-| 保存 | `requestSave()`（同步 CLEAN，revision+1） | `save_chapter(..., expected_revision=...)` + 冲突协议 |
+| 保存 | `requestSave()`（同步 CLEAN，revision+1） | `save_chapter(..., expected_revision=...)` 已接线（F3）；冲突 → CONFLICT + 显式重载 |
 | 字数 | facade 确定性 `count_words()` | 保持前端 DTO 计算（不引入每键保存） |
 | AI 建议 / 草稿 | `SuggestionListModel` mock 建议 + 本地采用 | `ProjectGenerationSession` + `GenerationAcceptanceService`（F4） |
 | 状态栏 Token / 费用 | 静态 Mock 占位 | `infrastructure.llm.UsageSnapshot`（复用 `TopBar.update_usage` 语义） |
@@ -164,6 +164,10 @@ pyproject.toml                  （仅新增 ai-novel-studio-qml gui-script 入�
 > F2 进展（2026-08-02）：卷章树、正文/修订号已通过 `ProjectWorkspaceService` 只读接线
 > （见 `2026-08-02-frontend-wave-f2-readonly-wiring.md`）；项目标题/路径使用
 > `summary()`；保存、AI 建议、Token 仍未接线。
+
+> F3 进展（2026-08-03）：项目模式下保存已接 `save_chapter(expected_revision=...)`，
+> 修订冲突进入 CONFLICT 并支持显式重新载入（见
+> `2026-08-03-frontend-wave-f3-save-conflict.md`）；AI 建议、Token/费用仍未接线。
 
 ## 9. 结论
 
