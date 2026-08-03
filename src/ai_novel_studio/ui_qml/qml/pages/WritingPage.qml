@@ -42,6 +42,13 @@ Item {
                 }
             }
 
+        }
+
+        Flow {
+            id: actionRow
+            Layout.fillWidth: true
+            spacing: 8
+
             StatusChip {
                 label: "修订"
                 value: String(Facade.currentRevision)
@@ -51,7 +58,6 @@ Item {
                 text: "保存"
                 primary: true
                 visible: root.useWebEngine
-                Layout.minimumWidth: 64
                 onClicked: {
                     if (webEditorLoader.item !== null) {
                         webEditorLoader.item.requestSave()
@@ -59,18 +65,32 @@ Item {
                 }
             }
             AppButton {
+                objectName: "saveButton"
+                text: "保存"
+                primary: true
+                visible: !root.useWebEngine
+                onClicked: Facade.requestSave()
+            }
+            AppButton {
                 objectName: "draftButton"
                 text: "生成草稿"
-                Layout.minimumWidth: 88
                 enabled: Facade.draftStatus !== "GENERATING" && Facade.draftStatus !== "QUEUED"
                 onClicked: generationDialog.openRequested = true
             }
             AppButton {
                 objectName: "cancelDraftButton"
                 text: "取消生成"
-                Layout.minimumWidth: 88
                 visible: Facade.draftStatus === "GENERATING" || Facade.draftStatus === "QUEUED"
                 onClicked: Facade.cancelDraft()
+            }
+            AppButton {
+                text: "AI 参考"
+                primary: true
+                onClicked: Facade.toggleAiDrawer(true)
+            }
+            AppButton {
+                text: "章节信息"
+                onClicked: infoText.text = "章节信息面板将在后续 Wave 接线。"
             }
         }
 
@@ -88,15 +108,6 @@ Item {
                 wrapMode: Text.WordWrap
                 elide: Text.ElideRight
                 color: Theme.tokens.color.textSecondary
-            }
-            AppButton {
-                text: "章节信息"
-                onClicked: infoText.text = "章节信息面板将在后续 Wave 接线。"
-            }
-            AppButton {
-                text: "AI 参考"
-                primary: true
-                onClicked: Facade.toggleAiDrawer(true)
             }
         }
 
@@ -199,7 +210,13 @@ Item {
             }
 
             AppButton {
-                objectName: "saveButton"
+                objectName: "reloadButton"
+                text: "放弃本地修改并重新载入"
+                visible: Facade.editorState === "CONFLICT"
+                onClicked: Facade.reloadChapter()
+            }
+            AppButton {
+                objectName: "bottomSaveButton"
                 text: "保存"
                 primary: true
                 onClicked: {
@@ -211,12 +228,6 @@ Item {
                         Facade.requestSave()
                     }
                 }
-            }
-            AppButton {
-                objectName: "reloadButton"
-                text: "放弃本地修改并重新载入"
-                visible: Facade.editorState === "CONFLICT"
-                onClicked: Facade.reloadChapter()
             }
         }
     }

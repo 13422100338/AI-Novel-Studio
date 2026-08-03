@@ -4,6 +4,7 @@ import QtQuick.Layouts
 
 Item {
     id: root
+    z: 100
 
     property bool open: false
     property int drawerWidth: 340
