@@ -46,6 +46,8 @@ class DraftPort(Protocol):
 
     def generate(self, run_id: str) -> tuple[str, str]: ...
 
+    def cancel(self, run_id: str) -> None: ...
+
     def accept_current(self) -> AcceptedGeneration: ...
 
     def discard_current(self) -> bool: ...
@@ -94,6 +96,10 @@ class ProjectSessionDraftPort:
         if not completed:
             return text, "生成未完成，请稍后重试"
         return text, ""
+
+    def cancel(self, run_id: str) -> None:
+        """Ask the underlying prose service to cancel the stream cooperatively."""
+        self.session.prose.cancel(run_id)
 
     def accept_current(self) -> AcceptedGeneration:
         return self.session.accept_current()

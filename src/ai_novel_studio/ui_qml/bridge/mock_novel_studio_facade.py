@@ -17,6 +17,11 @@ from uuid import uuid4
 from PySide6.QtCore import Property, QObject, QUrl, Signal, Slot
 
 from ai_novel_studio.application.project_workspace_service import ProjectWorkspaceService
+from ai_novel_studio.ui_qml.bridge.draft_coordinator import (
+    DRAFT_FAILED,
+    DRAFT_IDLE,
+    DraftCoordinator,
+)
 from ai_novel_studio.ui_qml.bridge.draft_port import DraftPort
 from ai_novel_studio.ui_qml.bridge.dtos import ChapterDto, SuggestionDto, VolumeDto
 from ai_novel_studio.ui_qml.bridge.models.chapter_list_model import ChapterListModel
@@ -108,16 +113,27 @@ class MockNovelStudioFacade(QObject):
     ai_drawer_changed = Signal()
     active_nav_changed = Signal()
     reduce_motion_changed = Signal()
+    draft_status_changed = Signal()
 
     def __init__(
         self,
         parent: QObject | None = None,
         *,
         draft_port: DraftPort | None = None,
+        draft_coordinator: DraftCoordinator | None = None,
     ) -> None:
         super().__init__(parent)
         self._draft_port = draft_port
         self._active_run_id: str | None = None
+        self._draft_status = DRAFT_IDLE
+        self._draft_coordinator = draft_coordinator
+        if self._draft_coordinator is None and draft_port is not None:
+            self._draft_coordinator = DraftCoordinator(draft_port, self)
+        if self._draft_coordinator is not None:
+            self._draft_coordinator.status_changed.connect(self._on_draft_status)
+            self._draft_coordinator.draft_ready.connect(self._on_draft_ready)
+            self._draft_coordinator.draft_failed.connect(self._on_draft_failed)
+            self._draft_coordinator.cancelled.connect(self._on_draft_cancelled)
         self._volumes = _mock_volumes()
         self._chapters_model = ChapterListModel(self._volumes, self)
         self._suggestions_model = SuggestionListModel(self)
@@ -217,6 +233,10 @@ class MockNovelStudioFacade(QObject):
     @Property(bool, notify=reduce_motion_changed)
     def reduceMotion(self) -> bool:
         return self._reduce_motion
+
+    @Property(str, notify=draft_status_changed)
+    def draftStatus(self) -> str:
+        return self._draft_status
 
     # -- commands ------------------------------------------------------------
 
@@ -457,6 +477,14 @@ class MockNovelStudioFacade(QObject):
     def _request_project_draft(self) -> None:
         if self._draft_port is None:
             self._save_status = "模型生成端口未配置，无法生成草稿（F4 接线点）"
+            self._draft_status = DRAFT_FAILED
+            self.draft_status_changed.emit()
+            self.editor_state_changed.emit()
+            return
+        if self._draft_coordinator is None:
+            self._save_status = "生成协调器未配置，无法生成草稿"
+            self._draft_status = DRAFT_FAILED
+            self.draft_status_changed.emit()
             self.editor_state_changed.emit()
             return
         chapter_id = self._chapters[self._current_index].id
@@ -466,20 +494,24 @@ class MockNovelStudioFacade(QObject):
                 self._revision,
                 max(500, count_words(self._body_text) * 2),
             )
-            draft_text, error = self._draft_port.generate(run_id)
         except (KeyError, RuntimeError, ValueError) as exc:
             self._save_status = f"生成草稿失败：{exc}"
             self.editor_state_changed.emit()
             return
-        if error:
-            self._save_status = f"生成草稿未完成：{error}"
-            self.editor_state_changed.emit()
+        self._draft_coordinator.start_generate(run_id)
+
+    def _on_draft_status(self, status: str) -> None:
+        if status == self._draft_status:
             return
+        self._draft_status = status
+        self.draft_status_changed.emit()
+
+    def _on_draft_ready(self, draft_text: str) -> None:
         if not draft_text.strip():
             self._save_status = "生成草稿为空，请重试"
             self.editor_state_changed.emit()
             return
-        self._active_run_id = run_id
+        self._active_run_id = self._draft_coordinator.run_id if self._draft_coordinator else None
         self._suggestions_model.add_item(
             SuggestionDto(
                 id=str(uuid4()),
@@ -490,6 +522,19 @@ class MockNovelStudioFacade(QObject):
         )
         self._ai_drawer_open = True
         self.ai_drawer_changed.emit()
+
+    def _on_draft_failed(self, message: str) -> None:
+        self._save_status = f"生成草稿失败：{message}"
+        self.editor_state_changed.emit()
+
+    def _on_draft_cancelled(self, message: str) -> None:
+        self._save_status = message
+        self.editor_state_changed.emit()
+
+    @Slot()
+    def cancelDraft(self) -> None:
+        if self._draft_coordinator is not None:
+            self._draft_coordinator.cancel()
 
     def _accept_project_draft(self, row: int) -> None:
         if self._draft_port is None or self._active_run_id is None:

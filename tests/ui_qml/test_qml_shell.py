@@ -279,9 +279,14 @@ def test_project_draft_button_uses_injected_port(
     draft_button = window.findChild(object, "draftButton")
 
     QMetaObject.invokeMethod(draft_button, "clicked")
+    qtbot.waitUntil(
+        lambda: facade.property("suggestions").rowCount() == 1,
+        timeout=5000,
+    )
 
     assert facade.property("aiDrawerOpen") is True
     assert facade.property("suggestions").rowCount() == 1
+    assert facade.property("draftStatus") == "COMPLETED"
 
     facade.acceptSuggestion(0)
     assert "AI 生成的草稿正文" in editor.property("text")

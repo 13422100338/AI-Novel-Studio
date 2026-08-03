@@ -1,3 +1,5 @@
+import threading
+
 from PySide6.QtCore import QObject
 
 from ai_novel_studio.application.project_generation_session import AcceptedGeneration
@@ -15,12 +17,18 @@ class FakeDraftPort:
         *,
         draft_text: str = "AI 生成的草稿正文。",
         accept_failure: str | None = None,
+        generate_error: str | None = None,
+        block_on_generate: bool = False,
     ) -> None:
         self.draft_text = draft_text
         self.accept_failure = accept_failure
+        self.generate_error = generate_error
+        self.block_on_generate = block_on_generate
+        self._generate_block = threading.Event()
         self.prepared: list[tuple[str, int, int]] = []
         self.accepted = False
         self.discarded = False
+        self.cancel_called = False
         self.next_revision = 7
 
     def prepare(self, chapter_id: str, revision: int, target_words: int) -> str:
@@ -28,7 +36,17 @@ class FakeDraftPort:
         return "run-fake"
 
     def generate(self, run_id: str) -> tuple[str, str]:
+        if self.block_on_generate:
+            self._generate_block.wait(timeout=10)
+        if self.cancel_called:
+            return self.draft_text, "正文生成已取消，已保留收到的内容"
+        if self.generate_error is not None:
+            return self.draft_text, self.generate_error
         return self.draft_text, ""
+
+    def cancel(self, run_id: str) -> None:
+        self.cancel_called = True
+        self._generate_block.set()
 
     def accept_current(self) -> AcceptedGeneration:
         if self.accept_failure is not None:
@@ -164,27 +182,36 @@ def test_volumes_snapshot() -> None:
     assert len(facade.volumes()[0].chapters) == 3
 
 
-def test_project_draft_request_uses_port_and_opens_drawer(tmp_path) -> None:
+def test_project_draft_request_uses_port_and_opens_drawer(qtbot, tmp_path) -> None:
     root = create_temp_project(tmp_path / "novel")
     port = FakeDraftPort()
     facade = MockNovelStudioFacade(draft_port=port)
     facade.openProject(str(root))
 
     facade.requestDraft()
+    qtbot.waitUntil(
+        lambda: facade.property("suggestions").rowCount() == 1,
+        timeout=5000,
+    )
 
     assert facade.property("aiDrawerOpen") is True
     suggestions = facade.property("suggestions")
     assert suggestions.rowCount() == 1
     assert port.prepared[0][0] == facade.property("currentChapterId")
     assert port.prepared[0][1] == facade.property("currentRevision")
+    assert facade.property("draftStatus") == "COMPLETED"
 
 
-def test_project_draft_accept_applies_generated_text(tmp_path) -> None:
+def test_project_draft_accept_applies_generated_text(qtbot, tmp_path) -> None:
     root = create_temp_project(tmp_path / "novel")
     port = FakeDraftPort()
     facade = MockNovelStudioFacade(draft_port=port)
     facade.openProject(str(root))
     facade.requestDraft()
+    qtbot.waitUntil(
+        lambda: facade.property("suggestions").rowCount() == 1,
+        timeout=5000,
+    )
 
     facade.acceptSuggestion(0)
 
@@ -195,13 +222,17 @@ def test_project_draft_accept_applies_generated_text(tmp_path) -> None:
     assert port.accepted is True
 
 
-def test_project_draft_discard_keeps_body(tmp_path) -> None:
+def test_project_draft_discard_keeps_body(qtbot, tmp_path) -> None:
     root = create_temp_project(tmp_path / "novel")
     port = FakeDraftPort()
     facade = MockNovelStudioFacade(draft_port=port)
     facade.openProject(str(root))
     body_before = facade.property("currentChapterBody")
     facade.requestDraft()
+    qtbot.waitUntil(
+        lambda: facade.property("suggestions").rowCount() == 1,
+        timeout=5000,
+    )
 
     facade.discardSuggestion(0)
 
@@ -210,28 +241,64 @@ def test_project_draft_discard_keeps_body(tmp_path) -> None:
     assert port.discarded is True
 
 
-def test_project_draft_without_port_reports_missing_gateway(tmp_path) -> None:
+def test_project_draft_without_port_reports_missing_gateway(qtbot, tmp_path) -> None:
     root = create_temp_project(tmp_path / "novel")
     facade = MockNovelStudioFacade()
     facade.openProject(str(root))
 
     facade.requestDraft()
+    qtbot.waitUntil(
+        lambda: facade.property("draftStatus") == "FAILED",
+        timeout=5000,
+    )
 
     assert "端口未配置" in facade.property("saveStatusText")
     assert facade.property("suggestions").rowCount() == 0
     assert facade.property("aiDrawerOpen") is False
 
 
-def test_project_draft_accept_failure_keeps_candidate(tmp_path) -> None:
+def test_project_draft_accept_failure_keeps_candidate(qtbot, tmp_path) -> None:
     root = create_temp_project(tmp_path / "novel")
     port = FakeDraftPort(accept_failure="采用失败：测试错误")
     facade = MockNovelStudioFacade(draft_port=port)
     facade.openProject(str(root))
     body_before = facade.property("currentChapterBody")
     facade.requestDraft()
+    qtbot.waitUntil(
+        lambda: facade.property("suggestions").rowCount() == 1,
+        timeout=5000,
+    )
 
     facade.acceptSuggestion(0)
 
     assert "采用草稿失败" in facade.property("saveStatusText")
     assert facade.property("suggestions").rowCount() == 1
     assert facade.property("currentChapterBody") == body_before
+
+
+def test_project_draft_cancel_keeps_body_and_reports_cancelled(
+    qtbot, tmp_path
+) -> None:
+    from ai_novel_studio.ui_qml.bridge.draft_coordinator import DRAFT_GENERATING
+
+    root = create_temp_project(tmp_path / "novel")
+    port = FakeDraftPort(block_on_generate=True)
+    facade = MockNovelStudioFacade(draft_port=port)
+    facade.openProject(str(root))
+    body_before = facade.property("currentChapterBody")
+
+    facade.requestDraft()
+    qtbot.waitUntil(
+        lambda: facade.property("draftStatus") == DRAFT_GENERATING,
+        timeout=5000,
+    )
+    facade.cancelDraft()
+    qtbot.waitUntil(
+        lambda: facade.property("draftStatus") == "CANCELLED",
+        timeout=5000,
+    )
+
+    assert facade.property("currentChapterBody") == body_before
+    assert facade.property("suggestions").rowCount() == 0
+    assert "已取消" in facade.property("saveStatusText")
+    assert port.cancel_called is True

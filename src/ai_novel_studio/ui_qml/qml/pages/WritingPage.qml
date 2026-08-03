@@ -55,7 +55,14 @@ Item {
             AppButton {
                 objectName: "draftButton"
                 text: "生成草稿"
+                enabled: Facade.draftStatus !== "GENERATING" && Facade.draftStatus !== "QUEUED"
                 onClicked: Facade.requestDraft()
+            }
+            AppButton {
+                objectName: "cancelDraftButton"
+                text: "取消生成"
+                visible: Facade.draftStatus === "GENERATING" || Facade.draftStatus === "QUEUED"
+                onClicked: Facade.cancelDraft()
             }
         }
 

@@ -43,6 +43,15 @@ ApplicationWindow {
         return "warning"
     }
 
+    function draftText(status) {
+        if (status === "QUEUED") return "排队中"
+        if (status === "GENERATING") return "生成中"
+        if (status === "COMPLETED") return "已完成"
+        if (status === "FAILED") return "失败"
+        if (status === "CANCELLED") return "已取消"
+        return "空闲"
+    }
+
     ColumnLayout {
         anchors.fill: parent
         spacing: 0
@@ -128,7 +137,10 @@ ApplicationWindow {
                 }
                 StatusChip {
                     label: "任务"
-                    value: "空闲"
+                    value: window.draftText(Facade.draftStatus)
+                    tone: Facade.draftStatus === "GENERATING" || Facade.draftStatus === "QUEUED" ? "accent"
+                        : Facade.draftStatus === "FAILED" || Facade.draftStatus === "CANCELLED" ? "danger"
+                        : "neutral"
                 }
                 StatusChip {
                     label: "模型"
