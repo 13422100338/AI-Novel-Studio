@@ -507,3 +507,25 @@ def test_character_detail_panel_shows_after_selection(
 
     QMetaObject.invokeMethod(close_button, "clicked")
     assert facade.property("characterDetailVisible") is False
+
+
+def test_audit_evidence_reveal_selects_text_in_editor(
+    qtbot: QtBot, tmp_path: Path
+) -> None:
+    from .test_readonly_views import create_project_with_audit
+
+    root = create_project_with_audit(tmp_path)
+    facade = MockNovelStudioFacade()
+    facade.openProject(str(root))
+    facade.setActiveNav("audit")
+    engine, facade, _ = _load_engine(qtbot, facade)
+    window = engine.rootObjects()[0]
+    editor = window.findChild(object, "manuscriptEditor")
+
+    facade.revealAuditEvidence(0)
+
+    assert facade.property("activeNav") == "writing"
+    qtbot.waitUntil(
+        lambda: editor.property("selectedText") == "第二段。",
+        timeout=5000,
+    )

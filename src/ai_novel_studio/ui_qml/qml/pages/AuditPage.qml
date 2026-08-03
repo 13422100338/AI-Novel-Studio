@@ -4,6 +4,7 @@ import QtQuick.Layouts
 import "../components"
 
 Item {
+    id: root
     objectName: "auditPage"
 
     ColumnLayout {
@@ -80,6 +81,12 @@ Item {
                         font.pixelSize: 11
                         color: Theme.tokens.color.textSecondary
                     }
+                }
+
+                MouseArea {
+                    anchors.fill: parent
+                    acceptedButtons: Qt.LeftButton
+                    onDoubleClicked: Facade.revealAuditEvidence(index)
                 }
             }
 

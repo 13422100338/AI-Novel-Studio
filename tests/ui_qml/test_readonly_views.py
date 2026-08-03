@@ -5,7 +5,17 @@ from __future__ import annotations
 from pathlib import Path
 
 from ai_novel_studio.application.project_workspace_service import ProjectWorkspaceService
+from ai_novel_studio.domain.audit import (
+    AuditFindingCategory,
+    AuditFindingSource,
+    AuditFindingStatus,
+    AuditRunStatus,
+    AuditSeverity,
+    AuditTargetKind,
+)
+from ai_novel_studio.domain.generation import CreationMode
 from ai_novel_studio.domain.memory import ReviewStatus, SourceType
+from ai_novel_studio.infrastructure.storage.audit_repository import AuditRepository
 from ai_novel_studio.infrastructure.storage.chapter_repository import ChapterRepository
 from ai_novel_studio.infrastructure.storage.character_memory_repository import (
     CharacterMemoryRepository,
@@ -68,6 +78,46 @@ def create_project_with_character(tmp_path: Path) -> tuple[Path, str]:
     )
     service.close_project()
     return root, character.id
+
+
+def create_project_with_audit(tmp_path: Path) -> Path:
+    """Create a project with one completed model audit finding."""
+    import hashlib
+
+    root = create_temp_project(tmp_path / "novel")
+    service = ProjectWorkspaceService()
+    service.open_project(root)
+    project = service.project
+    chapter = service.volume_tree()[0].chapters[0]
+    content = service.load_chapter(chapter.id).content
+    target_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    repository = AuditRepository(project)
+    run = repository.create_run(
+        chapter_id=chapter.id,
+        target_kind=AuditTargetKind.FORMAL_CHAPTER,
+        target_id=chapter.id,
+        target_revision=chapter.revision,
+        target_hash=target_hash,
+        mode=CreationMode.BASIC,
+        status=AuditRunStatus.COMPLETED,
+        prompt_version="model-audit-ui-v1",
+        model_provider_id="provider",
+        model_id="writer",
+    )
+    repository.add_finding(
+        run_id=run.id,
+        category=AuditFindingCategory.STYLE,
+        severity=AuditSeverity.WARNING,
+        source=AuditFindingSource.MODEL,
+        location_json='{"kind":"paragraph","index":1}',
+        evidence="第二段。",
+        explanation="第二段与第一章风格不一致。",
+        related_source_json="{}",
+        confidence=0.8,
+        status=AuditFindingStatus.OPEN,
+    )
+    service.close_project()
+    return root
 
 
 def test_empty_project_views_are_empty(tmp_path: Path) -> None:
@@ -233,3 +283,49 @@ def test_facade_select_character_after_chapter_switch_updates_journey(
     assert facade.property("characterJourney").rowCount() == 2
     journey = facade.property("characterJourney")
     assert journey.data(journey.index(1), journey.ROLE_GOAL) == "进入钟楼"
+
+
+def test_audit_views_load_model_findings(tmp_path: Path) -> None:
+    root = create_project_with_audit(tmp_path)
+    facade = MockNovelStudioFacade()
+    facade.openProject(str(root))
+
+    audits = facade.property("auditViews")
+    assert audits.rowCount() == 1
+    assert facade.property("auditCountText") == "1 项"
+
+
+def test_reveal_audit_evidence_emits_position_and_switches_nav(
+    tmp_path: Path,
+) -> None:
+    root = create_project_with_audit(tmp_path)
+    facade = MockNovelStudioFacade()
+    facade.openProject(str(root))
+    facade.setActiveNav("audit")
+    received: list[tuple[str, int, int]] = []
+    facade.evidenceRevealRequested.connect(
+        lambda evidence, position, length: received.append(
+            (evidence, position, length)
+        )
+    )
+
+    facade.revealAuditEvidence(0)
+
+    assert facade.property("activeNav") == "writing"
+    assert len(received) == 1
+    evidence, position, length = received[0]
+    assert evidence == "第二段。"
+    assert position == facade.property("currentChapterBody").index("第二段。")
+    assert length == len("第二段。")
+
+
+def test_reveal_audit_evidence_missing_reports_status(tmp_path: Path) -> None:
+    root = create_project_with_audit(tmp_path)
+    facade = MockNovelStudioFacade()
+    facade.openProject(str(root))
+    # Edit the body so the evidence no longer exists verbatim.
+    facade.editorTextChanged("正文已被改写，证据消失了。")
+
+    facade.revealAuditEvidence(0)
+
+    assert "未找到" in facade.property("saveStatusText")

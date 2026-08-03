@@ -218,6 +218,11 @@ class AuditListModel(QAbstractListModel):
         super().__init__(parent)
         self._items: list[AuditViewDto] = []
 
+    def audit_at_row(self, row: int) -> AuditViewDto | None:
+        if not (0 <= row < len(self._items)):
+            return None
+        return self._items[row]
+
     def set_items(self, items: Sequence[AuditViewDto]) -> None:
         self.beginResetModel()
         self._items = list(items)

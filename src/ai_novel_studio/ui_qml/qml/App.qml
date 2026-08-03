@@ -106,7 +106,9 @@ ApplicationWindow {
                     anchors.fill: parent
                     currentIndex: window.navIndex(Facade.activeNav)
 
-                    WritingPage {}
+                    WritingPage {
+                        id: writingPage
+                    }
 
                     CharactersPage {}
 
@@ -215,5 +217,12 @@ ApplicationWindow {
         anchors.fill: parent
         open: Facade.aiDrawerOpen
         onClosed: Facade.toggleAiDrawer(false)
+    }
+
+    Connections {
+        target: Facade
+        function onEvidenceRevealRequested(evidence, position, length) {
+            writingPage.revealEvidence(position, length)
+        }
     }
 }

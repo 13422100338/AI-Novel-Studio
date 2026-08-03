@@ -147,6 +147,7 @@ class MockNovelStudioFacade(QObject):
     overview_changed = Signal()
     readonly_views_changed = Signal()
     character_detail_changed = Signal()
+    evidenceRevealRequested = Signal(str, int, int)
 
     def __init__(
         self,
@@ -601,6 +602,24 @@ class MockNovelStudioFacade(QObject):
         self._selected_character = None
         self._journey_model.set_items(())
         self.character_detail_changed.emit()
+
+    @Slot(int)
+    def revealAuditEvidence(self, row: int) -> None:
+        """Locate an audit finding's evidence in the current chapter body."""
+        finding = self._audits_model.audit_at_row(row)
+        if finding is None:
+            return
+        position = self._body_text.find(finding.evidence)
+        if position < 0:
+            self._save_status = "审校证据在当前正文中未找到（正文可能已修改）"
+            self.editor_state_changed.emit()
+            return
+        self.setActiveNav("writing")
+        self.evidenceRevealRequested.emit(
+            finding.evidence,
+            position,
+            len(finding.evidence),
+        )
 
     @Slot(bool)
     def setReduceMotion(self, enabled: bool) -> None:

@@ -164,4 +164,9 @@ Item {
         parent: root
         anchors.centerIn: parent
     }
+
+    function revealEvidence(position, length) {
+        editor.forceActiveFocus()
+        editor.select(position, position + length)
+    }
 }
