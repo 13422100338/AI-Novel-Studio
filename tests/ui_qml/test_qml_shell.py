@@ -457,3 +457,22 @@ def test_overview_pages_exist_and_show_counts(qtbot: QtBot, tmp_path: Path) -> N
     count_chip = window.findChild(object, "charactersPageCount")
     assert count_chip is not None
     assert count_chip.property("value") == "0 人"
+
+
+def test_readonly_lists_exist_and_show_empty_state(
+    qtbot: QtBot, tmp_path: Path
+) -> None:
+    root = _create_temp_project(tmp_path / "novel")
+    facade = MockNovelStudioFacade()
+    facade.openProject(str(root))
+    engine, facade, _ = _load_engine(qtbot, facade)
+    window = engine.rootObjects()[0]
+
+    for name in ("charactersList", "memoryList", "auditList"):
+        assert window.findChild(object, name) is not None, f"missing {name}"
+
+    facade.setActiveNav("memory")
+    memory_list = window.findChild(object, "memoryList")
+    assert memory_list is not None
+    assert memory_list.property("count") == 0
+    assert facade.property("memoryViews").rowCount() == 0

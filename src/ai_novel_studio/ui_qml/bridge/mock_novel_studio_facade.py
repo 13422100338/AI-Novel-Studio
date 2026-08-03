@@ -32,6 +32,11 @@ from ai_novel_studio.ui_qml.bridge.dtos import (
 )
 from ai_novel_studio.ui_qml.bridge.models.chapter_list_model import ChapterListModel
 from ai_novel_studio.ui_qml.bridge.models.draft_diff_model import DraftDiffModel
+from ai_novel_studio.ui_qml.bridge.models.readonly_list_models import (
+    AuditListModel,
+    CharacterListModel,
+    MemoryListModel,
+)
 from ai_novel_studio.ui_qml.bridge.models.suggestion_list_model import SuggestionListModel
 from ai_novel_studio.ui_qml.bridge.overview_counts import (
     OverviewCounts,
@@ -41,6 +46,10 @@ from ai_novel_studio.ui_qml.bridge.paragraph_diff import (
     ParagraphDiffBlock,
     apply_diff_blocks,
     diff_paragraphs,
+)
+from ai_novel_studio.ui_qml.bridge.readonly_views import (
+    ReadonlyViews,
+    readonly_views,
 )
 from ai_novel_studio.ui_qml.bridge.text_utils import count_words, format_word_count
 
@@ -134,6 +143,7 @@ class MockNovelStudioFacade(QObject):
     draft_view_changed = Signal()
     usage_changed = Signal()
     overview_changed = Signal()
+    readonly_views_changed = Signal()
 
     def __init__(
         self,
@@ -147,6 +157,10 @@ class MockNovelStudioFacade(QObject):
         self._generation_config = GenerationConfig()
         self._usage = UsageDto()
         self._overview = OverviewCounts()
+        self._readonly_views = ReadonlyViews()
+        self._characters_model = CharacterListModel(self)
+        self._memories_model = MemoryListModel(self)
+        self._audits_model = AuditListModel(self)
         self._draft_diff_model = DraftDiffModel(self)
         self._draft_view = "draft"
         self._draft_base_body = ""
@@ -287,6 +301,18 @@ class MockNovelStudioFacade(QObject):
     @Property(QObject, constant=True)
     def draftDiff(self) -> DraftDiffModel:
         return self._draft_diff_model
+
+    @Property(QObject, constant=True)
+    def characterViews(self) -> CharacterListModel:
+        return self._characters_model
+
+    @Property(QObject, constant=True)
+    def memoryViews(self) -> MemoryListModel:
+        return self._memories_model
+
+    @Property(QObject, constant=True)
+    def auditViews(self) -> AuditListModel:
+        return self._audits_model
 
     @Property(int, notify=generation_config_changed)
     def generationTargetWords(self) -> int:
@@ -691,13 +717,26 @@ class MockNovelStudioFacade(QObject):
     def _refresh_overview(self) -> None:
         if self._workspace is None or self._workspace.project is None:
             self._overview = OverviewCounts()
+            self._readonly_views = ReadonlyViews()
+            self._characters_model.set_items(())
+            self._memories_model.set_items(())
+            self._audits_model.set_items(())
             self.overview_changed.emit()
+            self.readonly_views_changed.emit()
             return
         self._overview = readonly_overview_counts(
             self._workspace.project,
             self._chapters[self._current_index].id,
         )
+        self._readonly_views = readonly_views(
+            self._workspace.project,
+            self._chapters[self._current_index].id,
+        )
+        self._characters_model.set_items(self._readonly_views.characters)
+        self._memories_model.set_items(self._readonly_views.memories)
+        self._audits_model.set_items(self._readonly_views.audits)
         self.overview_changed.emit()
+        self.readonly_views_changed.emit()
 
     @staticmethod
     def _count_text(value: int | None, unit: str) -> str:
