@@ -47,12 +47,24 @@ Item {
                 value: String(Facade.currentRevision)
             }
             AppButton {
+                objectName: "webSaveButton"
+                text: "保存"
+                primary: true
+                visible: root.useWebEngine
+                onClicked: {
+                    if (webEditorLoader.item !== null) {
+                        webEditorLoader.item.requestSave()
+                    }
+                }
+            }
+            AppButton {
                 text: "章节信息"
                 onClicked: infoText.text = "章节信息面板将在后续 Wave 接线。"
             }
             AppButton {
                 text: "AI 参考"
                 primary: true
+                visible: !root.useWebEngine
                 onClicked: Facade.toggleAiDrawer(true)
             }
             AppButton {
@@ -74,7 +86,7 @@ Item {
             id: infoText
             Layout.fillWidth: true
             text: root.useWebEngine
-                ? "WebEngine 编辑器：编辑正文并保存；草稿生成在 TextArea 模式可用。"
+                ? "WebEngine 编辑器：编辑正文并保存；AI 草稿生成与 AI 参考将在候选层回流接线后恢复。"
                 : "F1 Mock 工作区：编辑正文并保存；「生成草稿」会创建一条 AI 建议（候选层，不直接改正文）。"
             font.pixelSize: 11
             wrapMode: Text.WordWrap
@@ -168,7 +180,15 @@ Item {
                 objectName: "saveButton"
                 text: "保存"
                 primary: true
-                onClicked: root.useWebEngine ? webEditor.requestSave() : Facade.requestSave()
+                onClicked: {
+                    if (root.useWebEngine) {
+                        if (webEditorLoader.item !== null) {
+                            webEditorLoader.item.requestSave()
+                        }
+                    } else {
+                        Facade.requestSave()
+                    }
+                }
             }
             AppButton {
                 objectName: "reloadButton"
