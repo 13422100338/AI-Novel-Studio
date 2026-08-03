@@ -131,6 +131,23 @@ ApplicationWindow {
                 }
             }
 
+            SlidingDrawer {
+                id: dockedDrawer
+                dock: true
+                webEngineMode: true
+                visible: window.useWebEngine
+                open: Facade.aiDrawerOpen
+                Layout.preferredWidth: Facade.aiDrawerOpen ? 340 : 0
+                Layout.fillHeight: true
+                onClosed: Facade.toggleAiDrawer(false)
+
+                Behavior on Layout.preferredWidth {
+                    NumberAnimation {
+                        duration: Facade.reduceMotion ? 0 : Theme.tokens.duration.panel
+                    }
+                }
+            }
+
         }
 
         Rectangle {
@@ -218,6 +235,7 @@ ApplicationWindow {
 
     SlidingDrawer {
         anchors.fill: parent
+        visible: !window.useWebEngine
         open: Facade.aiDrawerOpen
         webEngineMode: window.useWebEngine
         onClosed: Facade.toggleAiDrawer(false)

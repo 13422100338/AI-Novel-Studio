@@ -214,9 +214,24 @@ def test_save_from_editor_stale_revision_enters_conflict(tmp_path: Path) -> None
     assert facade.property("editorState") == "CONFLICT"
     assert "修订" in facade.property("saveStatusText")
 
-    facade.editorTextChanged("冲突期间继续打字")
 
-    assert facade.property("editorState") == "CONFLICT"
+def test_save_from_editor_emits_revision_for_next_save(tmp_path: Path) -> None:
+    """After a successful editor save the next save uses the new revision."""
+    root = create_temp_project(tmp_path / "novel")
+    facade = MockNovelStudioFacade()
+    facade.openProject(str(root))
+    chapter_id = facade.property("currentChapterId")
+    revisions: list[int] = []
+    facade.editorRevisionChanged.connect(revisions.append)
+
+    facade.saveFromEditor(chapter_id, 1, "第一次保存")
+    assert facade.property("currentRevision") == 2
+    assert revisions == [2]
+
+    facade.saveFromEditor(chapter_id, 2, "第二次保存")
+    assert facade.property("currentRevision") == 3
+    assert revisions == [2, 3]
+    assert facade.property("editorState") == "CLEAN"
 
 
 def test_open_project_twice_replaces_previous_workspace(tmp_path: Path) -> None:

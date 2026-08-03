@@ -71,6 +71,7 @@ export interface NovelEditorBridge {
   clearDecorations(): void;
   setReadOnly(reason: string): void;
   revealRange(from: number, to: number): void;
+  setBaseRevision(revision: number): void;
 }
 
 const decorationsKey = new PluginKey<DecorationSet>("auditDecorations");
@@ -249,6 +250,10 @@ export class NovelEditor {
     this.view.dom.scrollIntoView({ block: "center" });
   }
 
+  setBaseRevision(revision: number): void {
+    this.baseRevision = revision;
+  }
+
   getMarkdown(): string {
     return stateToMarkdown(this.view.state);
   }
@@ -309,6 +314,7 @@ export function boot(
     clearDecorations: () => editor.clearDecorations(),
     setReadOnly: (reason) => editor.setReadOnly(reason),
     revealRange: (from, to) => editor.revealRange(from, to),
+    setBaseRevision: (revision) => editor.setBaseRevision(revision),
   };
   window.__novelEditor = bridge;
   if (window.qt && window.qt.webChannelTransport) {

@@ -180,6 +180,11 @@ Item {
                                 )
                             }
                         }
+                        function onEditorRevisionChanged(revision) {
+                            if (webEditorLoader.item !== null) {
+                                webEditorLoader.item.setBaseRevision(revision)
+                            }
+                        }
                     }
                 }
             }

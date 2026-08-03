@@ -156,6 +156,7 @@ class MockNovelStudioFacade(QObject):
     evidenceRevealRequested = Signal(str, int, int)
     web_word_count_changed = Signal()
     draftAcceptedToEditor = Signal(str)
+    editorRevisionChanged = Signal(int)
 
     def __init__(
         self,
@@ -624,6 +625,7 @@ class MockNovelStudioFacade(QObject):
         self._revision = result.revision
         self._editor_state = "CLEAN"
         self._save_status = f"已保存 · 修订 {result.revision}"
+        self.editorRevisionChanged.emit(result.revision)
         self.editor_state_changed.emit()
         self.chapter_changed.emit()
 
@@ -1141,6 +1143,7 @@ class MockNovelStudioFacade(QObject):
         self._suggestions_model.remove_item(row)
         self._clear_draft_review_state()
         self.draftAcceptedToEditor.emit(accepted.text)
+        self.editorRevisionChanged.emit(self._revision)
         self.editor_state_changed.emit()
         self.chapter_changed.emit()
         self.chapterChanged.emit()

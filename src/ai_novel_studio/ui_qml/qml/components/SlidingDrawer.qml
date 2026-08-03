@@ -9,6 +9,7 @@ Item {
     property bool open: false
     property int drawerWidth: 340
     property bool webEngineMode: false
+    property bool dock: false
     signal closed()
 
     anchors.fill: parent
@@ -17,8 +18,8 @@ Item {
         id: dim
         anchors.fill: parent
         color: "#80000000"
-        opacity: root.open ? 1 : 0
-        visible: root.open
+        opacity: root.dock || !root.open ? 0 : 1
+        visible: !root.dock && root.open
 
         Behavior on opacity {
             NumberAnimation { duration: Facade.reduceMotion ? 0 : Theme.tokens.duration.fast }
@@ -33,11 +34,11 @@ Item {
     Rectangle {
         id: panel
         objectName: "aiDrawer"
-        width: root.drawerWidth
+        width: root.dock ? parent.width : root.drawerWidth
         anchors.top: parent.top
         anchors.bottom: parent.bottom
         anchors.right: parent.right
-        x: root.open ? 0 : root.drawerWidth
+        x: root.dock ? 0 : (root.open ? 0 : root.drawerWidth)
         color: Theme.tokens.color.bgSurface
         border.color: Theme.tokens.color.border
         border.width: 1

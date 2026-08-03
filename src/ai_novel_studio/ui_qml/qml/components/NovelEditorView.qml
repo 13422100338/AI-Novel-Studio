@@ -54,4 +54,11 @@ WebEngineView {
             "window.__novelEditor.revealRange(" + from + ", " + to + ")"
         )
     }
+
+    function setBaseRevision(revision) {
+        runJavaScript(
+            "window.__novelEditor && " +
+            "window.__novelEditor.setBaseRevision(" + revision + ")"
+        )
+    }
 }
