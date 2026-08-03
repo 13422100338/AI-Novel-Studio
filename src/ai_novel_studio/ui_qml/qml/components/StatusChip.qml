@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls
 import QtQuick.Layouts
 
 Rectangle {
@@ -7,6 +8,7 @@ Rectangle {
     property string label: ""
     property string value: ""
     property string tone: "neutral"
+    property string tooltipText: ""
     property color toneColor: root.tone === "success" ? Theme.tokens.color.success
                               : root.tone === "warning" ? Theme.tokens.color.warning
                               : root.tone === "danger" ? Theme.tokens.color.danger
@@ -19,6 +21,16 @@ Rectangle {
     color: Theme.tokens.color.bgSurface
     border.color: Theme.tokens.color.border
     border.width: 1
+
+    ToolTip.visible: hoverArea.containsMouse && root.tooltipText !== ""
+    ToolTip.text: root.tooltipText
+    ToolTip.delay: 300
+
+    MouseArea {
+        id: hoverArea
+        anchors.fill: parent
+        hoverEnabled: true
+    }
 
     RowLayout {
         id: content
@@ -46,4 +58,3 @@ Rectangle {
         }
     }
 }
-

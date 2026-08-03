@@ -174,6 +174,7 @@ ApplicationWindow {
                     objectName: "usageTokensChip"
                     label: "Token"
                     value: Facade.usageInputOutputText
+                    tooltipText: "输入 / 输出 · " + Facade.usageCallsText
                 }
                 StatusChip {
                     objectName: "usageCostChip"
