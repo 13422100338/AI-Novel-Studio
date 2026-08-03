@@ -246,6 +246,19 @@ Item {
                                     color: Theme.tokens.color.textPrimary
                                     wrapMode: Text.WordWrap
                                 }
+                                TextArea {
+                                    id: editArea
+                                    objectName: "diffEditArea"
+                                    Layout.fillWidth: true
+                                    visible: kind === "replaced" || kind === "inserted"
+                                    text: draftText
+                                    placeholderText: "编辑后采用"
+                                    wrapMode: TextEdit.Wrap
+                                    color: Theme.tokens.color.textPrimary
+                                    placeholderTextColor: Theme.tokens.color.textSecondary
+                                    background: null
+                                    implicitHeight: 56
+                                }
                                 RowLayout {
                                     Layout.fillWidth: true
                                     spacing: 6
@@ -256,13 +269,21 @@ Item {
                                     AppButton {
                                         objectName: "rejectDiffButton"
                                         text: "忽略此段"
+                                        visible: kind !== "unchanged"
                                         onClicked: Facade.rejectDiffBlock(blockId)
                                     }
                                     AppButton {
                                         objectName: "acceptDiffButton"
                                         text: "采用此段"
                                         primary: true
+                                        visible: kind !== "unchanged"
                                         onClicked: Facade.acceptDiffBlock(blockId)
+                                    }
+                                    AppButton {
+                                        objectName: "editAcceptDiffButton"
+                                        text: "编辑后采用"
+                                        visible: kind === "replaced" || kind === "inserted"
+                                        onClicked: Facade.editAndAcceptDiffBlock(blockId, editArea.text)
                                     }
                                 }
                             }

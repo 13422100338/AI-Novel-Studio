@@ -494,6 +494,58 @@ def test_accept_all_diff_blocks_produces_draft_text(qtbot, tmp_path) -> None:
     assert facade.property("editorState") == "DIRTY"
 
 
+def test_edit_and_accept_diff_block_applies_edited_text(qtbot, tmp_path) -> None:
+    root = create_temp_project(tmp_path / "novel")
+    port = FakeDraftPort(
+        draft_text="这是测试正文。\n\nAI 重写的第二段。",
+    )
+    facade = MockNovelStudioFacade(draft_port=port)
+    facade.openProject(str(root))
+    _generate_draft(qtbot, facade)
+    diff_model = facade.property("draftDiff")
+    replaced = next(
+        row
+        for row in range(diff_model.rowCount())
+        if diff_model.data(diff_model.index(row), ROLE_KIND) == "replaced"
+    )
+    block_id = diff_model.data(diff_model.index(replaced), ROLE_BLOCK_ID)
+    before_count = diff_model.rowCount()
+
+    facade.editAndAcceptDiffBlock(block_id, "自定义的第二段。")
+
+    body = facade.property("currentChapterBody")
+    assert "自定义的第二段" in body
+    assert "AI 重写的第二段" not in body
+    assert "\n\n第二段。" not in body
+    assert facade.property("editorState") == "DIRTY"
+    assert "已采用编辑后的段落" in facade.property("saveStatusText")
+    assert diff_model.rowCount() == before_count - 1
+
+
+def test_edit_and_accept_empty_text_is_rejected(qtbot, tmp_path) -> None:
+    root = create_temp_project(tmp_path / "novel")
+    port = FakeDraftPort(
+        draft_text="这是测试正文。\n\nAI 重写的第二段。",
+    )
+    facade = MockNovelStudioFacade(draft_port=port)
+    facade.openProject(str(root))
+    body_before = facade.property("currentChapterBody")
+    _generate_draft(qtbot, facade)
+    diff_model = facade.property("draftDiff")
+    replaced = next(
+        row
+        for row in range(diff_model.rowCount())
+        if diff_model.data(diff_model.index(row), ROLE_KIND) == "replaced"
+    )
+    block_id = diff_model.data(diff_model.index(replaced), ROLE_BLOCK_ID)
+
+    facade.editAndAcceptDiffBlock(block_id, "   ")
+
+    assert facade.property("currentChapterBody") == body_before
+    assert "不能为空" in facade.property("saveStatusText")
+    assert diff_model.rowCount() > 0
+
+
 def test_accept_full_draft_clears_diff_state(qtbot, tmp_path) -> None:
     root = create_temp_project(tmp_path / "novel")
     port = FakeDraftPort(draft_text="AI 生成的草稿正文。")

@@ -234,6 +234,11 @@ pyproject.toml                  （仅新增 ai-novel-studio-qml gui-script 入�
 > （见 `2026-08-03-frontend-wave-f17-audit-actions.md`）；草稿「编辑后接受」
 > 仍未接线。
 
+> F18 进展（2026-08-03）：草稿三视图「编辑后接受」完成——差异卡片可编辑草稿文本
+> 后采用，按钮仅对有效块显示（见
+> `2026-08-03-frontend-wave-f18-edit-then-accept.md`）。F13–F18 连续六个小票全部
+> 完成；剩余建议项：审校「接受建议」修复、打包冒烟。
+
 ## 9. 结论
 
 当前前端最大的架构债务是 `MainWindow` 组合根与 demo 数据直灌面板；现有 `ui/qt` 适配模式和测试合同是可靠资产。F1 以纯新增方式建立 QML 壳、Design Tokens、Mock Facade 与写作垂直切片，不改旧 UI、不改后端，为 F2 起的渐进接线保留一条可验证的迁移通道。

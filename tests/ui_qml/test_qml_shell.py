@@ -47,6 +47,17 @@ def _find_quick_item(root: QQuickItem, name: str) -> QQuickItem | None:
     return None
 
 
+def _find_visible_quick_item(root: QQuickItem, name: str) -> QQuickItem | None:
+    """Find the first visible QML item with the given objectName."""
+    if root.objectName() == name and root.property("visible") is True:
+        return root
+    for child in root.childItems():
+        found = _find_visible_quick_item(child, name)
+        if found is not None:
+            return found
+    return None
+
+
 def _load_engine(
     qtbot: QtBot,
     facade: MockNovelStudioFacade | None = None,
@@ -582,3 +593,40 @@ def test_audit_ignore_button_updates_finding_status(
         timeout=5000,
     )
     assert "已更新" in facade.property("saveStatusText")
+
+
+def test_edit_and_accept_diff_button_updates_editor(
+    qtbot: QtBot, tmp_path: Path
+) -> None:
+    root = _create_temp_project(tmp_path / "novel")
+    port = FakeDraftPort(draft_text="这是测试正文。\n\nAI 重写的第二段。")
+    facade = MockNovelStudioFacade(draft_port=port)
+    facade.openProject(str(root))
+    engine, facade, _ = _load_engine(qtbot, facade)
+    window = engine.rootObjects()[0]
+    editor = window.findChild(object, "manuscriptEditor")
+    facade.requestDraft()
+    qtbot.waitUntil(
+        lambda: facade.property("suggestions").rowCount() == 1,
+        timeout=5000,
+    )
+    facade.setDraftView("diff")
+    qtbot.waitUntil(
+        lambda: _find_visible_quick_item(window.contentItem(), "editAcceptDiffButton")
+        is not None,
+        timeout=5000,
+    )
+    edit_area = _find_visible_quick_item(window.contentItem(), "diffEditArea")
+    assert edit_area is not None
+    edit_area.setProperty("text", "自定义的第二段。")
+
+    edit_button = _find_visible_quick_item(
+        window.contentItem(), "editAcceptDiffButton"
+    )
+    QMetaObject.invokeMethod(edit_button, "clicked")
+
+    qtbot.waitUntil(
+        lambda: "自定义的第二段" in editor.property("text"),
+        timeout=5000,
+    )
+    assert facade.property("editorState") == "DIRTY"

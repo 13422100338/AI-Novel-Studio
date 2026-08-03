@@ -11,6 +11,7 @@ modes (see docs/frontend audit, section 8).
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import replace
 from pathlib import Path
 from uuid import uuid4
 
@@ -751,6 +752,41 @@ class MockNovelStudioFacade(QObject):
         self._save_status = "已忽略该段修改"
         self._rebuild_draft_diff()
         self.editor_state_changed.emit()
+        self.draft_view_changed.emit()
+
+    @Slot(int, str)
+    def editAndAcceptDiffBlock(self, block_id: int, edited_text: str) -> None:
+        """Accept a diff block using a user-edited replacement text."""
+        if self._workspace is None or not self._draft_text:
+            return
+        block = next(
+            (item for item in self._diff_blocks if item.block_id == block_id),
+            None,
+        )
+        if block is None or block_id in self._diff_accepted or block.kind == "unchanged":
+            return
+        normalized = edited_text.strip()
+        if not normalized:
+            self._save_status = "编辑后的文本不能为空"
+            self.editor_state_changed.emit()
+            return
+        edited_block = replace(block, draft_text=normalized)
+        self._diff_blocks = tuple(
+            edited_block if item.block_id == block_id else item
+            for item in self._diff_blocks
+        )
+        self._diff_accepted.add(block_id)
+        self._diff_ignored.add(block_id)
+        self._body_text = apply_diff_blocks(
+            self._draft_base_body,
+            self._diff_blocks,
+            self._diff_accepted,
+        )
+        self._editor_state = "DIRTY"
+        self._save_status = "已采用编辑后的段落 · 待保存"
+        self._rebuild_draft_diff()
+        self.editor_state_changed.emit()
+        self.chapter_changed.emit()
         self.draft_view_changed.emit()
 
     @Slot(int)
