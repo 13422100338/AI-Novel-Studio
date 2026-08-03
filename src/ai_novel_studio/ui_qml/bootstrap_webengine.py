@@ -13,7 +13,6 @@ from pathlib import Path
 from PySide6.QtCore import Property, QObject, QUrl
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtQml import QQmlApplicationEngine
-from PySide6.QtWebChannel import QWebChannel
 from PySide6.QtWebEngineQuick import QtWebEngineQuick
 
 from ai_novel_studio.ui_qml.bridge.editor_bridge import EditorBridge
@@ -53,11 +52,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             chapter_id, revision, markdown
         )
     )
-    channel = QWebChannel(engine)
-    channel.registerObject("pythonBridge", editor_bridge)
     engine.rootContext().setContextProperty("Facade", facade)
     engine.rootContext().setContextProperty("Theme", theme)
-    engine.rootContext().setContextProperty("EditorChannel", channel)
+    # The QML side creates its own WebChannel (QQmlWebChannel) and registers
+    # this Python QObject into it; QML WebEngineView only accepts QQmlWebChannel.
+    engine.rootContext().setContextProperty("pythonBridge", editor_bridge)
     engine.rootContext().setContextProperty(
         "EditorAssets",
         EditorAssets((dist / "index.html").as_uri(), engine),

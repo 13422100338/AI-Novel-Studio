@@ -1,4 +1,5 @@
 import QtQuick
+import QtWebChannel
 import QtWebEngine
 
 WebEngineView {
@@ -8,15 +9,22 @@ WebEngineView {
     property url editorUrl: ""
     signal editorLoaded()
 
+    WebChannel {
+        id: editorChannel
+        Component.onCompleted: {
+            registerObject("pythonBridge", pythonBridge)
+        }
+    }
+
     profile: WebEngineProfile {
         id: editorProfile
         offTheRecord: true
     }
 
-    webChannel: EditorChannel
+    webChannel: editorChannel
     url: webView.editorUrl
 
-    onLoadingChanged: {
+    onLoadingChanged: function(loadRequest) {
         if (loadRequest.status === WebEngineView.LoadSucceededStatus) {
             webView.editorLoaded()
         }
