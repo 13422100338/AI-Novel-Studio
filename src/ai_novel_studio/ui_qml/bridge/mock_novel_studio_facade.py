@@ -1,4 +1,4 @@
-"""QML facade for the new frontend.
+﻿"""QML facade for the new frontend.
 
 The facade is the only object QML talks to. By default it serves deterministic
 mock data; since Frontend Wave F2 it can also open a real project through the
@@ -140,6 +140,7 @@ class MockNovelStudioFacade(QObject):
 
     project_changed = Signal()
     chapter_changed = Signal()
+    chapterChanged = Signal()
     editor_state_changed = Signal()
     ai_drawer_changed = Signal()
     active_nav_changed = Signal()
@@ -475,6 +476,7 @@ class MockNovelStudioFacade(QObject):
         )
         self._load_current_chapter_document()
         self.chapter_changed.emit()
+        self.chapterChanged.emit()
         self.editor_state_changed.emit()
 
     @Slot(str)
@@ -482,6 +484,7 @@ class MockNovelStudioFacade(QObject):
         if self._editor_state == "CONFLICT":
             self._body_text = text
             self.chapter_changed.emit()
+            self.chapterChanged.emit()
             return
         if text == self._body_text:
             if self._editor_state == "CLEAN":
@@ -497,6 +500,7 @@ class MockNovelStudioFacade(QObject):
         self._save_status = "有未保存更改"
         self.editor_state_changed.emit()
         self.chapter_changed.emit()
+        self.chapterChanged.emit()
 
     @Slot()
     def requestSave(self) -> None:
@@ -532,6 +536,7 @@ class MockNovelStudioFacade(QObject):
             self._save_status = f"已保存 · 修订 {self._revision}"
             self.editor_state_changed.emit()
             self.chapter_changed.emit()
+            self.chapterChanged.emit()
             return
         if self._editor_state == "CLEAN":
             self._save_status = f"已保存 · 修订 {self._revision}"
@@ -557,6 +562,7 @@ class MockNovelStudioFacade(QObject):
         self._load_current_chapter_document()
         self._save_status = "已重新载入 · 放弃了冲突前的本地未保存修改"
         self.chapter_changed.emit()
+        self.chapterChanged.emit()
         self.editor_state_changed.emit()
 
     @Slot(str, int, str)
@@ -611,6 +617,7 @@ class MockNovelStudioFacade(QObject):
         self._save_status = f"已保存 · 修订 {result.revision}"
         self.editor_state_changed.emit()
         self.chapter_changed.emit()
+        self.chapterChanged.emit()
 
     @Slot()
     def requestDraft(self) -> None:
@@ -647,6 +654,7 @@ class MockNovelStudioFacade(QObject):
         self._save_status = "有未保存更改（已采用建议）"
         self.editor_state_changed.emit()
         self.chapter_changed.emit()
+        self.chapterChanged.emit()
 
     @Slot(int)
     def discardSuggestion(self, row: int) -> None:
@@ -789,6 +797,7 @@ class MockNovelStudioFacade(QObject):
         self._rebuild_draft_diff()
         self.editor_state_changed.emit()
         self.chapter_changed.emit()
+        self.chapterChanged.emit()
         self.draft_view_changed.emit()
 
     @Slot(int)
@@ -840,6 +849,7 @@ class MockNovelStudioFacade(QObject):
         self._rebuild_draft_diff()
         self.editor_state_changed.emit()
         self.chapter_changed.emit()
+        self.chapterChanged.emit()
         self.draft_view_changed.emit()
 
     @Slot(int)
@@ -925,6 +935,7 @@ class MockNovelStudioFacade(QObject):
             self._load_current_chapter_document()
         self.project_changed.emit()
         self.chapter_changed.emit()
+        self.chapterChanged.emit()
         self.editor_state_changed.emit()
         return ""
 
@@ -949,6 +960,7 @@ class MockNovelStudioFacade(QObject):
         self._refresh_overview()
         self.project_changed.emit()
         self.chapter_changed.emit()
+        self.chapterChanged.emit()
         self.editor_state_changed.emit()
 
     def _load_current_chapter_document(self) -> None:
@@ -1110,6 +1122,7 @@ class MockNovelStudioFacade(QObject):
         self._clear_draft_review_state()
         self.editor_state_changed.emit()
         self.chapter_changed.emit()
+        self.chapterChanged.emit()
 
     def _rebuild_draft_diff(self) -> None:
         visible = tuple(
