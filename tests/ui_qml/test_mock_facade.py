@@ -5,6 +5,10 @@ from PySide6.QtCore import QObject
 from ai_novel_studio.application.project_generation_session import AcceptedGeneration
 from ai_novel_studio.ui_qml.bridge.draft_port import GenerationConfig
 from ai_novel_studio.ui_qml.bridge.mock_novel_studio_facade import MockNovelStudioFacade
+from ai_novel_studio.ui_qml.bridge.models.draft_diff_model import (
+    ROLE_BLOCK_ID,
+    ROLE_KIND,
+)
 from ai_novel_studio.ui_qml.bridge.models.suggestion_list_model import ROLE_LABEL
 
 from .test_project_wiring import create_temp_project
@@ -365,3 +369,127 @@ def test_project_draft_forwards_generation_config(qtbot, tmp_path) -> None:
     assert config.mode.value == "STANDARD"
     assert config.audit_policy.value == "STANDARD"
     assert config.output_token_limit == 8192
+
+
+def _generate_draft(qtbot, facade) -> None:
+    facade.requestDraft()
+    qtbot.waitUntil(
+        lambda: facade.property("suggestions").rowCount() == 1,
+        timeout=5000,
+    )
+
+
+def test_draft_view_enabled_after_generation(qtbot, tmp_path) -> None:
+    root = create_temp_project(tmp_path / "novel")
+    port = FakeDraftPort(draft_text="这是测试正文。\n\nAI 新增的段落。")
+    facade = MockNovelStudioFacade(draft_port=port)
+    facade.openProject(str(root))
+
+    _generate_draft(qtbot, facade)
+
+    assert facade.property("draftViewEnabled") is True
+    assert facade.property("draftView") == "draft"
+    assert "这是测试正文" in facade.property("draftBaseText")
+    assert "AI 新增的段落" in facade.property("draftText")
+    diff_model = facade.property("draftDiff")
+    assert diff_model.rowCount() >= 2
+
+
+def test_draft_view_switch_and_validation(qtbot, tmp_path) -> None:
+    root = create_temp_project(tmp_path / "novel")
+    port = FakeDraftPort(draft_text="草稿正文")
+    facade = MockNovelStudioFacade(draft_port=port)
+    facade.openProject(str(root))
+    _generate_draft(qtbot, facade)
+
+    facade.setDraftView("current")
+    assert facade.property("draftView") == "current"
+    facade.setDraftView("diff")
+    assert facade.property("draftView") == "diff"
+    facade.setDraftView("invalid")
+    assert facade.property("draftView") == "diff"
+
+
+def test_accept_diff_block_applies_paragraph_and_marks_dirty(
+    qtbot, tmp_path
+) -> None:
+    root = create_temp_project(tmp_path / "novel")
+    port = FakeDraftPort(
+        draft_text="这是测试正文。\n\nAI 重写的第二段。",
+    )
+    facade = MockNovelStudioFacade(draft_port=port)
+    facade.openProject(str(root))
+    _generate_draft(qtbot, facade)
+    diff_model = facade.property("draftDiff")
+    replaced = next(
+        row
+        for row in range(diff_model.rowCount())
+        if diff_model.data(diff_model.index(row), ROLE_KIND) == "replaced"
+    )
+    block_id = diff_model.data(diff_model.index(replaced), ROLE_BLOCK_ID)
+    before_count = diff_model.rowCount()
+
+    facade.acceptDiffBlock(block_id)
+
+    body = facade.property("currentChapterBody")
+    assert "AI 重写的第二段" in body
+    assert "\n\n第二段。" not in body
+    assert facade.property("editorState") == "DIRTY"
+    assert "待保存" in facade.property("saveStatusText")
+    assert diff_model.rowCount() == before_count - 1
+
+
+def test_reject_diff_block_keeps_body(qtbot, tmp_path) -> None:
+    root = create_temp_project(tmp_path / "novel")
+    port = FakeDraftPort(draft_text="这是测试正文。\n\nAI 重写的第二段。")
+    facade = MockNovelStudioFacade(draft_port=port)
+    facade.openProject(str(root))
+    body_before = facade.property("currentChapterBody")
+    _generate_draft(qtbot, facade)
+    diff_model = facade.property("draftDiff")
+    replaced = next(
+        row
+        for row in range(diff_model.rowCount())
+        if diff_model.data(diff_model.index(row), ROLE_KIND) == "replaced"
+    )
+    block_id = diff_model.data(diff_model.index(replaced), ROLE_BLOCK_ID)
+    before_count = diff_model.rowCount()
+
+    facade.rejectDiffBlock(block_id)
+
+    assert facade.property("currentChapterBody") == body_before
+    assert facade.property("editorState") == "CLEAN"
+    assert "已忽略" in facade.property("saveStatusText")
+    assert diff_model.rowCount() == before_count - 1
+
+
+def test_accept_all_diff_blocks_produces_draft_text(qtbot, tmp_path) -> None:
+    root = create_temp_project(tmp_path / "novel")
+    port = FakeDraftPort(
+        draft_text="这是测试正文。\n\nAI 重写的第二段。\n\nAI 新增的第三段。",
+    )
+    facade = MockNovelStudioFacade(draft_port=port)
+    facade.openProject(str(root))
+    _generate_draft(qtbot, facade)
+    diff_model = facade.property("draftDiff")
+
+    while diff_model.rowCount() > 0:
+        block_id = diff_model.data(diff_model.index(0), ROLE_BLOCK_ID)
+        facade.acceptDiffBlock(block_id)
+
+    assert facade.property("currentChapterBody") == facade.property("draftText")
+    assert facade.property("editorState") == "DIRTY"
+
+
+def test_accept_full_draft_clears_diff_state(qtbot, tmp_path) -> None:
+    root = create_temp_project(tmp_path / "novel")
+    port = FakeDraftPort(draft_text="AI 生成的草稿正文。")
+    facade = MockNovelStudioFacade(draft_port=port)
+    facade.openProject(str(root))
+    _generate_draft(qtbot, facade)
+    assert facade.property("draftViewEnabled") is True
+
+    facade.acceptSuggestion(0)
+
+    assert facade.property("draftViewEnabled") is False
+    assert facade.property("draftDiff").rowCount() == 0

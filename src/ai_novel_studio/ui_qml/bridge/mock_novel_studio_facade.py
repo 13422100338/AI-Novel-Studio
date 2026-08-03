@@ -26,7 +26,13 @@ from ai_novel_studio.ui_qml.bridge.draft_coordinator import (
 from ai_novel_studio.ui_qml.bridge.draft_port import DraftPort, GenerationConfig
 from ai_novel_studio.ui_qml.bridge.dtos import ChapterDto, SuggestionDto, VolumeDto
 from ai_novel_studio.ui_qml.bridge.models.chapter_list_model import ChapterListModel
+from ai_novel_studio.ui_qml.bridge.models.draft_diff_model import DraftDiffModel
 from ai_novel_studio.ui_qml.bridge.models.suggestion_list_model import SuggestionListModel
+from ai_novel_studio.ui_qml.bridge.paragraph_diff import (
+    ParagraphDiffBlock,
+    apply_diff_blocks,
+    diff_paragraphs,
+)
 from ai_novel_studio.ui_qml.bridge.text_utils import count_words, format_word_count
 
 _NAV_IDS = ("writing", "characters", "memory", "clues", "audit", "settings")
@@ -116,6 +122,7 @@ class MockNovelStudioFacade(QObject):
     reduce_motion_changed = Signal()
     draft_status_changed = Signal()
     generation_config_changed = Signal()
+    draft_view_changed = Signal()
 
     def __init__(
         self,
@@ -127,6 +134,13 @@ class MockNovelStudioFacade(QObject):
         super().__init__(parent)
         self._draft_port = draft_port
         self._generation_config = GenerationConfig()
+        self._draft_diff_model = DraftDiffModel(self)
+        self._draft_view = "draft"
+        self._draft_base_body = ""
+        self._draft_text = ""
+        self._diff_blocks: tuple[ParagraphDiffBlock, ...] = ()
+        self._diff_accepted: set[int] = set()
+        self._diff_ignored: set[int] = set()
         self._active_run_id: str | None = None
         self._draft_status = DRAFT_IDLE
         self._draft_coordinator = draft_coordinator
@@ -240,6 +254,26 @@ class MockNovelStudioFacade(QObject):
     @Property(str, notify=draft_status_changed)
     def draftStatus(self) -> str:
         return self._draft_status
+
+    @Property(bool, notify=draft_view_changed)
+    def draftViewEnabled(self) -> bool:
+        return bool(self._draft_text) and self._workspace is not None
+
+    @Property(str, notify=draft_view_changed)
+    def draftView(self) -> str:
+        return self._draft_view
+
+    @Property(str, notify=draft_view_changed)
+    def draftBaseText(self) -> str:
+        return self._draft_base_body
+
+    @Property(str, notify=draft_view_changed)
+    def draftText(self) -> str:
+        return self._draft_text
+
+    @Property(QObject, constant=True)
+    def draftDiff(self) -> DraftDiffModel:
+        return self._draft_diff_model
 
     @Property(int, notify=generation_config_changed)
     def generationTargetWords(self) -> int:
@@ -405,6 +439,7 @@ class MockNovelStudioFacade(QObject):
             self._active_run_id = None
             self._suggestions_model.remove_item(row)
             self._save_status = "AI 草稿已放弃"
+            self._clear_draft_review_state()
             self.editor_state_changed.emit()
             return
         self._suggestions_model.remove_item(row)
@@ -429,6 +464,53 @@ class MockNovelStudioFacade(QObject):
             return
         self._reduce_motion = enabled
         self.reduce_motion_changed.emit()
+
+    @Slot(str)
+    def setDraftView(self, value: str) -> None:
+        if value not in {"current", "draft", "diff"} or value == self._draft_view:
+            return
+        self._draft_view = value
+        self.draft_view_changed.emit()
+
+    @Slot(int)
+    def acceptDiffBlock(self, block_id: int) -> None:
+        if self._workspace is None or not self._draft_text:
+            return
+        block = next(
+            (item for item in self._diff_blocks if item.block_id == block_id),
+            None,
+        )
+        if block is None or block_id in self._diff_accepted:
+            return
+        self._diff_accepted.add(block_id)
+        self._diff_ignored.add(block_id)
+        self._body_text = apply_diff_blocks(
+            self._draft_base_body,
+            self._diff_blocks,
+            self._diff_accepted,
+        )
+        self._editor_state = "DIRTY"
+        self._save_status = "已采用段落修改 · 待保存"
+        self._rebuild_draft_diff()
+        self.editor_state_changed.emit()
+        self.chapter_changed.emit()
+        self.draft_view_changed.emit()
+
+    @Slot(int)
+    def rejectDiffBlock(self, block_id: int) -> None:
+        if self._workspace is None or not self._draft_text:
+            return
+        block = next(
+            (item for item in self._diff_blocks if item.block_id == block_id),
+            None,
+        )
+        if block is None or block_id in self._diff_ignored:
+            return
+        self._diff_ignored.add(block_id)
+        self._save_status = "已忽略该段修改"
+        self._rebuild_draft_diff()
+        self.editor_state_changed.emit()
+        self.draft_view_changed.emit()
 
     @Slot(int)
     def setGenerationTargetWords(self, value: int) -> None:
@@ -539,6 +621,7 @@ class MockNovelStudioFacade(QObject):
         self.editor_state_changed.emit()
 
     def _load_current_chapter_document(self) -> None:
+        self._clear_draft_review_state()
         chapter = self._chapters[self._current_index]
         if self._workspace is not None:
             workspace = self._workspace.load_chapter(chapter.id)
@@ -589,6 +672,13 @@ class MockNovelStudioFacade(QObject):
             self.editor_state_changed.emit()
             return
         self._active_run_id = self._draft_coordinator.run_id if self._draft_coordinator else None
+        self._draft_base_body = self._body_text
+        self._draft_text = draft_text
+        self._diff_blocks = diff_paragraphs(self._draft_base_body, draft_text)
+        self._diff_accepted = set()
+        self._diff_ignored = set()
+        self._draft_view = "draft"
+        self._rebuild_draft_diff()
         self._suggestions_model.add_item(
             SuggestionDto(
                 id=str(uuid4()),
@@ -599,6 +689,7 @@ class MockNovelStudioFacade(QObject):
         )
         self._ai_drawer_open = True
         self.ai_drawer_changed.emit()
+        self.draft_view_changed.emit()
 
     def _on_draft_failed(self, message: str) -> None:
         self._save_status = f"生成草稿失败：{message}"
@@ -631,8 +722,27 @@ class MockNovelStudioFacade(QObject):
         self._save_status = f"已采用 AI 草稿 · 修订 {accepted.chapter_revision}"
         self._active_run_id = None
         self._suggestions_model.remove_item(row)
+        self._clear_draft_review_state()
         self.editor_state_changed.emit()
         self.chapter_changed.emit()
+
+    def _rebuild_draft_diff(self) -> None:
+        visible = tuple(
+            block
+            for block in self._diff_blocks
+            if block.block_id not in self._diff_ignored
+        )
+        self._draft_diff_model.set_blocks(visible)
+
+    def _clear_draft_review_state(self) -> None:
+        self._draft_base_body = ""
+        self._draft_text = ""
+        self._diff_blocks = ()
+        self._diff_accepted = set()
+        self._diff_ignored = set()
+        self._draft_diff_model.set_blocks(())
+        self._draft_view = "draft"
+        self.draft_view_changed.emit()
 
     def _volumes_from_workspace(self) -> tuple[VolumeDto, ...]:
         if self._workspace is None:

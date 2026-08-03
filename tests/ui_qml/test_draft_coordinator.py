@@ -67,6 +67,7 @@ def test_generate_failure_emits_error_and_failed_status(qtbot: QtBot) -> None:
         coordinator.start_generate("run-1")
 
     assert "模型超时" in blocker.args[0]
+    qtbot.waitUntil(lambda: coordinator.status == DRAFT_FAILED, timeout=5000)
     assert coordinator.status == DRAFT_FAILED
 
 

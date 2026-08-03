@@ -184,6 +184,11 @@ pyproject.toml                  （仅新增 ai-novel-studio-qml gui-script 入�
 > `2026-08-03-frontend-wave-f6-generation-config-dialog.md`）；Token/费用显示、
 > 草稿三视图仍未接线。
 
+> F7 进展（2026-08-03）：草稿三视图（当前正文 / AI 草稿 / 修改对比）与段落级
+> 采用已落地——段落 diff 为确定性纯函数，采用写入编辑器缓冲区后经 F3 保存落盘
+> （见 `2026-08-03-frontend-wave-f7-draft-three-views.md`）；Token/费用显示、
+> 人物/记忆/审校只读概览仍未接线。
+
 ## 9. 结论
 
 当前前端最大的架构债务是 `MainWindow` 组合根与 demo 数据直灌面板；现有 `ui/qt` 适配模式和测试合同是可靠资产。F1 以纯新增方式建立 QML 壳、Design Tokens、Mock Facade 与写作垂直切片，不改旧 UI、不改后端，为 F2 起的渐进接线保留一条可验证的迁移通道。
