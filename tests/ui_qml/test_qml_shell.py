@@ -9,6 +9,8 @@ from ai_novel_studio.ui_qml.bootstrap import app_qml_path, register_frontend_typ
 from ai_novel_studio.ui_qml.bridge.mock_novel_studio_facade import MockNovelStudioFacade
 from ai_novel_studio.ui_qml.bridge.theme_provider import ThemeProvider
 
+from .test_mock_facade import FakeDraftPort
+
 
 def _create_temp_project(root: Path) -> Path:
     """Minimal real-project fixture (mirrors test_project_wiring)."""
@@ -47,10 +49,11 @@ def _find_quick_item(root: QQuickItem, name: str) -> QQuickItem | None:
 
 def _load_engine(
     qtbot: QtBot,
+    facade: MockNovelStudioFacade | None = None,
 ) -> tuple[QQmlApplicationEngine, MockNovelStudioFacade, ThemeProvider]:
     engine = QQmlApplicationEngine()
     engine.addImportPath(str(Path(app_qml_path()).parent))
-    facade = MockNovelStudioFacade()
+    facade = facade or MockNovelStudioFacade()
     theme = ThemeProvider()
     register_frontend_types(engine, facade, theme)
     engine.load(QUrl.fromLocalFile(str(app_qml_path())))
@@ -261,3 +264,26 @@ def test_save_conflict_shows_reload_button_and_recovers(
     assert facade.property("editorState") == "CLEAN"
     assert "外部写入的正文" in editor.property("text")
     assert facade.property("currentRevision") == 2
+
+
+def test_project_draft_button_uses_injected_port(
+    qtbot: QtBot, tmp_path: Path
+) -> None:
+    root = _create_temp_project(tmp_path / "novel")
+    port = FakeDraftPort(draft_text="AI 生成的草稿正文。")
+    facade = MockNovelStudioFacade(draft_port=port)
+    facade.openProject(str(root))
+    engine, facade, _ = _load_engine(qtbot, facade)
+    window = engine.rootObjects()[0]
+    editor = window.findChild(object, "manuscriptEditor")
+    draft_button = window.findChild(object, "draftButton")
+
+    QMetaObject.invokeMethod(draft_button, "clicked")
+
+    assert facade.property("aiDrawerOpen") is True
+    assert facade.property("suggestions").rowCount() == 1
+
+    facade.acceptSuggestion(0)
+    assert "AI 生成的草稿正文" in editor.property("text")
+    assert facade.property("currentRevision") == 7
+    assert facade.property("editorState") == "CLEAN"

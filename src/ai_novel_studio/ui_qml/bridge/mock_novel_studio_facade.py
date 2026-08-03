@@ -17,6 +17,7 @@ from uuid import uuid4
 from PySide6.QtCore import Property, QObject, QUrl, Signal, Slot
 
 from ai_novel_studio.application.project_workspace_service import ProjectWorkspaceService
+from ai_novel_studio.ui_qml.bridge.draft_port import DraftPort
 from ai_novel_studio.ui_qml.bridge.dtos import ChapterDto, SuggestionDto, VolumeDto
 from ai_novel_studio.ui_qml.bridge.models.chapter_list_model import ChapterListModel
 from ai_novel_studio.ui_qml.bridge.models.suggestion_list_model import SuggestionListModel
@@ -108,8 +109,15 @@ class MockNovelStudioFacade(QObject):
     active_nav_changed = Signal()
     reduce_motion_changed = Signal()
 
-    def __init__(self, parent: QObject | None = None) -> None:
+    def __init__(
+        self,
+        parent: QObject | None = None,
+        *,
+        draft_port: DraftPort | None = None,
+    ) -> None:
         super().__init__(parent)
+        self._draft_port = draft_port
+        self._active_run_id: str | None = None
         self._volumes = _mock_volumes()
         self._chapters_model = ChapterListModel(self._volumes, self)
         self._suggestions_model = SuggestionListModel(self)
@@ -310,6 +318,9 @@ class MockNovelStudioFacade(QObject):
 
     @Slot()
     def requestDraft(self) -> None:
+        if self._workspace is not None:
+            self._request_project_draft()
+            return
         chapter_title = self._chapters[self._current_index].title
         suggestion = SuggestionDto(
             id=str(uuid4()),
@@ -330,6 +341,9 @@ class MockNovelStudioFacade(QObject):
         item = self._suggestions_model.item_at_row(row)
         if item is None:
             return
+        if self._workspace is not None and item.kind == "draft":
+            self._accept_project_draft(row)
+            return
         prefix = "" if not self._body_text.strip() else "\n\n"
         self._body_text = self._body_text + prefix + item.body
         self._suggestions_model.remove_item(row)
@@ -340,6 +354,20 @@ class MockNovelStudioFacade(QObject):
 
     @Slot(int)
     def discardSuggestion(self, row: int) -> None:
+        item = self._suggestions_model.item_at_row(row)
+        if self._workspace is not None and item is not None and item.kind == "draft":
+            if self._draft_port is not None:
+                try:
+                    self._draft_port.discard_current()
+                except (KeyError, RuntimeError, ValueError) as exc:
+                    self._save_status = f"放弃草稿失败：{exc}"
+                    self.editor_state_changed.emit()
+                    return
+            self._active_run_id = None
+            self._suggestions_model.remove_item(row)
+            self._save_status = "AI 草稿已放弃"
+            self.editor_state_changed.emit()
+            return
         self._suggestions_model.remove_item(row)
 
     @Slot(bool)
@@ -425,6 +453,64 @@ class MockNovelStudioFacade(QObject):
         self._saved_body = self._body_text
         self._editor_state = "CLEAN"
         self._save_status = "已载入 · 暂无未保存更改"
+
+    def _request_project_draft(self) -> None:
+        if self._draft_port is None:
+            self._save_status = "模型生成端口未配置，无法生成草稿（F4 接线点）"
+            self.editor_state_changed.emit()
+            return
+        chapter_id = self._chapters[self._current_index].id
+        try:
+            run_id = self._draft_port.prepare(
+                chapter_id,
+                self._revision,
+                max(500, count_words(self._body_text) * 2),
+            )
+            draft_text, error = self._draft_port.generate(run_id)
+        except (KeyError, RuntimeError, ValueError) as exc:
+            self._save_status = f"生成草稿失败：{exc}"
+            self.editor_state_changed.emit()
+            return
+        if error:
+            self._save_status = f"生成草稿未完成：{error}"
+            self.editor_state_changed.emit()
+            return
+        if not draft_text.strip():
+            self._save_status = "生成草稿为空，请重试"
+            self.editor_state_changed.emit()
+            return
+        self._active_run_id = run_id
+        self._suggestions_model.add_item(
+            SuggestionDto(
+                id=str(uuid4()),
+                label="AI 草稿",
+                kind="draft",
+                body=draft_text,
+            )
+        )
+        self._ai_drawer_open = True
+        self.ai_drawer_changed.emit()
+
+    def _accept_project_draft(self, row: int) -> None:
+        if self._draft_port is None or self._active_run_id is None:
+            self._save_status = "当前没有可采用的 AI 草稿"
+            self.editor_state_changed.emit()
+            return
+        try:
+            accepted = self._draft_port.accept_current()
+        except (KeyError, RuntimeError, ValueError) as exc:
+            self._save_status = f"采用草稿失败：{exc}"
+            self.editor_state_changed.emit()
+            return
+        self._body_text = accepted.text
+        self._saved_body = accepted.text
+        self._revision = accepted.chapter_revision
+        self._editor_state = "CLEAN"
+        self._save_status = f"已采用 AI 草稿 · 修订 {accepted.chapter_revision}"
+        self._active_run_id = None
+        self._suggestions_model.remove_item(row)
+        self.editor_state_changed.emit()
+        self.chapter_changed.emit()
 
     def _volumes_from_workspace(self) -> tuple[VolumeDto, ...]:
         if self._workspace is None:
