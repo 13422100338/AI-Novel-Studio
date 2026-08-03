@@ -64,20 +64,18 @@ Item {
             AppButton {
                 text: "AI 参考"
                 primary: true
-                visible: !root.useWebEngine
                 onClicked: Facade.toggleAiDrawer(true)
             }
             AppButton {
                 objectName: "draftButton"
                 text: "生成草稿"
-                visible: !root.useWebEngine
-                enabled: !root.useWebEngine && Facade.draftStatus !== "GENERATING" && Facade.draftStatus !== "QUEUED"
+                enabled: Facade.draftStatus !== "GENERATING" && Facade.draftStatus !== "QUEUED"
                 onClicked: generationDialog.openRequested = true
             }
             AppButton {
                 objectName: "cancelDraftButton"
                 text: "取消生成"
-                visible: !root.useWebEngine && (Facade.draftStatus === "GENERATING" || Facade.draftStatus === "QUEUED")
+                visible: Facade.draftStatus === "GENERATING" || Facade.draftStatus === "QUEUED"
                 onClicked: Facade.cancelDraft()
             }
         }
@@ -86,7 +84,7 @@ Item {
             id: infoText
             Layout.fillWidth: true
             text: root.useWebEngine
-                ? "WebEngine 编辑器：编辑正文并保存；AI 草稿生成与 AI 参考将在候选层回流接线后恢复。"
+                ? "WebEngine 编辑器：编辑正文并保存；「生成草稿」将草稿送入 AI 参考抽屉，整章采用后写回编辑器。"
                 : "F1 Mock 工作区：编辑正文并保存；「生成草稿」会创建一条 AI 建议（候选层，不直接改正文）。"
             font.pixelSize: 11
             wrapMode: Text.WordWrap
@@ -147,6 +145,21 @@ Item {
                     onEditorLoaded: {
                         root.lastEditorChapterId = Facade.currentChapterId
                         webEditor.loadCurrentChapter()
+                    }
+
+                    Connections {
+                        target: Facade
+                        function onDraftAcceptedToEditor(markdown) {
+                            if (webEditorLoader.item !== null) {
+                                webEditorLoader.item.loadChapter(
+                                    JSON.stringify({
+                                        chapterId: Facade.currentChapterId,
+                                        baseRevision: Facade.currentRevision,
+                                        markdown: markdown
+                                    })
+                                )
+                            }
+                        }
                     }
                 }
             }

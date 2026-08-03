@@ -219,6 +219,7 @@ ApplicationWindow {
     SlidingDrawer {
         anchors.fill: parent
         open: Facade.aiDrawerOpen
+        webEngineMode: window.useWebEngine
         onClosed: Facade.toggleAiDrawer(false)
     }
 

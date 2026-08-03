@@ -571,6 +571,45 @@ def test_memory_detail_panel_shows_after_selection(
     assert facade.property("memoryDetailVisible") is False
 
 
+def test_sliding_drawer_webengine_mode_hides_paragraph_actions(
+    qtbot: QtBot,
+) -> None:
+    from pathlib import Path
+
+    from PySide6.QtQml import QQmlApplicationEngine
+
+    from ai_novel_studio.ui_qml.bootstrap import app_qml_path, register_frontend_types
+    from ai_novel_studio.ui_qml.bridge.mock_novel_studio_facade import (
+        MockNovelStudioFacade,
+    )
+
+    engine = QQmlApplicationEngine()
+    engine.addImportPath(str(Path(app_qml_path()).parent))
+    facade = MockNovelStudioFacade()
+    facade, theme = register_frontend_types(engine, facade)
+    _ = theme  # keep the ThemeProvider alive for the engine lifetime
+    qml = """
+    import QtQuick
+    import "components"
+    Item {
+        objectName: "probe"
+        property bool modeOk: drawer.webEngineMode === true
+        property SlidingDrawer drawer: SlidingDrawer {
+            webEngineMode: true
+        }
+    }
+    """
+    from PySide6.QtCore import QUrl as Url
+
+    tmp = Path(app_qml_path()).parent / "_probe_drawer.qml"
+    tmp.write_text(qml, encoding="utf-8")
+    engine.load(Url.fromLocalFile(str(tmp)))
+    assert engine.rootObjects()
+    root = engine.rootObjects()[0]
+    assert root.property("modeOk") is True
+    tmp.unlink()
+
+
 def test_audit_ignore_button_updates_finding_status(
     qtbot: QtBot, tmp_path: Path
 ) -> None:

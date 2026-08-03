@@ -43,3 +43,9 @@ cd C:\Users\钟子诚\.codex\worktrees\c9a2\AI-Novel-Studio
 - 截图脚本 `capture_frontend_f1_screenshots.py` 固定 TextArea 基线；
 - 状态栏「修订/保存状态」沿用 Facade（保存后更新），编辑期间为上一修订号，
   与 WebEngine 协议一致（保存时带 baseRevision）。
+
+> 迁移接线点完成（2026-08-03）：WebEngine 模式恢复「生成草稿」与「AI 参考」；
+> 草稿生成后进入候选层/抽屉，**整章采用成功后写回编辑器**（
+> `draftAcceptedToEditor` 信号 → loadChapter），修订与编辑器同步；
+> 段落级采用按钮在 WebEngine 模式隐藏并显示「段落级采用待接线」占位
+> （diff 基线基于 Facade 快照，与编辑器真相源未统一）。

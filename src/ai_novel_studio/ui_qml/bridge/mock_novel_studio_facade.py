@@ -155,6 +155,7 @@ class MockNovelStudioFacade(QObject):
     memory_detail_changed = Signal()
     evidenceRevealRequested = Signal(str, int, int)
     web_word_count_changed = Signal()
+    draftAcceptedToEditor = Signal(str)
 
     def __init__(
         self,
@@ -1139,6 +1140,7 @@ class MockNovelStudioFacade(QObject):
         self._active_run_id = None
         self._suggestions_model.remove_item(row)
         self._clear_draft_review_state()
+        self.draftAcceptedToEditor.emit(accepted.text)
         self.editor_state_changed.emit()
         self.chapter_changed.emit()
         self.chapterChanged.emit()

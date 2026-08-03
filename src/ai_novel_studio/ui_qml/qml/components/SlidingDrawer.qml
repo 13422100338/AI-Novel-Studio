@@ -7,6 +7,7 @@ Item {
 
     property bool open: false
     property int drawerWidth: 340
+    property bool webEngineMode: false
     signal closed()
 
     anchors.fill: parent
@@ -269,21 +270,27 @@ Item {
                                     AppButton {
                                         objectName: "rejectDiffButton"
                                         text: "忽略此段"
-                                        visible: kind !== "unchanged"
+                                        visible: kind !== "unchanged" && !root.webEngineMode
                                         onClicked: Facade.rejectDiffBlock(blockId)
                                     }
                                     AppButton {
                                         objectName: "acceptDiffButton"
                                         text: "采用此段"
                                         primary: true
-                                        visible: kind !== "unchanged"
+                                        visible: kind !== "unchanged" && !root.webEngineMode
                                         onClicked: Facade.acceptDiffBlock(blockId)
                                     }
                                     AppButton {
                                         objectName: "editAcceptDiffButton"
                                         text: "编辑后采用"
-                                        visible: kind === "replaced" || kind === "inserted"
+                                        visible: (kind === "replaced" || kind === "inserted") && !root.webEngineMode
                                         onClicked: Facade.editAndAcceptDiffBlock(blockId, editArea.text)
+                                    }
+                                    AppButton {
+                                        objectName: "webEngineDiffHint"
+                                        text: "段落级采用待接线"
+                                        visible: root.webEngineMode && (kind === "replaced" || kind === "inserted")
+                                        enabled: false
                                     }
                                 }
                             }

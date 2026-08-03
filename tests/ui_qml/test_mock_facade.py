@@ -600,6 +600,25 @@ def test_usage_stays_zero_without_port() -> None:
     assert facade.property("usageCostText") == "未估算"
 
 
+def test_accept_project_draft_emits_writeback_signal(qtbot, tmp_path) -> None:
+    root = create_temp_project(tmp_path / "novel")
+    port = FakeDraftPort(draft_text="整章采用后的正文")
+    facade = MockNovelStudioFacade(draft_port=port)
+    facade.openProject(str(root))
+    accepted: list[str] = []
+    facade.draftAcceptedToEditor.connect(accepted.append)
+    facade.requestDraft()
+    qtbot.waitUntil(
+        lambda: facade.property("suggestions").rowCount() == 1,
+        timeout=5000,
+    )
+
+    facade.acceptSuggestion(0)
+
+    assert accepted == ["整章采用后的正文"]
+    assert facade.property("currentChapterBody") == "整章采用后的正文"
+
+
 def test_web_engine_word_count_falls_back_then_updates() -> None:
     facade = MockNovelStudioFacade()
     # No report yet: falls back to the facade body word count.
