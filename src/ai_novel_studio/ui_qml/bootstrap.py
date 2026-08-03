@@ -6,7 +6,7 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from PySide6.QtCore import QUrl
+from PySide6.QtCore import Property, QObject, QUrl
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtQml import QQmlApplicationEngine
 
@@ -15,6 +15,18 @@ from ai_novel_studio.ui_qml.bridge.theme_provider import ThemeProvider
 from ai_novel_studio.ui_qml.editor_runtime import ensure_editor_dist, ensure_qwebchannel_js
 
 _FRONTEND_STATE: dict[int, tuple[MockNovelStudioFacade, ThemeProvider]] = {}
+
+
+class EditorAssets(QObject):
+    """Exposes the local editor page URL to QML (WebEngine mode)."""
+
+    def __init__(self, index_url: str, parent: QObject | None = None) -> None:
+        super().__init__(parent)
+        self._index_url = index_url
+
+    @Property(str, constant=True)
+    def indexUrl(self) -> str:
+        return self._index_url
 
 
 def register_frontend_types(
@@ -84,6 +96,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         editor_bridge.error.connect(facade.setSaveStatusText)
         editor_bridge.word_count_changed.connect(facade.setWebEngineWordCount)
         engine.rootContext().setContextProperty("pythonBridge", editor_bridge)
+        dist = ensure_editor_dist()
+        engine.rootContext().setContextProperty(
+            "EditorAssets",
+            EditorAssets((dist / "index.html").as_uri(), engine),
+        )
     _FRONTEND_STATE[id(engine)] = (facade, theme)
     engine.load(QUrl.fromLocalFile(str(app_qml_path())))
     if not engine.rootObjects():
