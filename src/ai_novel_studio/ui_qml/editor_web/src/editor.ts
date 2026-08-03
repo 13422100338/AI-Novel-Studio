@@ -27,8 +27,25 @@ import { NOVEL_SCHEMA } from "./schema";
 declare global {
   interface Window {
     __novelEditor: NovelEditorBridge;
+    qt?: { webChannelTransport: unknown };
   }
 }
+
+declare const QWebChannel: new (
+  transport: unknown,
+  callback: (channel: {
+    objects: Record<string, {
+      editorReady(protocolVersion: number, capabilities: string): void;
+      saveRequested(
+        chapterId: string,
+        baseRevision: number,
+        markdown: string,
+        contentHash: string,
+      ): void;
+      selectionChanged(from: number, to: number): void;
+    }>;
+  }) => void,
+) => void;
 
 export interface LoadDocumentPayload {
   chapterId: string;
@@ -217,7 +234,30 @@ export function boot(
   onSave: (payload: SnapshotPayload) => void,
   initial: LoadDocumentPayload | null = null,
 ): NovelEditorBridge {
-  const editor = new NovelEditor(mount, onSave, initial);
+  let pythonBridge: {
+    saveRequested(
+      chapterId: string,
+      baseRevision: number,
+      markdown: string,
+      contentHash: string,
+    ): void;
+  } | null = null;
+  const editor = new NovelEditor(
+    mount,
+    (payload) => {
+      if (pythonBridge) {
+        pythonBridge.saveRequested(
+          payload.chapterId,
+          payload.baseRevision,
+          payload.markdown,
+          payload.contentHash,
+        );
+      } else {
+        onSave(payload);
+      }
+    },
+    initial,
+  );
   const bridge: NovelEditorBridge = {
     loadDocument: (payload) => editor.loadDocument(payload),
     requestSave: () => editor.requestSave(),
@@ -231,6 +271,16 @@ export function boot(
     setReadOnly: (reason) => editor.setReadOnly(reason),
   };
   window.__novelEditor = bridge;
+  if (window.qt && window.qt.webChannelTransport) {
+    new QWebChannel(window.qt.webChannelTransport, (channel) => {
+      const python = channel.objects.pythonBridge;
+      if (!python) {
+        return;
+      }
+      pythonBridge = python;
+      python.editorReady(1, JSON.stringify(["markdown-v1", "selection-v1", "decorations-v1"]));
+    });
+  }
   return bridge;
 }
 

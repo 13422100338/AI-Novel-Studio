@@ -19,5 +19,6 @@ await esbuild.build({
 
 copyFileSync(path.join(root, "src", "index.html"), path.join(root, "dist", "index.html"));
 copyFileSync(path.join(root, "src", "style.css"), path.join(root, "dist", "style.css"));
+copyFileSync(path.join(root, "src", "qwebchannel.js"), path.join(root, "dist", "qwebchannel.js"));
 
-console.log("editor bundle + html + css written to dist/");
+console.log("editor bundle + html + css + qwebchannel.js written to dist/");
