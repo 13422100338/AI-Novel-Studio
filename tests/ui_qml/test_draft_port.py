@@ -25,6 +25,7 @@ from ai_novel_studio.infrastructure.llm.schemas import (
     ModelProfile,
     ModelRoute,
 )
+from ai_novel_studio.infrastructure.llm.usage_tracker import UsageTracker
 from ai_novel_studio.infrastructure.storage.chapter_repository import ChapterRepository
 from ai_novel_studio.infrastructure.storage.chapter_requirement_repository import (
     ChapterRequirementRepository,
@@ -66,6 +67,7 @@ class StubGateway:
         )
         self.events = events
         self.stream_calls: list[TaskPurpose] = []
+        self.usage_tracker = UsageTracker()
 
     def stream(
         self,
@@ -169,3 +171,15 @@ def test_discard_without_run_is_false(tmp_path: Path) -> None:
     port = ProjectSessionDraftPort(session)
 
     assert port.discard_current() is False
+
+
+def test_usage_snapshot_mirrors_tracker(tmp_path: Path) -> None:
+    session, chapter_id, revision = _session(tmp_path, _completed_events())
+    port = ProjectSessionDraftPort(session)
+
+    usage = port.usage_snapshot()
+
+    assert usage.input_tokens == 0
+    assert usage.output_tokens == 0
+    assert usage.cost == 0
+    assert usage.call_count == 0

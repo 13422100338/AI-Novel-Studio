@@ -39,3 +39,16 @@ class SuggestionDto:
     label: str
     body: str
     kind: str = "polish"
+
+
+@dataclass(frozen=True, slots=True)
+class UsageDto:
+    """Presentation DTO mirroring ``UsageSnapshot`` semantics for the status bar."""
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cached_input_tokens: int = 0
+    cost: float | None = None
+    call_count: int = 0
+    failed_call_count: int = 0
+    cache_known: bool = False

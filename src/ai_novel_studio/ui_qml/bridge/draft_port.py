@@ -27,6 +27,7 @@ from ai_novel_studio.application.prose_generation_service import (
     ProseGenerationEvent,
 )
 from ai_novel_studio.domain.generation import AuditPolicy, CreationMode, GenerationStatus
+from ai_novel_studio.ui_qml.bridge.dtos import UsageDto
 
 _DEFAULT_OUTPUT_TOKEN_LIMIT = 8192
 
@@ -62,6 +63,8 @@ class DraftPort(Protocol):
     def generate(self, run_id: str) -> tuple[str, str]: ...
 
     def cancel(self, run_id: str) -> None: ...
+
+    def usage_snapshot(self) -> UsageDto: ...
 
     def accept_current(self) -> AcceptedGeneration: ...
 
@@ -115,6 +118,19 @@ class ProjectSessionDraftPort:
     def cancel(self, run_id: str) -> None:
         """Ask the underlying prose service to cancel the stream cooperatively."""
         self.session.prose.cancel(run_id)
+
+    def usage_snapshot(self) -> UsageDto:
+        """Mirror the real gateway usage tracker totals as a presentation DTO."""
+        snapshot = self.session.gateway.usage_tracker.snapshot()
+        return UsageDto(
+            input_tokens=snapshot.input_tokens,
+            output_tokens=snapshot.output_tokens,
+            cached_input_tokens=snapshot.cached_input_tokens,
+            cost=snapshot.cost,
+            call_count=snapshot.call_count,
+            failed_call_count=snapshot.failed_call_count,
+            cache_known=snapshot.cache_known,
+        )
 
     def accept_current(self) -> AcceptedGeneration:
         return self.session.accept_current()

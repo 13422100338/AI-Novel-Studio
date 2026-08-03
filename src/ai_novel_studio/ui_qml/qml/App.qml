@@ -148,6 +148,22 @@ ApplicationWindow {
                     tone: "accent"
                 }
                 StatusChip {
+                    objectName: "usageTokensChip"
+                    label: "Token"
+                    value: Facade.usageInputOutputText
+                }
+                StatusChip {
+                    objectName: "usageCostChip"
+                    label: "费用"
+                    value: Facade.usageCostText
+                    tone: "accent"
+                }
+                StatusChip {
+                    objectName: "usageCacheChip"
+                    label: ""
+                    value: Facade.usageCacheText
+                }
+                StatusChip {
                     label: "数据源"
                     value: Facade.projectSource === "project" ? "项目" : "演示"
                     tone: Facade.projectSource === "project" ? "accent" : "neutral"

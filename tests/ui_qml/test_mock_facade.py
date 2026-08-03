@@ -4,6 +4,7 @@ from PySide6.QtCore import QObject
 
 from ai_novel_studio.application.project_generation_session import AcceptedGeneration
 from ai_novel_studio.ui_qml.bridge.draft_port import GenerationConfig
+from ai_novel_studio.ui_qml.bridge.dtos import UsageDto
 from ai_novel_studio.ui_qml.bridge.mock_novel_studio_facade import MockNovelStudioFacade
 from ai_novel_studio.ui_qml.bridge.models.draft_diff_model import (
     ROLE_BLOCK_ID,
@@ -35,6 +36,15 @@ class FakeDraftPort:
         self.discarded = False
         self.cancel_called = False
         self.next_revision = 7
+        self.usage = UsageDto(
+            input_tokens=1200,
+            output_tokens=800,
+            cached_input_tokens=600,
+            cost=0.018,
+            call_count=1,
+            failed_call_count=0,
+            cache_known=True,
+        )
 
     def prepare(
         self,
@@ -57,6 +67,9 @@ class FakeDraftPort:
     def cancel(self, run_id: str) -> None:
         self.cancel_called = True
         self._generate_block.set()
+
+    def usage_snapshot(self) -> UsageDto:
+        return self.usage
 
     def accept_current(self) -> AcceptedGeneration:
         if self.accept_failure is not None:
@@ -493,3 +506,43 @@ def test_accept_full_draft_clears_diff_state(qtbot, tmp_path) -> None:
 
     assert facade.property("draftViewEnabled") is False
     assert facade.property("draftDiff").rowCount() == 0
+
+
+def test_usage_properties_update_after_generation(qtbot, tmp_path) -> None:
+    root = create_temp_project(tmp_path / "novel")
+    port = FakeDraftPort(draft_text="草稿正文")
+    facade = MockNovelStudioFacade(draft_port=port)
+    facade.openProject(str(root))
+
+    assert facade.property("usageInputOutputText") == "0 / 0"
+    assert facade.property("usageCostText") == "未估算"
+    assert facade.property("usageCacheText") == "缓存 未知"
+
+    _generate_draft(qtbot, facade)
+
+    assert facade.property("usageInputOutputText") == "1.2K / 800"
+    assert facade.property("usageCostText") == "¥0.018"
+    assert facade.property("usageCacheText") == "缓存 600"
+    assert facade.property("usageCallsText") == "1 次调用"
+
+
+def test_usage_updates_on_generation_failure(qtbot, tmp_path) -> None:
+    root = create_temp_project(tmp_path / "novel")
+    port = FakeDraftPort(generate_error="模型超时")
+    facade = MockNovelStudioFacade(draft_port=port)
+    facade.openProject(str(root))
+
+    facade.requestDraft()
+    qtbot.waitUntil(
+        lambda: facade.property("draftStatus") == "FAILED",
+        timeout=5000,
+    )
+
+    assert facade.property("usageInputOutputText") == "1.2K / 800"
+    assert facade.property("draftStatus") == "FAILED"
+
+
+def test_usage_stays_zero_without_port() -> None:
+    facade = MockNovelStudioFacade()
+    assert facade.property("usageInputOutputText") == "0 / 0"
+    assert facade.property("usageCostText") == "未估算"

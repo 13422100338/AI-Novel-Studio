@@ -24,7 +24,12 @@ from ai_novel_studio.ui_qml.bridge.draft_coordinator import (
     DraftCoordinator,
 )
 from ai_novel_studio.ui_qml.bridge.draft_port import DraftPort, GenerationConfig
-from ai_novel_studio.ui_qml.bridge.dtos import ChapterDto, SuggestionDto, VolumeDto
+from ai_novel_studio.ui_qml.bridge.dtos import (
+    ChapterDto,
+    SuggestionDto,
+    UsageDto,
+    VolumeDto,
+)
 from ai_novel_studio.ui_qml.bridge.models.chapter_list_model import ChapterListModel
 from ai_novel_studio.ui_qml.bridge.models.draft_diff_model import DraftDiffModel
 from ai_novel_studio.ui_qml.bridge.models.suggestion_list_model import SuggestionListModel
@@ -123,6 +128,7 @@ class MockNovelStudioFacade(QObject):
     draft_status_changed = Signal()
     generation_config_changed = Signal()
     draft_view_changed = Signal()
+    usage_changed = Signal()
 
     def __init__(
         self,
@@ -134,6 +140,7 @@ class MockNovelStudioFacade(QObject):
         super().__init__(parent)
         self._draft_port = draft_port
         self._generation_config = GenerationConfig()
+        self._usage = UsageDto()
         self._draft_diff_model = DraftDiffModel(self)
         self._draft_view = "draft"
         self._draft_base_body = ""
@@ -290,6 +297,33 @@ class MockNovelStudioFacade(QObject):
     @Property(str, notify=generation_config_changed)
     def generationAuditPolicy(self) -> str:
         return self._generation_config.audit_policy.value
+
+    @Property(str, notify=usage_changed)
+    def usageInputOutputText(self) -> str:
+        input_text = self._token_text(self._usage.input_tokens)
+        output_text = self._token_text(self._usage.output_tokens)
+        return f"{input_text} / {output_text}"
+
+    @Property(str, notify=usage_changed)
+    def usageCostText(self) -> str:
+        if self._usage.cost is None or (
+            self._usage.call_count == 0 and self._usage.cost == 0
+        ):
+            return "未估算"
+        return f"¥{self._usage.cost:.3f}"
+
+    @Property(str, notify=usage_changed)
+    def usageCacheText(self) -> str:
+        if not self._usage.cache_known:
+            return "缓存 未知"
+        return f"缓存 {self._token_text(self._usage.cached_input_tokens)}"
+
+    @Property(str, notify=usage_changed)
+    def usageCallsText(self) -> str:
+        if self._usage.call_count == 0:
+            return "0 次调用"
+        failed = f" · {self._usage.failed_call_count} 失败" if self._usage.failed_call_count else ""
+        return f"{self._usage.call_count} 次调用{failed}"
 
     # -- commands ------------------------------------------------------------
 
@@ -671,6 +705,7 @@ class MockNovelStudioFacade(QObject):
             self._save_status = "生成草稿为空，请重试"
             self.editor_state_changed.emit()
             return
+        self._refresh_usage()
         self._active_run_id = self._draft_coordinator.run_id if self._draft_coordinator else None
         self._draft_base_body = self._body_text
         self._draft_text = draft_text
@@ -692,12 +727,31 @@ class MockNovelStudioFacade(QObject):
         self.draft_view_changed.emit()
 
     def _on_draft_failed(self, message: str) -> None:
+        self._refresh_usage()
         self._save_status = f"生成草稿失败：{message}"
         self.editor_state_changed.emit()
 
     def _on_draft_cancelled(self, message: str) -> None:
+        self._refresh_usage()
         self._save_status = message
         self.editor_state_changed.emit()
+
+    def _refresh_usage(self) -> None:
+        if self._draft_port is None:
+            return
+        try:
+            self._usage = self._draft_port.usage_snapshot()
+        except (KeyError, RuntimeError, ValueError):
+            return
+        self.usage_changed.emit()
+
+    @staticmethod
+    def _token_text(value: int) -> str:
+        if value >= 1_000_000:
+            return f"{value / 1_000_000:.1f}M"
+        if value >= 1_000:
+            return f"{value / 1_000:.1f}K"
+        return str(value)
 
     @Slot()
     def cancelDraft(self) -> None:

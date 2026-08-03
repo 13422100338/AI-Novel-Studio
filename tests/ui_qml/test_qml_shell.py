@@ -411,3 +411,28 @@ def test_diff_view_accept_block_updates_editor(qtbot: QtBot, tmp_path: Path) -> 
 
     assert "AI 重写的第二段" in editor.property("text")
     assert facade.property("editorState") == "DIRTY"
+
+
+def test_usage_chips_visible_and_update_after_generation(
+    qtbot: QtBot, tmp_path: Path
+) -> None:
+    root = _create_temp_project(tmp_path / "novel")
+    port = FakeDraftPort(draft_text="草稿正文")
+    facade = MockNovelStudioFacade(draft_port=port)
+    facade.openProject(str(root))
+    engine, facade, _ = _load_engine(qtbot, facade)
+    window = engine.rootObjects()[0]
+
+    for name in ("usageTokensChip", "usageCostChip", "usageCacheChip"):
+        assert window.findChild(object, name) is not None, f"missing {name}"
+    assert window.findChild(object, "usageTokensChip").property("value") == "0 / 0"
+
+    facade.requestDraft()
+    qtbot.waitUntil(
+        lambda: facade.property("draftStatus") == "COMPLETED",
+        timeout=5000,
+    )
+
+    assert window.findChild(object, "usageTokensChip").property("value") == "1.2K / 800"
+    assert window.findChild(object, "usageCostChip").property("value") == "¥0.018"
+    assert window.findChild(object, "usageCacheChip").property("value") == "缓存 600"
