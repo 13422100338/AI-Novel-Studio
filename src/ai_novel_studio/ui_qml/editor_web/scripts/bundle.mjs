@@ -1,5 +1,5 @@
 import * as esbuild from "esbuild";
-import { mkdirSync } from "node:fs";
+import { copyFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -17,4 +17,7 @@ await esbuild.build({
   platform: "browser",
 });
 
-console.log("editor bundle written to dist/editor.js");
+copyFileSync(path.join(root, "src", "index.html"), path.join(root, "dist", "index.html"));
+copyFileSync(path.join(root, "src", "style.css"), path.join(root, "dist", "style.css"));
+
+console.log("editor bundle + html + css written to dist/");

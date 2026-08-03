@@ -1,0 +1,56 @@
+.novel-editor {
+  --editor-bg: #fffdf7;
+  --editor-text: #2b2925;
+  --editor-accent: #8c5a2b;
+  --editor-muted: #6e6a61;
+  background: var(--editor-bg);
+  color: var(--editor-text);
+  font-family: "Microsoft YaHei", "Songti SC", serif;
+  font-size: 16px;
+  line-height: 1.7;
+  min-height: 100%;
+  padding: 24px 32px;
+  outline: none;
+}
+
+.novel-editor p {
+  margin: 0 0 0.6em;
+}
+
+.novel-editor h1,
+.novel-editor h2 {
+  font-weight: 600;
+  margin: 0.8em 0 0.4em;
+}
+
+.novel-editor blockquote {
+  border-left: 3px solid var(--editor-accent);
+  color: var(--editor-muted);
+  margin: 0.4em 0;
+  padding-left: 12px;
+}
+
+.novel-editor hr {
+  border: none;
+  border-top: 1px solid var(--editor-muted);
+  margin: 1.2em 0;
+}
+
+.novel-audit-decoration {
+  background: rgba(166, 69, 63, 0.18);
+  border-bottom: 2px solid rgba(166, 69, 63, 0.7);
+  cursor: help;
+}
+
+.novel-selection-toolbar {
+  position: absolute;
+  background: #292a2d;
+  color: #fff;
+  border-radius: 8px;
+  padding: 4px 6px;
+  font-size: 12px;
+  display: none;
+  z-index: 20;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+}
+

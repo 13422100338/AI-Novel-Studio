@@ -130,7 +130,7 @@ export interface SaveObserver {
 export class DebouncedSaveController {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private pending = false;
-  private savedCount = 0;
+  private _savedCount = 0;
   private readonly debounceMs: number;
 
   constructor(
@@ -157,12 +157,12 @@ export class DebouncedSaveController {
       return;
     }
     this.pending = false;
-    this.savedCount += 1;
+    this._savedCount += 1;
     this.observer.onSave(snapshot);
   }
 
   get savedCount(): number {
-    return this.savedCount;
+    return this._savedCount;
   }
 
   destroy(): void {

@@ -27,7 +27,10 @@ const TOKENIZER = markdownit("commonmark", {
 const PARSER = new MarkdownParser(NOVEL_SCHEMA, TOKENIZER, {
   blockquote: { block: "blockquote" },
   paragraph: { block: "paragraph" },
-  heading: { block: "heading", getAttrs: (tok) => ({ level: +tok.tag.slice(1) }) },
+  heading: {
+    block: "heading",
+    getAttrs: (tok) => ({ level: tok.tag ? +tok.tag.slice(1) : 1 }),
+  },
   hr: { node: "horizontal_rule" },
   hardbreak: { node: "hard_break" },
   softbreak: { node: "hard_break" },
@@ -36,13 +39,14 @@ const PARSER = new MarkdownParser(NOVEL_SCHEMA, TOKENIZER, {
 });
 
 const SERIALIZER = new MarkdownSerializer({
-  text: (state, node) => state.text(node.text, false),
+  text: (state, node) => state.text(node.text ?? "", false),
   paragraph: (state, node) => {
     state.renderInline(node);
     state.closeBlock(node);
   },
   heading: (state, node) => {
-    state.write(state.repeat("#", node.attrs.level) + " ");
+    const level = Number(node.attrs.level);
+    state.write(state.repeat("#", level) + " ");
     state.renderInline(node);
     state.closeBlock(node);
   },
@@ -51,7 +55,6 @@ const SERIALIZER = new MarkdownSerializer({
   },
   horizontal_rule: (state) => {
     state.write("---\n\n");
-    state.closeBlock(state.top);
   },
   hard_break: (state) => {
     state.write("\n");
