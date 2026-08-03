@@ -617,6 +617,12 @@ class MockNovelStudioFacade(QObject):
         self._save_status = f"已保存 · 修订 {result.revision}"
         self.editor_state_changed.emit()
         self.chapter_changed.emit()
+
+    @Slot(str)
+    def setSaveStatusText(self, message: str) -> None:
+        """Surface bridge/editor errors in the status bar."""
+        self._save_status = message
+        self.editor_state_changed.emit()
         self.chapterChanged.emit()
 
     @Slot()

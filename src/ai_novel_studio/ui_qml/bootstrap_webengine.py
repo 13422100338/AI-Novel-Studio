@@ -52,6 +52,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             chapter_id, revision, markdown
         )
     )
+    editor_bridge.error.connect(facade.setSaveStatusText)
     engine.rootContext().setContextProperty("Facade", facade)
     engine.rootContext().setContextProperty("Theme", theme)
     # The QML side creates its own WebChannel (QQmlWebChannel) and registers

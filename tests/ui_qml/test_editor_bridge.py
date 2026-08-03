@@ -2,7 +2,12 @@
 
 from pathlib import Path
 
-from ai_novel_studio.ui_qml.bridge.editor_bridge import EditorBridge, sha256
+from ai_novel_studio.ui_qml.bridge.editor_bridge import (
+    EditorBridge,
+    fnv1a_hash,
+    sha256,
+    validate_content_hash,
+)
 from ai_novel_studio.ui_qml.bridge.mock_novel_studio_facade import MockNovelStudioFacade
 
 from .test_project_wiring import create_temp_project
@@ -112,3 +117,31 @@ def test_bridge_save_flows_into_facade_persistence(tmp_path: Path) -> None:
     assert facade.property("editorState") == "CLEAN"
     assert facade.property("currentRevision") == 2
     assert facade.property("currentChapterBody") == markdown
+
+
+def test_fnv1a_hash_matches_javascript_fingerprint_format() -> None:
+    assert fnv1a_hash("正文").startswith("fnv1a:")
+    assert len(fnv1a_hash("正文")) == len("fnv1a:") + 8
+
+
+def test_validate_content_hash_accepts_fnv_and_sha256() -> None:
+    markdown = "正文"
+    assert validate_content_hash(markdown, fnv1a_hash(markdown)) is True
+    assert validate_content_hash(markdown, sha256(markdown)) is True
+    assert validate_content_hash(markdown, fnv1a_hash("别的")) is False
+    assert validate_content_hash(markdown, "wrong") is False
+
+
+def test_bridge_accepts_fnv_fingerprint_save(tmp_path: Path) -> None:
+    root = create_temp_project(tmp_path / "novel")
+    facade = MockNovelStudioFacade()
+    facade.openProject(str(root))
+    chapter_id = facade.property("currentChapterId")
+    bridge = EditorBridge()
+    bridge.save_requested.connect(facade.saveFromEditor)
+    markdown = "带 FNV 指纹的正文"
+
+    bridge.saveRequested(chapter_id, 1, markdown, fnv1a_hash(markdown))
+
+    assert facade.property("editorState") == "CLEAN"
+    assert facade.property("currentRevision") == 2

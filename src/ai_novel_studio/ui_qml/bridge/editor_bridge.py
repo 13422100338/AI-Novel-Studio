@@ -8,8 +8,8 @@ coming from the page before emitting; JavaScript is never trusted.
 
 from __future__ import annotations
 
-import hashlib
 import json
+from hashlib import sha256 as _sha256
 
 from PySide6.QtCore import QObject, Signal, Slot
 
@@ -73,8 +73,7 @@ class EditorBridge(QObject):
         if len(markdown.encode("utf-8")) > 5_000_000:
             self.error.emit("PAYLOAD_TOO_LARGE", "保存内容超过 5MB 上限")
             return
-        expected = sha256(markdown)
-        if content_hash != expected:
+        if not validate_content_hash(markdown, content_hash):
             self.error.emit("HASH_MISMATCH", "内容哈希不一致，拒绝保存")
             return
         self.last_save_revision = base_revision
@@ -88,5 +87,25 @@ class EditorBridge(QObject):
 
 
 def sha256(text: str) -> str:
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+    return _sha256(text.encode("utf-8")).hexdigest()
 
+
+def fnv1a_hash(text: str) -> str:
+    """Reproduce the JS-side FNV-1a fingerprint used by the Phase 1 prototype."""
+    hash_value = 0x811C9DC5
+    for character in text:
+        hash_value ^= ord(character)
+        hash_value = (hash_value * 0x01000193) & 0xFFFFFFFF
+    return f"fnv1a:{hash_value:08x}"
+
+
+def validate_content_hash(markdown: str, content_hash: str) -> bool:
+    """Accept the prototype FNV fingerprint or a real SHA-256 hex digest.
+
+    The Phase 1 page computes a synchronous FNV change fingerprint; the real
+    SHA-256 path is kept so the production codec can switch without changing
+    the bridge contract (see docs/2026-08-03-phase1-editor-bridge-delivery.md).
+    """
+    if content_hash.startswith("fnv1a:"):
+        return content_hash == fnv1a_hash(markdown)
+    return content_hash == sha256(markdown)
