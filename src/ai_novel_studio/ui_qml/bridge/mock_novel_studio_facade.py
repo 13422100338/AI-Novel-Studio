@@ -29,11 +29,15 @@ from ai_novel_studio.ui_qml.bridge.draft_coordinator import (
 from ai_novel_studio.ui_qml.bridge.draft_port import DraftPort, GenerationConfig
 from ai_novel_studio.ui_qml.bridge.dtos import (
     ChapterDto,
+    DiscussionMessageDto,
     SuggestionDto,
     UsageDto,
     VolumeDto,
 )
 from ai_novel_studio.ui_qml.bridge.models.chapter_list_model import ChapterListModel
+from ai_novel_studio.ui_qml.bridge.models.discussion_message_list_model import (
+    DiscussionMessageListModel,
+)
 from ai_novel_studio.ui_qml.bridge.models.draft_diff_model import DraftDiffModel
 from ai_novel_studio.ui_qml.bridge.models.readonly_list_models import (
     AuditListModel,
@@ -157,6 +161,7 @@ class MockNovelStudioFacade(QObject):
     web_word_count_changed = Signal()
     draftAcceptedToEditor = Signal(str)
     editorRevisionChanged = Signal(int)
+    discussion_changed = Signal()
 
     def __init__(
         self,
@@ -179,6 +184,8 @@ class MockNovelStudioFacade(QObject):
         self._selected_character: CharacterViewDto | None = None
         self._selected_memory: MemoryViewDto | None = None
         self._draft_diff_model = DraftDiffModel(self)
+        self._discussion_model = DiscussionMessageListModel(self)
+        self._discussion_busy = False
         self._draft_view = "draft"
         self._draft_base_body = ""
         self._draft_text = ""
@@ -276,6 +283,14 @@ class MockNovelStudioFacade(QObject):
             None,
         )
         return volume.title if volume is not None else ""
+
+    @Property(QObject, constant=True)
+    def discussionMessages(self) -> DiscussionMessageListModel:
+        return self._discussion_model
+
+    @Property(bool, notify=discussion_changed)
+    def discussionBusy(self) -> bool:
+        return self._discussion_busy
 
     @Property(int, notify=chapter_changed)
     def currentRevision(self) -> int:
@@ -935,6 +950,33 @@ class MockNovelStudioFacade(QObject):
     @Slot(str)
     def setChapterFilter(self, query: str) -> None:
         self._chapters_model.set_filter(query)
+
+    @Slot(str)
+    def sendDiscussion(self, text: str) -> None:
+        """Send a plot-discussion turn (mock response; real port later)."""
+        normalized = text.strip()
+        if not normalized or self._discussion_busy:
+            return
+        self._discussion_model.add_message(
+            DiscussionMessageDto(id=str(uuid4()), role="user", text=normalized)
+        )
+        self._discussion_busy = True
+        self.discussion_changed.emit()
+        reply = (
+            f"（Mock 剧情商讨）针对当前章节《{self.currentChapterTitle}》，"
+            f"可以考虑：{normalized[:40]}。这条回复由前端 mock 生成，"
+            "后端模型端口接线后将成为真实讨论。"
+        )
+        self._discussion_model.add_message(
+            DiscussionMessageDto(id=str(uuid4()), role="assistant", text=reply)
+        )
+        self._discussion_busy = False
+        self.discussion_changed.emit()
+
+    @Slot()
+    def clearDiscussion(self) -> None:
+        self._discussion_model.clear()
+        self.discussion_changed.emit()
 
     @Slot(str, result=str)
     def openProject(self, root: str) -> str:

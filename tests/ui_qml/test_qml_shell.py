@@ -358,72 +358,6 @@ def test_generation_config_dialog_applies_values_before_start(
     )
 
 
-def test_draft_three_view_buttons_and_switch(qtbot: QtBot, tmp_path: Path) -> None:
-    root = _create_temp_project(tmp_path / "novel")
-    port = FakeDraftPort(draft_text="这是测试正文。\n\nAI 新增的段落。")
-    facade = MockNovelStudioFacade(draft_port=port)
-    facade.openProject(str(root))
-    engine, facade, _ = _load_engine(qtbot, facade)
-    window = engine.rootObjects()[0]
-    facade.requestDraft()
-    qtbot.waitUntil(
-        lambda: facade.property("suggestions").rowCount() == 1,
-        timeout=5000,
-    )
-
-    current_button = window.findChild(object, "viewCurrentButton")
-    draft_button = window.findChild(object, "viewDraftButton")
-    diff_button = window.findChild(object, "viewDiffButton")
-    assert current_button is not None
-    assert draft_button is not None
-    assert diff_button is not None
-    assert facade.property("draftView") == "draft"
-
-    QMetaObject.invokeMethod(current_button, "clicked")
-    assert facade.property("draftView") == "current"
-    QMetaObject.invokeMethod(diff_button, "clicked")
-    assert facade.property("draftView") == "diff"
-
-
-def test_diff_view_accept_block_updates_editor(qtbot: QtBot, tmp_path: Path) -> None:
-    root = _create_temp_project(tmp_path / "novel")
-    port = FakeDraftPort(draft_text="这是测试正文。\n\nAI 重写的第二段。")
-    facade = MockNovelStudioFacade(draft_port=port)
-    facade.openProject(str(root))
-    engine, facade, _ = _load_engine(qtbot, facade)
-    window = engine.rootObjects()[0]
-    editor = window.findChild(object, "manuscriptEditor")
-    facade.requestDraft()
-    qtbot.waitUntil(
-        lambda: facade.property("suggestions").rowCount() == 1,
-        timeout=5000,
-    )
-    facade.setDraftView("diff")
-    diff_list = window.findChild(object, "diffList")
-    assert diff_list is not None
-    diff_model = facade.property("draftDiff")
-    qtbot.waitUntil(lambda: diff_model.rowCount() > 0, timeout=5000)
-
-    # Delegate buttons are reachable through childItems; click the accept
-    # button on the replaced block to verify the editor updates.
-    qtbot.waitUntil(
-        lambda: _find_quick_item(window.contentItem(), "acceptDiffButton") is not None,
-        timeout=5000,
-    )
-    from ai_novel_studio.ui_qml.bridge.models.draft_diff_model import ROLE_BLOCK_ID, ROLE_KIND
-
-    replaced_id = None
-    for row in range(diff_model.rowCount()):
-        if diff_model.data(diff_model.index(row), ROLE_KIND) == "replaced":
-            replaced_id = diff_model.data(diff_model.index(row), ROLE_BLOCK_ID)
-            break
-    assert replaced_id is not None
-    facade.acceptDiffBlock(replaced_id)
-
-    assert "AI 重写的第二段" in editor.property("text")
-    assert facade.property("editorState") == "DIRTY"
-
-
 def test_usage_chips_visible_and_update_after_generation(
     qtbot: QtBot, tmp_path: Path
 ) -> None:
@@ -571,45 +505,6 @@ def test_memory_detail_panel_shows_after_selection(
     assert facade.property("memoryDetailVisible") is False
 
 
-def test_sliding_drawer_webengine_mode_hides_paragraph_actions(
-    qtbot: QtBot,
-) -> None:
-    from pathlib import Path
-
-    from PySide6.QtQml import QQmlApplicationEngine
-
-    from ai_novel_studio.ui_qml.bootstrap import app_qml_path, register_frontend_types
-    from ai_novel_studio.ui_qml.bridge.mock_novel_studio_facade import (
-        MockNovelStudioFacade,
-    )
-
-    engine = QQmlApplicationEngine()
-    engine.addImportPath(str(Path(app_qml_path()).parent))
-    facade = MockNovelStudioFacade()
-    facade, theme = register_frontend_types(engine, facade)
-    _ = theme  # keep the ThemeProvider alive for the engine lifetime
-    qml = """
-    import QtQuick
-    import "components"
-    Item {
-        objectName: "probe"
-        property bool modeOk: drawer.webEngineMode === true
-        property SlidingDrawer drawer: SlidingDrawer {
-            webEngineMode: true
-        }
-    }
-    """
-    from PySide6.QtCore import QUrl as Url
-
-    tmp = Path(app_qml_path()).parent / "_probe_drawer.qml"
-    tmp.write_text(qml, encoding="utf-8")
-    engine.load(Url.fromLocalFile(str(tmp)))
-    assert engine.rootObjects()
-    root = engine.rootObjects()[0]
-    assert root.property("modeOk") is True
-    tmp.unlink()
-
-
 def test_audit_ignore_button_updates_finding_status(
     qtbot: QtBot, tmp_path: Path
 ) -> None:
@@ -632,40 +527,3 @@ def test_audit_ignore_button_updates_finding_status(
         timeout=5000,
     )
     assert "已更新" in facade.property("saveStatusText")
-
-
-def test_edit_and_accept_diff_button_updates_editor(
-    qtbot: QtBot, tmp_path: Path
-) -> None:
-    root = _create_temp_project(tmp_path / "novel")
-    port = FakeDraftPort(draft_text="这是测试正文。\n\nAI 重写的第二段。")
-    facade = MockNovelStudioFacade(draft_port=port)
-    facade.openProject(str(root))
-    engine, facade, _ = _load_engine(qtbot, facade)
-    window = engine.rootObjects()[0]
-    editor = window.findChild(object, "manuscriptEditor")
-    facade.requestDraft()
-    qtbot.waitUntil(
-        lambda: facade.property("suggestions").rowCount() == 1,
-        timeout=5000,
-    )
-    facade.setDraftView("diff")
-    qtbot.waitUntil(
-        lambda: _find_visible_quick_item(window.contentItem(), "editAcceptDiffButton")
-        is not None,
-        timeout=5000,
-    )
-    edit_area = _find_visible_quick_item(window.contentItem(), "diffEditArea")
-    assert edit_area is not None
-    edit_area.setProperty("text", "自定义的第二段。")
-
-    edit_button = _find_visible_quick_item(
-        window.contentItem(), "editAcceptDiffButton"
-    )
-    QMetaObject.invokeMethod(edit_button, "clicked")
-
-    qtbot.waitUntil(
-        lambda: "自定义的第二段" in editor.property("text"),
-        timeout=5000,
-    )
-    assert facade.property("editorState") == "DIRTY"

@@ -52,3 +52,10 @@ class UsageDto:
     call_count: int = 0
     failed_call_count: int = 0
     cache_known: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class DiscussionMessageDto:
+    id: str
+    role: str  # user | assistant
+    text: str

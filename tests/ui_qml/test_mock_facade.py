@@ -619,6 +619,54 @@ def test_accept_project_draft_emits_writeback_signal(qtbot, tmp_path) -> None:
     assert facade.property("currentChapterBody") == "整章采用后的正文"
 
 
+def test_send_discussion_appends_user_and_mock_reply() -> None:
+    from ai_novel_studio.ui_qml.bridge.models.discussion_message_list_model import (
+        ROLE_ROLE,
+        ROLE_TEXT,
+    )
+
+    facade = MockNovelStudioFacade()
+
+    facade.sendDiscussion("让林默在钟楼里发现什么？")
+
+    messages = facade.property("discussionMessages")
+    assert messages.rowCount() == 2
+    assert messages.data(messages.index(0), ROLE_ROLE) == "user"
+    assert "钟楼" in messages.data(messages.index(0), ROLE_TEXT)
+    assert messages.data(messages.index(1), ROLE_ROLE) == "assistant"
+    assert "Mock 剧情商讨" in messages.data(messages.index(1), ROLE_TEXT)
+
+
+def test_send_discussion_ignores_blank_and_clears() -> None:
+    facade = MockNovelStudioFacade()
+    facade.sendDiscussion("   ")
+    assert facade.property("discussionMessages").rowCount() == 0
+
+    facade.sendDiscussion("第一问")
+    facade.clearDiscussion()
+    assert facade.property("discussionMessages").rowCount() == 0
+
+
+def test_discussion_message_model_roles() -> None:
+    from ai_novel_studio.ui_qml.bridge.dtos import DiscussionMessageDto
+    from ai_novel_studio.ui_qml.bridge.models.discussion_message_list_model import (
+        ROLE_MESSAGE_ID,
+        ROLE_ROLE,
+        ROLE_TEXT,
+        DiscussionMessageListModel,
+    )
+
+    model = DiscussionMessageListModel()
+    model.add_message(DiscussionMessageDto(id="m1", role="user", text="你好"))
+
+    assert model.rowCount() == 1
+    index = model.index(0)
+    assert model.data(index, ROLE_MESSAGE_ID) == "m1"
+    assert model.data(index, ROLE_ROLE) == "user"
+    assert model.data(index, ROLE_TEXT) == "你好"
+    assert model.roleNames()[ROLE_TEXT] == b"text"
+
+
 def test_web_engine_word_count_falls_back_then_updates() -> None:
     facade = MockNovelStudioFacade()
     # No report yet: falls back to the facade body word count.

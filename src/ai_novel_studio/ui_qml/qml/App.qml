@@ -226,7 +226,6 @@ ApplicationWindow {
         anchors.fill: parent
         visible: !window.useWebEngine
         open: Facade.aiDrawerOpen
-        webEngineMode: window.useWebEngine
         onClosed: Facade.toggleAiDrawer(false)
     }
 
