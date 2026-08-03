@@ -3,6 +3,7 @@ import threading
 from PySide6.QtCore import QObject
 
 from ai_novel_studio.application.project_generation_session import AcceptedGeneration
+from ai_novel_studio.ui_qml.bridge.draft_port import GenerationConfig
 from ai_novel_studio.ui_qml.bridge.mock_novel_studio_facade import MockNovelStudioFacade
 from ai_novel_studio.ui_qml.bridge.models.suggestion_list_model import ROLE_LABEL
 
@@ -25,14 +26,19 @@ class FakeDraftPort:
         self.generate_error = generate_error
         self.block_on_generate = block_on_generate
         self._generate_block = threading.Event()
-        self.prepared: list[tuple[str, int, int]] = []
+        self.prepared: list[tuple[str, int, GenerationConfig]] = []
         self.accepted = False
         self.discarded = False
         self.cancel_called = False
         self.next_revision = 7
 
-    def prepare(self, chapter_id: str, revision: int, target_words: int) -> str:
-        self.prepared.append((chapter_id, revision, target_words))
+    def prepare(
+        self,
+        chapter_id: str,
+        revision: int,
+        config: GenerationConfig,
+    ) -> str:
+        self.prepared.append((chapter_id, revision, config))
         return "run-fake"
 
     def generate(self, run_id: str) -> tuple[str, str]:
@@ -302,3 +308,60 @@ def test_project_draft_cancel_keeps_body_and_reports_cancelled(
     assert facade.property("suggestions").rowCount() == 0
     assert "已取消" in facade.property("saveStatusText")
     assert port.cancel_called is True
+
+
+def test_generation_config_defaults() -> None:
+    facade = MockNovelStudioFacade()
+    assert facade.property("generationTargetWords") == 800
+    assert facade.property("generationOutputTokenLimit") == 8192
+    assert facade.property("generationMode") == "BASIC"
+    assert facade.property("generationAuditPolicy") == "MINIMAL"
+
+
+def test_generation_config_setters_validate_and_persist() -> None:
+    facade = MockNovelStudioFacade()
+
+    facade.setGenerationTargetWords(2000)
+    facade.setGenerationOutputTokenLimit(4096)
+    facade.setGenerationMode("STRICT")
+    facade.setGenerationAuditPolicy("DEEP")
+
+    assert facade.property("generationTargetWords") == 2000
+    assert facade.property("generationOutputTokenLimit") == 4096
+    assert facade.property("generationMode") == "STRICT"
+    assert facade.property("generationAuditPolicy") == "DEEP"
+
+    # Out-of-range values are clamped, not rejected.
+    facade.setGenerationTargetWords(10)
+    facade.setGenerationOutputTokenLimit(1_000_000)
+    assert facade.property("generationTargetWords") == 100
+    assert facade.property("generationOutputTokenLimit") == 32768
+
+    # Unknown enum values are ignored.
+    facade.setGenerationMode("EXPERIMENTAL")
+    facade.setGenerationAuditPolicy("NONE")
+    assert facade.property("generationMode") == "STRICT"
+    assert facade.property("generationAuditPolicy") == "DEEP"
+
+
+def test_project_draft_forwards_generation_config(qtbot, tmp_path) -> None:
+    root = create_temp_project(tmp_path / "novel")
+    port = FakeDraftPort()
+    facade = MockNovelStudioFacade(draft_port=port)
+    facade.openProject(str(root))
+    facade.setGenerationTargetWords(3000)
+    facade.setGenerationMode("STANDARD")
+    facade.setGenerationAuditPolicy("STANDARD")
+
+    facade.requestDraft()
+    qtbot.waitUntil(
+        lambda: facade.property("suggestions").rowCount() == 1,
+        timeout=5000,
+    )
+
+    _, revision, config = port.prepared[0]
+    assert revision == facade.property("currentRevision")
+    assert config.target_words == 3000
+    assert config.mode.value == "STANDARD"
+    assert config.audit_policy.value == "STANDARD"
+    assert config.output_token_limit == 8192

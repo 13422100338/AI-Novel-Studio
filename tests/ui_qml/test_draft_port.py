@@ -31,7 +31,10 @@ from ai_novel_studio.infrastructure.storage.chapter_requirement_repository impor
 )
 from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
 from ai_novel_studio.infrastructure.storage.search_repository import SearchRepository
-from ai_novel_studio.ui_qml.bridge.draft_port import ProjectSessionDraftPort
+from ai_novel_studio.ui_qml.bridge.draft_port import (
+    GenerationConfig,
+    ProjectSessionDraftPort,
+)
 
 
 class StubGateway:
@@ -112,7 +115,7 @@ def test_full_generation_accept_cycle_persists_draft(tmp_path: Path) -> None:
     session, chapter_id, revision = _session(tmp_path, _completed_events())
     port = ProjectSessionDraftPort(session)
 
-    run_id = port.prepare(chapter_id, revision, target_words=800)
+    run_id = port.prepare(chapter_id, revision, GenerationConfig(target_words=800))
     draft_text, error = port.generate(run_id)
 
     assert error == ""
@@ -139,7 +142,7 @@ def test_discard_marks_run_discarded(tmp_path: Path) -> None:
     session, chapter_id, revision = _session(tmp_path, _completed_events())
     port = ProjectSessionDraftPort(session)
 
-    run_id = port.prepare(chapter_id, revision, target_words=800)
+    run_id = port.prepare(chapter_id, revision, GenerationConfig(target_words=800))
     assert port.discard_current() is True
 
     assert session.runs.get(run_id).status == GenerationStatus.DISCARDED
@@ -153,7 +156,7 @@ def test_generate_partial_failure_returns_draft_and_error(tmp_path: Path) -> Non
     session, chapter_id, revision = _session(tmp_path, events)
     port = ProjectSessionDraftPort(session)
 
-    run_id = port.prepare(chapter_id, revision, target_words=800)
+    run_id = port.prepare(chapter_id, revision, GenerationConfig(target_words=800))
     draft_text, error = port.generate(run_id)
 
     assert draft_text == "只生成了一半。"

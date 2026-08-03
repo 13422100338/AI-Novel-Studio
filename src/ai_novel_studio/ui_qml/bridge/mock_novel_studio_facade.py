@@ -17,12 +17,13 @@ from uuid import uuid4
 from PySide6.QtCore import Property, QObject, QUrl, Signal, Slot
 
 from ai_novel_studio.application.project_workspace_service import ProjectWorkspaceService
+from ai_novel_studio.domain.generation import AuditPolicy, CreationMode
 from ai_novel_studio.ui_qml.bridge.draft_coordinator import (
     DRAFT_FAILED,
     DRAFT_IDLE,
     DraftCoordinator,
 )
-from ai_novel_studio.ui_qml.bridge.draft_port import DraftPort
+from ai_novel_studio.ui_qml.bridge.draft_port import DraftPort, GenerationConfig
 from ai_novel_studio.ui_qml.bridge.dtos import ChapterDto, SuggestionDto, VolumeDto
 from ai_novel_studio.ui_qml.bridge.models.chapter_list_model import ChapterListModel
 from ai_novel_studio.ui_qml.bridge.models.suggestion_list_model import SuggestionListModel
@@ -114,6 +115,7 @@ class MockNovelStudioFacade(QObject):
     active_nav_changed = Signal()
     reduce_motion_changed = Signal()
     draft_status_changed = Signal()
+    generation_config_changed = Signal()
 
     def __init__(
         self,
@@ -124,6 +126,7 @@ class MockNovelStudioFacade(QObject):
     ) -> None:
         super().__init__(parent)
         self._draft_port = draft_port
+        self._generation_config = GenerationConfig()
         self._active_run_id: str | None = None
         self._draft_status = DRAFT_IDLE
         self._draft_coordinator = draft_coordinator
@@ -237,6 +240,22 @@ class MockNovelStudioFacade(QObject):
     @Property(str, notify=draft_status_changed)
     def draftStatus(self) -> str:
         return self._draft_status
+
+    @Property(int, notify=generation_config_changed)
+    def generationTargetWords(self) -> int:
+        return self._generation_config.target_words
+
+    @Property(int, notify=generation_config_changed)
+    def generationOutputTokenLimit(self) -> int:
+        return self._generation_config.output_token_limit
+
+    @Property(str, notify=generation_config_changed)
+    def generationMode(self) -> str:
+        return self._generation_config.mode.value
+
+    @Property(str, notify=generation_config_changed)
+    def generationAuditPolicy(self) -> str:
+        return self._generation_config.audit_policy.value
 
     # -- commands ------------------------------------------------------------
 
@@ -411,6 +430,64 @@ class MockNovelStudioFacade(QObject):
         self._reduce_motion = enabled
         self.reduce_motion_changed.emit()
 
+    @Slot(int)
+    def setGenerationTargetWords(self, value: int) -> None:
+        target = max(100, min(value, 100_000))
+        if target == self._generation_config.target_words:
+            return
+        self._generation_config = GenerationConfig(
+            target_words=target,
+            output_token_limit=self._generation_config.output_token_limit,
+            mode=self._generation_config.mode,
+            audit_policy=self._generation_config.audit_policy,
+        )
+        self.generation_config_changed.emit()
+
+    @Slot(int)
+    def setGenerationOutputTokenLimit(self, value: int) -> None:
+        limit = max(256, min(value, 32_768))
+        if limit == self._generation_config.output_token_limit:
+            return
+        self._generation_config = GenerationConfig(
+            target_words=self._generation_config.target_words,
+            output_token_limit=limit,
+            mode=self._generation_config.mode,
+            audit_policy=self._generation_config.audit_policy,
+        )
+        self.generation_config_changed.emit()
+
+    @Slot(str)
+    def setGenerationMode(self, value: str) -> None:
+        try:
+            mode = CreationMode(value)
+        except ValueError:
+            return
+        if mode == self._generation_config.mode:
+            return
+        self._generation_config = GenerationConfig(
+            target_words=self._generation_config.target_words,
+            output_token_limit=self._generation_config.output_token_limit,
+            mode=mode,
+            audit_policy=self._generation_config.audit_policy,
+        )
+        self.generation_config_changed.emit()
+
+    @Slot(str)
+    def setGenerationAuditPolicy(self, value: str) -> None:
+        try:
+            policy = AuditPolicy(value)
+        except ValueError:
+            return
+        if policy == self._generation_config.audit_policy:
+            return
+        self._generation_config = GenerationConfig(
+            target_words=self._generation_config.target_words,
+            output_token_limit=self._generation_config.output_token_limit,
+            mode=self._generation_config.mode,
+            audit_policy=policy,
+        )
+        self.generation_config_changed.emit()
+
     @Slot(str)
     def setChapterFilter(self, query: str) -> None:
         self._chapters_model.set_filter(query)
@@ -492,7 +569,7 @@ class MockNovelStudioFacade(QObject):
             run_id = self._draft_port.prepare(
                 chapter_id,
                 self._revision,
-                max(500, count_words(self._body_text) * 2),
+                self._generation_config,
             )
         except (KeyError, RuntimeError, ValueError) as exc:
             self._save_status = f"生成草稿失败：{exc}"

@@ -56,7 +56,7 @@ Item {
                 objectName: "draftButton"
                 text: "生成草稿"
                 enabled: Facade.draftStatus !== "GENERATING" && Facade.draftStatus !== "QUEUED"
-                onClicked: Facade.requestDraft()
+                onClicked: generationDialog.openRequested = true
             }
             AppButton {
                 objectName: "cancelDraftButton"
@@ -157,5 +157,11 @@ Item {
         if (state === "SAVING") return "accent"
         if (state === "CONFLICT") return "danger"
         return "success"
+    }
+
+    GenerationConfigDialog {
+        id: generationDialog
+        parent: root
+        anchors.centerIn: parent
     }
 }

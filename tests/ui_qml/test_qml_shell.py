@@ -176,8 +176,16 @@ def test_draft_button_opens_drawer(qtbot: QtBot) -> None:
     engine, facade, _ = _load_engine(qtbot)
     window = engine.rootObjects()[0]
     draft_button = window.findChild(object, "draftButton")
+    start_button = window.findChild(object, "startGenerationButton")
     assert draft_button is not None
+    assert start_button is not None
+
     QMetaObject.invokeMethod(draft_button, "clicked")
+    dialog = window.findChild(object, "generationConfigDialog")
+    assert dialog is not None
+    qtbot.waitUntil(lambda: dialog.property("visible") is True, timeout=5000)
+    QMetaObject.invokeMethod(start_button, "clicked")
+
     assert facade.property("aiDrawerOpen") is True
     assert facade.property("suggestions").rowCount() == 1
 
@@ -277,8 +285,15 @@ def test_project_draft_button_uses_injected_port(
     window = engine.rootObjects()[0]
     editor = window.findChild(object, "manuscriptEditor")
     draft_button = window.findChild(object, "draftButton")
+    start_button = window.findChild(object, "startGenerationButton")
 
     QMetaObject.invokeMethod(draft_button, "clicked")
+    qtbot.waitUntil(
+        lambda: window.findChild(object, "startGenerationButton") is not None
+        and window.findChild(object, "generationConfigDialog").property("visible"),
+        timeout=5000,
+    )
+    QMetaObject.invokeMethod(start_button, "clicked")
     qtbot.waitUntil(
         lambda: facade.property("suggestions").rowCount() == 1,
         timeout=5000,
@@ -292,3 +307,41 @@ def test_project_draft_button_uses_injected_port(
     assert "AI 生成的草稿正文" in editor.property("text")
     assert facade.property("currentRevision") == 7
     assert facade.property("editorState") == "CLEAN"
+
+
+def test_generation_config_dialog_applies_values_before_start(
+    qtbot: QtBot,
+) -> None:
+    facade = MockNovelStudioFacade()
+    engine, facade, _ = _load_engine(qtbot, facade)
+    window = engine.rootObjects()[0]
+    dialog = window.findChild(object, "generationConfigDialog")
+    assert dialog is not None
+    draft_button = window.findChild(object, "draftButton")
+    start_button = window.findChild(object, "startGenerationButton")
+
+    QMetaObject.invokeMethod(draft_button, "clicked")
+    qtbot.waitUntil(lambda: dialog.property("visible") is True, timeout=5000)
+
+    target_spin = dialog.findChild(object, "targetWordsSpin")
+    token_spin = dialog.findChild(object, "tokenLimitSpin")
+    mode_combo = dialog.findChild(object, "modeCombo")
+    audit_combo = dialog.findChild(object, "auditCombo")
+    assert target_spin is not None and token_spin is not None
+    assert mode_combo is not None and audit_combo is not None
+
+    target_spin.setProperty("value", 2500)
+    token_spin.setProperty("value", 4096)
+    mode_combo.setProperty("currentIndex", 1)
+    audit_combo.setProperty("currentIndex", 1)
+    QMetaObject.invokeMethod(start_button, "clicked")
+
+    assert facade.property("generationTargetWords") == 2500
+    assert facade.property("generationOutputTokenLimit") == 4096
+    assert facade.property("generationMode") == "STANDARD"
+    assert facade.property("generationAuditPolicy") == "STANDARD"
+    # Demo mode: starting generation adds a mock suggestion.
+    qtbot.waitUntil(
+        lambda: facade.property("suggestions").rowCount() == 1,
+        timeout=5000,
+    )

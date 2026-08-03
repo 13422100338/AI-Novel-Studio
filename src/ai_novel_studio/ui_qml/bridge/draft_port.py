@@ -15,6 +15,7 @@ never block the UI thread.
 from __future__ import annotations
 
 from collections.abc import Iterator
+from dataclasses import dataclass
 from typing import Protocol
 
 from ai_novel_studio.application.project_generation_session import (
@@ -30,6 +31,20 @@ from ai_novel_studio.domain.generation import AuditPolicy, CreationMode, Generat
 _DEFAULT_OUTPUT_TOKEN_LIMIT = 8192
 
 
+@dataclass(frozen=True, slots=True)
+class GenerationConfig:
+    """Presentation-layer generation options forwarded to the draft port.
+
+    Values are validated by the facade setters; the port applies them verbatim
+    through ``ProjectGenerationSession.prepare_generation``.
+    """
+
+    target_words: int = 800
+    output_token_limit: int = _DEFAULT_OUTPUT_TOKEN_LIMIT
+    mode: CreationMode = CreationMode.BASIC
+    audit_policy: AuditPolicy = AuditPolicy.MINIMAL
+
+
 class DraftPort(Protocol):
     """High-level generation operations the facade can invoke.
 
@@ -41,7 +56,7 @@ class DraftPort(Protocol):
         self,
         chapter_id: str,
         revision: int,
-        target_words: int,
+        config: GenerationConfig,
     ) -> str: ...
 
     def generate(self, run_id: str) -> tuple[str, str]: ...
@@ -63,14 +78,14 @@ class ProjectSessionDraftPort:
         self,
         chapter_id: str,
         revision: int,
-        target_words: int,
+        config: GenerationConfig,
     ) -> str:
         self.session.select_chapter(chapter_id, revision)
         return self.session.prepare_generation(
-            CreationMode.BASIC,
-            _DEFAULT_OUTPUT_TOKEN_LIMIT,
-            target_words,
-            AuditPolicy.MINIMAL,
+            config.mode,
+            config.output_token_limit,
+            config.target_words,
+            config.audit_policy,
         )
 
     def generate(self, run_id: str) -> tuple[str, str]:
