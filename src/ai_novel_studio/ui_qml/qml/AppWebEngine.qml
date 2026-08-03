@@ -17,6 +17,7 @@ ApplicationWindow {
     color: Theme.tokens.color.bgCanvas
 
     property bool sidebarVisible: true
+    property string lastEditorChapterId: ""
 
     RowLayout {
         anchors.fill: parent
@@ -72,8 +73,7 @@ ApplicationWindow {
                     Layout.fillHeight: true
                     editorUrl: EditorAssets.indexUrl
 
-                    onEditorLoaded: {
-                        // Handshake + load the current chapter once the page is up.
+                    function loadCurrentChapter() {
                         var payload = {
                             chapterId: Facade.currentChapterId,
                             baseRevision: Facade.currentRevision,
@@ -81,7 +81,25 @@ ApplicationWindow {
                         }
                         editorView.loadChapter(JSON.stringify(payload))
                     }
+
+                    onEditorLoaded: {
+                        window.lastEditorChapterId = Facade.currentChapterId
+                        editorView.loadCurrentChapter()
+                    }
                 }
+            }
+        }
+    }
+
+    Connections {
+        target: Facade
+        function onChapterChanged() {
+            // Reload only on chapter identity changes (project open / chapter
+            // switch). Saves also emit chapter_changed, but must not reset the
+            // editor and lose the caret.
+            if (Facade.currentChapterId !== window.lastEditorChapterId) {
+                window.lastEditorChapterId = Facade.currentChapterId
+                editorView.loadCurrentChapter()
             }
         }
     }
