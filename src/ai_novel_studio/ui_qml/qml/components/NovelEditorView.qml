@@ -8,7 +8,7 @@ WebEngineView {
     property url editorUrl: ""
     signal editorLoaded()
 
-    profile: QtWebEngineProfile {
+    profile: WebEngineProfile {
         id: editorProfile
         offTheRecord: true
     }
