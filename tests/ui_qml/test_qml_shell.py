@@ -558,3 +558,27 @@ def test_memory_detail_panel_shows_after_selection(
 
     QMetaObject.invokeMethod(close_button, "clicked")
     assert facade.property("memoryDetailVisible") is False
+
+
+def test_audit_ignore_button_updates_finding_status(
+    qtbot: QtBot, tmp_path: Path
+) -> None:
+    from .test_readonly_views import create_project_with_audit
+
+    root = create_project_with_audit(tmp_path)
+    facade = MockNovelStudioFacade()
+    facade.openProject(str(root))
+    facade.setActiveNav("audit")
+    engine, facade, _ = _load_engine(qtbot, facade)
+    window = engine.rootObjects()[0]
+    ignore_button = _find_quick_item(window.contentItem(), "ignoreAuditButton")
+    assert ignore_button is not None
+
+    QMetaObject.invokeMethod(ignore_button, "clicked")
+
+    audits = facade.property("auditViews")
+    qtbot.waitUntil(
+        lambda: audits.data(audits.index(0), audits.ROLE_STATUS) == "REJECTED",
+        timeout=5000,
+    )
+    assert "已更新" in facade.property("saveStatusText")

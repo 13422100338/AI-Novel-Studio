@@ -16,7 +16,9 @@ from uuid import uuid4
 
 from PySide6.QtCore import Property, QObject, QUrl, Signal, Slot
 
+from ai_novel_studio.application.project_audit_service import ProjectAuditService
 from ai_novel_studio.application.project_workspace_service import ProjectWorkspaceService
+from ai_novel_studio.domain.audit import AuditFindingStatus
 from ai_novel_studio.domain.generation import AuditPolicy, CreationMode
 from ai_novel_studio.ui_qml.bridge.draft_coordinator import (
     DRAFT_FAILED,
@@ -674,6 +676,28 @@ class MockNovelStudioFacade(QObject):
             position,
             len(finding.evidence),
         )
+
+    @Slot(int, str)
+    def updateAuditFindingStatus(self, row: int, status: str) -> None:
+        """Persist an ignore/false-positive decision through the audit service."""
+        finding = self._audits_model.audit_at_row(row)
+        if finding is None:
+            return
+        if self._workspace is None or self._workspace.project is None:
+            self._save_status = "未打开项目，无法更新审校状态"
+            self.editor_state_changed.emit()
+            return
+        try:
+            ProjectAuditService(
+                self._workspace.project
+            ).update_finding_status(finding.id, AuditFindingStatus(status))
+        except (KeyError, LookupError, RuntimeError, ValueError) as exc:
+            self._save_status = f"更新审校状态失败：{exc}"
+            self.editor_state_changed.emit()
+            return
+        self._refresh_overview()
+        self._save_status = "审校状态已更新"
+        self.editor_state_changed.emit()
 
     @Slot(bool)
     def setReduceMotion(self, enabled: bool) -> None:

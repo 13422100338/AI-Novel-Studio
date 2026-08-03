@@ -81,6 +81,26 @@ Item {
                         font.pixelSize: 11
                         color: Theme.tokens.color.textSecondary
                     }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        visible: status === "OPEN"
+                        spacing: 6
+
+                        Item {
+                            Layout.fillWidth: true
+                        }
+                        AppButton {
+                            objectName: "ignoreAuditButton"
+                            text: "忽略"
+                            onClicked: Facade.updateAuditFindingStatus(index, "REJECTED")
+                        }
+                        AppButton {
+                            objectName: "falsePositiveAuditButton"
+                            text: "误报"
+                            onClicked: Facade.updateAuditFindingStatus(index, "FALSE_POSITIVE")
+                        }
+                    }
                 }
 
                 MouseArea {

@@ -357,6 +357,43 @@ def test_reveal_audit_evidence_missing_reports_status(tmp_path: Path) -> None:
     assert "未找到" in facade.property("saveStatusText")
 
 
+def test_update_audit_finding_status_ignored(tmp_path: Path) -> None:
+    root = create_project_with_audit(tmp_path)
+    facade = MockNovelStudioFacade()
+    facade.openProject(str(root))
+    audits = facade.property("auditViews")
+    assert audits.data(audits.index(0), audits.ROLE_STATUS) == "OPEN"
+
+    facade.updateAuditFindingStatus(0, "REJECTED")
+
+    assert audits.data(audits.index(0), audits.ROLE_STATUS) == "REJECTED"
+    assert facade.property("auditCountText") == "1 项"
+    assert "已更新" in facade.property("saveStatusText")
+
+
+def test_update_audit_finding_status_false_positive(tmp_path: Path) -> None:
+    root = create_project_with_audit(tmp_path)
+    facade = MockNovelStudioFacade()
+    facade.openProject(str(root))
+
+    facade.updateAuditFindingStatus(0, "FALSE_POSITIVE")
+
+    audits = facade.property("auditViews")
+    assert audits.data(audits.index(0), audits.ROLE_STATUS) == "FALSE_POSITIVE"
+
+
+def test_update_audit_finding_status_invalid_keeps_open(tmp_path: Path) -> None:
+    root = create_project_with_audit(tmp_path)
+    facade = MockNovelStudioFacade()
+    facade.openProject(str(root))
+
+    facade.updateAuditFindingStatus(0, "NOT_A_STATUS")
+
+    audits = facade.property("auditViews")
+    assert audits.data(audits.index(0), audits.ROLE_STATUS) == "OPEN"
+    assert "失败" in facade.property("saveStatusText")
+
+
 def test_readonly_views_carry_memory_records(tmp_path: Path) -> None:
     root = create_project_with_memory(tmp_path)
     service = ProjectWorkspaceService()
