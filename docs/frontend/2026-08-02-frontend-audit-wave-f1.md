@@ -201,6 +201,11 @@ pyproject.toml                  （仅新增 ai-novel-studio-qml gui-script 入�
 > F10 进展（2026-08-03）：Token 芯片悬浮显示调用/失败明细（`StatusChip.tooltipText`，
 > 见 `2026-08-03-frontend-wave-f10-usage-tooltip.md`）；打包前评估仍未接线。
 
+> F11 进展（2026-08-03）：打包前只读评估完成——QML 资源清单（17 文件）、
+> package-data/spec 缺口与打包票待办已记录，未改动打包配置（见
+> `2026-08-03-frontend-wave-f11-packaging-assessment.md`）。当前 F1–F10 前端
+> 主线全部接线完成。
+
 ## 9. 结论
 
 当前前端最大的架构债务是 `MainWindow` 组合根与 demo 数据直灌面板；现有 `ui/qt` 适配模式和测试合同是可靠资产。F1 以纯新增方式建立 QML 壳、Design Tokens、Mock Facade 与写作垂直切片，不改旧 UI、不改后端，为 F2 起的渐进接线保留一条可验证的迁移通道。
