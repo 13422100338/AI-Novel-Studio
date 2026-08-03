@@ -6,3 +6,4 @@ StatusChip 1.0 StatusChip.qml
 SlidingDrawer 1.0 SlidingDrawer.qml
 SearchField 1.0 SearchField.qml
 EmptyState 1.0 EmptyState.qml
+OverviewPlaceholderPage 1.0 OverviewPlaceholderPage.qml

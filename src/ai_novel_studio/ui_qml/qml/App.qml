@@ -31,6 +31,18 @@ ApplicationWindow {
         return map[navId] || "写作"
     }
 
+    function navIndex(navId) {
+        const map = {
+            "writing": 0,
+            "characters": 1,
+            "memory": 2,
+            "clues": 3,
+            "audit": 4,
+            "settings": 5
+        }
+        return map[navId] || 0
+    }
+
     function autoSaveText(state) {
         if (state === "CLEAN") return "已保存"
         if (state === "CONFLICT") return "冲突"
@@ -92,13 +104,24 @@ ApplicationWindow {
 
                 StackLayout {
                     anchors.fill: parent
-                    currentIndex: Facade.activeNav === "writing" ? 0 : 1
+                    currentIndex: window.navIndex(Facade.activeNav)
 
                     WritingPage {}
 
+                    CharactersPage {}
+
+                    MemoryPage {}
+
                     EmptyState {
                         title: "页面迁移中"
-                        body: "「" + window.navTitle(Facade.activeNav) + "」工作区将在后续 Wave 接入现有服务，本轮仅实现写作工作区垂直切片。"
+                        body: "「线索」工作区将在后续 Wave 接入现有服务。"
+                    }
+
+                    AuditPage {}
+
+                    EmptyState {
+                        title: "设置"
+                        body: "设置工作区将在后续 Wave 接入现有模型与外观配置。"
                     }
                 }
             }

@@ -1,1 +1,4 @@
 WritingPage 1.0 WritingPage.qml
+CharactersPage 1.0 CharactersPage.qml
+MemoryPage 1.0 MemoryPage.qml
+AuditPage 1.0 AuditPage.qml

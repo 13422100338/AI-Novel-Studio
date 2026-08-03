@@ -33,6 +33,10 @@ from ai_novel_studio.ui_qml.bridge.dtos import (
 from ai_novel_studio.ui_qml.bridge.models.chapter_list_model import ChapterListModel
 from ai_novel_studio.ui_qml.bridge.models.draft_diff_model import DraftDiffModel
 from ai_novel_studio.ui_qml.bridge.models.suggestion_list_model import SuggestionListModel
+from ai_novel_studio.ui_qml.bridge.overview_counts import (
+    OverviewCounts,
+    readonly_overview_counts,
+)
 from ai_novel_studio.ui_qml.bridge.paragraph_diff import (
     ParagraphDiffBlock,
     apply_diff_blocks,
@@ -129,6 +133,7 @@ class MockNovelStudioFacade(QObject):
     generation_config_changed = Signal()
     draft_view_changed = Signal()
     usage_changed = Signal()
+    overview_changed = Signal()
 
     def __init__(
         self,
@@ -141,6 +146,7 @@ class MockNovelStudioFacade(QObject):
         self._draft_port = draft_port
         self._generation_config = GenerationConfig()
         self._usage = UsageDto()
+        self._overview = OverviewCounts()
         self._draft_diff_model = DraftDiffModel(self)
         self._draft_view = "draft"
         self._draft_base_body = ""
@@ -324,6 +330,18 @@ class MockNovelStudioFacade(QObject):
             return "0 次调用"
         failed = f" · {self._usage.failed_call_count} 失败" if self._usage.failed_call_count else ""
         return f"{self._usage.call_count} 次调用{failed}"
+
+    @Property(str, notify=overview_changed)
+    def characterCountText(self) -> str:
+        return self._count_text(self._overview.character_count, "人")
+
+    @Property(str, notify=overview_changed)
+    def memoryCountText(self) -> str:
+        return self._count_text(self._overview.memory_count, "条")
+
+    @Property(str, notify=overview_changed)
+    def auditCountText(self) -> str:
+        return self._count_text(self._overview.audit_count, "项")
 
     # -- commands ------------------------------------------------------------
 
@@ -650,6 +668,7 @@ class MockNovelStudioFacade(QObject):
         self._chapters_model.set_volumes(self._volumes)
         self._current_index = 0
         self._load_current_chapter_document()
+        self._refresh_overview()
         self.project_changed.emit()
         self.chapter_changed.emit()
         self.editor_state_changed.emit()
@@ -661,12 +680,28 @@ class MockNovelStudioFacade(QObject):
             workspace = self._workspace.load_chapter(chapter.id)
             self._body_text = workspace.content
             self._revision = workspace.revision
+            self._refresh_overview()
         else:
             self._body_text = chapter.body
             self._revision = chapter.revision
         self._saved_body = self._body_text
         self._editor_state = "CLEAN"
         self._save_status = "已载入 · 暂无未保存更改"
+
+    def _refresh_overview(self) -> None:
+        if self._workspace is None or self._workspace.project is None:
+            self._overview = OverviewCounts()
+            self.overview_changed.emit()
+            return
+        self._overview = readonly_overview_counts(
+            self._workspace.project,
+            self._chapters[self._current_index].id,
+        )
+        self.overview_changed.emit()
+
+    @staticmethod
+    def _count_text(value: int | None, unit: str) -> str:
+        return "—" if value is None else f"{value} {unit}"
 
     def _request_project_draft(self) -> None:
         if self._draft_port is None:

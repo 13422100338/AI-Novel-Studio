@@ -436,3 +436,22 @@ def test_usage_chips_visible_and_update_after_generation(
     assert window.findChild(object, "usageTokensChip").property("value") == "1.2K / 800"
     assert window.findChild(object, "usageCostChip").property("value") == "¥0.018"
     assert window.findChild(object, "usageCacheChip").property("value") == "缓存 600"
+
+
+def test_overview_pages_exist_and_show_counts(qtbot: QtBot, tmp_path: Path) -> None:
+    root = _create_temp_project(tmp_path / "novel")
+    facade = MockNovelStudioFacade()
+    facade.openProject(str(root))
+    engine, facade, _ = _load_engine(qtbot, facade)
+    window = engine.rootObjects()[0]
+
+    for page in ("charactersPage", "memoryPage", "auditPage"):
+        assert window.findChild(object, page) is not None, f"missing {page}"
+
+    facade.setActiveNav("characters")
+    assert facade.property("activeNav") == "characters"
+    characters_page = window.findChild(object, "charactersPage")
+    assert characters_page.property("visible") is True
+    count_chip = window.findChild(object, "charactersPageCount")
+    assert count_chip is not None
+    assert count_chip.property("value") == "0 人"
