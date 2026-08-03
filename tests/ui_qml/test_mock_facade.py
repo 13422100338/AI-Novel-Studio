@@ -598,3 +598,17 @@ def test_usage_stays_zero_without_port() -> None:
     facade = MockNovelStudioFacade()
     assert facade.property("usageInputOutputText") == "0 / 0"
     assert facade.property("usageCostText") == "未估算"
+
+
+def test_web_engine_word_count_falls_back_then_updates() -> None:
+    facade = MockNovelStudioFacade()
+    # No report yet: falls back to the facade body word count.
+    assert facade.property("webEngineWordCountText") == facade.property(
+        "currentWordCountText"
+    )
+
+    facade.setWebEngineWordCount(13570)
+    assert facade.property("webEngineWordCountText") == "约 13.6K"
+
+    facade.setWebEngineWordCount(-5)
+    assert facade.property("webEngineWordCountText") == "0"

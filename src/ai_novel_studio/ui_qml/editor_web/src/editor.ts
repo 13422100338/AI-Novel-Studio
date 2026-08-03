@@ -8,7 +8,7 @@
  * page never touches disk, models, or repositories.
  */
 import { Node } from "@tiptap/pm/model";
-import { EditorState, Plugin, PluginKey } from "@tiptap/pm/state";
+import { EditorState, Plugin, PluginKey, TextSelection } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import { EditorView } from "@tiptap/pm/view";
 import { keymap } from "@tiptap/pm/keymap";
@@ -16,6 +16,7 @@ import { history, redo, undo } from "@tiptap/pm/history";
 import {
   DebouncedSaveController,
   SnapshotPayload,
+  countWords,
   createNovelState,
   createSnapshot,
   replaceAll,
@@ -31,6 +32,11 @@ declare global {
   }
 }
 
+export interface RevealRangeRequest {
+  from: number;
+  to: number;
+}
+
 declare const QWebChannel: new (
   transport: unknown,
   callback: (channel: {
@@ -42,7 +48,8 @@ declare const QWebChannel: new (
         markdown: string,
         contentHash: string,
       ): void;
-      selectionChanged(from: number, to: number): void;
+  selectionChanged(from: number, to: number): void;
+  wordCountChanged(count: number): void;
     }>;
   }) => void,
 ) => void;
@@ -63,6 +70,7 @@ export interface NovelEditorBridge {
   showDecorations(items: Array<{ from: number; to: number; label: string }>): void;
   clearDecorations(): void;
   setReadOnly(reason: string): void;
+  revealRange(from: number, to: number): void;
 }
 
 const decorationsKey = new PluginKey<DecorationSet>("auditDecorations");
@@ -118,13 +126,16 @@ export class NovelEditor {
   private chapterId = "";
   private baseRevision = 0;
   private readonly onSave: (payload: SnapshotPayload) => void;
+  private readonly onWordCount: ((count: number) => void) | null;
 
   constructor(
     mount: HTMLElement,
     onSave: (payload: SnapshotPayload) => void,
+    onWordCount: ((count: number) => void) | null = null,
     initial: LoadDocumentPayload | null = null,
   ) {
     this.onSave = onSave;
+    this.onWordCount = onWordCount;
     this.saveController = new DebouncedSaveController({
       onSave: (payload) => this.onSave(payload),
     });
@@ -145,6 +156,7 @@ export class NovelEditor {
         const next = this.view.state.apply(transaction);
         this.view.updateState(next);
         this.scheduleSave();
+        this.reportWordCount();
       },
     });
     thisRef.view = this.view;
@@ -155,6 +167,12 @@ export class NovelEditor {
     this.saveController.noteEdit(
       createSnapshot(this.view.state, this.chapterId, this.baseRevision),
     );
+  }
+
+  reportWordCount(): void {
+    if (this.onWordCount) {
+      this.onWordCount(countWords(this.view.state.doc.textBetween(0, this.view.state.doc.content.size, "\n", "")));
+    }
   }
 
   loadDocument(payload: LoadDocumentPayload): void {
@@ -219,6 +237,18 @@ export class NovelEditor {
     this.view.dom.title = reason;
   }
 
+  revealRange(from: number, to: number): void {
+    const { state } = this.view;
+    const { doc } = state;
+    const fromPos = Math.max(0, Math.min(from, doc.content.size));
+    const toPos = Math.max(fromPos, Math.min(to, doc.content.size));
+    this.view.dispatch(
+      state.tr.setSelection(TextSelection.create(doc, fromPos, toPos)),
+    );
+    this.view.focus();
+    this.view.dom.scrollIntoView({ block: "center" });
+  }
+
   getMarkdown(): string {
     return stateToMarkdown(this.view.state);
   }
@@ -232,6 +262,7 @@ export class NovelEditor {
 export function boot(
   mount: HTMLElement,
   onSave: (payload: SnapshotPayload) => void,
+  onWordCount: ((count: number) => void) | null = null,
   initial: LoadDocumentPayload | null = null,
 ): NovelEditorBridge {
   let pythonBridge: {
@@ -241,6 +272,7 @@ export function boot(
       markdown: string,
       contentHash: string,
     ): void;
+    wordCountChanged(count: number): void;
   } | null = null;
   const editor = new NovelEditor(
     mount,
@@ -256,6 +288,13 @@ export function boot(
         onSave(payload);
       }
     },
+    (count) => {
+      if (pythonBridge) {
+        pythonBridge.wordCountChanged(count);
+      } else if (onWordCount) {
+        onWordCount(count);
+      }
+    },
     initial,
   );
   const bridge: NovelEditorBridge = {
@@ -269,6 +308,7 @@ export function boot(
     showDecorations: (items) => editor.showDecorations(items),
     clearDecorations: () => editor.clearDecorations(),
     setReadOnly: (reason) => editor.setReadOnly(reason),
+    revealRange: (from, to) => editor.revealRange(from, to),
   };
   window.__novelEditor = bridge;
   if (window.qt && window.qt.webChannelTransport) {
@@ -278,6 +318,7 @@ export function boot(
         return;
       }
       pythonBridge = python;
+      editor.reportWordCount();
       python.editorReady(1, JSON.stringify(["markdown-v1", "selection-v1", "decorations-v1"]));
     });
   }
@@ -293,6 +334,8 @@ if (typeof document !== "undefined") {
   if (mount) {
     boot(mount, (payload) => {
       console.log("[editor] save-requested", payload);
+    }, (count) => {
+      console.log("[editor] word-count", count);
     });
   }
 }

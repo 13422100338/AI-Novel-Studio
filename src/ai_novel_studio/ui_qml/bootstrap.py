@@ -12,6 +12,7 @@ from PySide6.QtQml import QQmlApplicationEngine
 
 from ai_novel_studio.ui_qml.bridge.mock_novel_studio_facade import MockNovelStudioFacade
 from ai_novel_studio.ui_qml.bridge.theme_provider import ThemeProvider
+from ai_novel_studio.ui_qml.editor_runtime import ensure_editor_dist, ensure_qwebchannel_js
 
 _FRONTEND_STATE: dict[int, tuple[MockNovelStudioFacade, ThemeProvider]] = {}
 
@@ -42,6 +43,7 @@ def app_qml_path() -> Path:
 
 
 def create_engine() -> QQmlApplicationEngine:
+    """Build the TextArea-mode shell (tests and screenshot baseline)."""
     engine = QQmlApplicationEngine()
     engine.addImportPath(str(Path(__file__).resolve().parent / "qml"))
     facade, theme = register_frontend_types(engine)
@@ -53,10 +55,37 @@ def create_engine() -> QQmlApplicationEngine:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    app = QGuiApplication(list(argv) if argv is not None else sys.argv)
+    args = list(argv) if argv is not None else sys.argv
+    use_webengine = "--textarea" not in args
+    args = [arg for arg in args if arg != "--textarea"]
+    if use_webengine:
+        from PySide6.QtWebEngineQuick import QtWebEngineQuick
+
+        ensure_editor_dist()
+        ensure_qwebchannel_js()
+        QtWebEngineQuick.initialize()
+
+    app = QGuiApplication(args)
     app.setApplicationName("AI Novel Studio (QML F1)")
     app.setOrganizationName("AI Novel Studio")
-    engine = create_engine()
+    engine = QQmlApplicationEngine()
+    engine.addImportPath(str(Path(__file__).resolve().parent / "qml"))
+    facade, theme = register_frontend_types(engine)
+    engine.rootContext().setContextProperty("WritingPageUseWebEngine", use_webengine)
+    if use_webengine:
+        from ai_novel_studio.ui_qml.bridge.editor_bridge import EditorBridge
+
+        editor_bridge = EditorBridge(engine)
+        editor_bridge.save_requested.connect(
+            lambda chapter_id, revision, markdown, content_hash: facade.saveFromEditor(
+                chapter_id, revision, markdown
+            )
+        )
+        editor_bridge.error.connect(facade.setSaveStatusText)
+        editor_bridge.word_count_changed.connect(facade.setWebEngineWordCount)
+        engine.rootContext().setContextProperty("pythonBridge", editor_bridge)
+    _FRONTEND_STATE[id(engine)] = (facade, theme)
+    engine.load(QUrl.fromLocalFile(str(app_qml_path())))
     if not engine.rootObjects():
         return 1
     return app.exec()

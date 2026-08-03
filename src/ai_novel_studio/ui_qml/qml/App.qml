@@ -155,7 +155,7 @@ ApplicationWindow {
 
                 StatusChip {
                     label: "字数"
-                    value: Facade.currentWordCountText
+                    value: window.useWebEngine ? Facade.webEngineWordCountText : Facade.currentWordCountText
                     tone: "accent"
                 }
                 StatusChip {

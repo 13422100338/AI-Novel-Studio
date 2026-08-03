@@ -103,6 +103,17 @@ def test_selection_changed_ignores_negative_positions() -> None:
     assert emitted == [(2, 8)]
 
 
+def test_word_count_changed_forwards_positive_counts() -> None:
+    bridge = EditorBridge()
+    emitted: list[int] = []
+    bridge.word_count_changed.connect(emitted.append)
+
+    bridge.wordCountChanged(13570)
+    bridge.wordCountChanged(-1)
+
+    assert emitted == [13570]
+
+
 def test_bridge_save_flows_into_facade_persistence(tmp_path: Path) -> None:
     root = create_temp_project(tmp_path / "novel")
     facade = MockNovelStudioFacade()

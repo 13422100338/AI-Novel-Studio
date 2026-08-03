@@ -60,6 +60,12 @@ export function docText(doc: Node): string {
   return doc.textBetween(0, doc.content.size, "\n", "");
 }
 
+export function countWords(text: string): number {
+  const cjk = text.match(/[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/g);
+  const latin = text.match(/[A-Za-z0-9]+/g);
+  return (cjk?.length ?? 0) + (latin?.length ?? 0);
+}
+
 export interface ReplaceAllResult {
   count: number;
   state: EditorState;

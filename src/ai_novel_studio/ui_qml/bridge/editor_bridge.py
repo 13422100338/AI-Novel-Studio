@@ -23,6 +23,7 @@ class EditorBridge(QObject):
     editor_ready = Signal(int, str)
     save_requested = Signal(str, int, str, str)
     selection_changed = Signal(int, int)
+    word_count_changed = Signal(int)
     error = Signal(str, str)
 
     def __init__(self, parent: QObject | None = None) -> None:
@@ -84,6 +85,12 @@ class EditorBridge(QObject):
         if from_pos < 0 or to_pos < 0:
             return
         self.selection_changed.emit(from_pos, to_pos)
+
+    @Slot(int)
+    def wordCountChanged(self, count: int) -> None:
+        if count < 0:
+            return
+        self.word_count_changed.emit(count)
 
 
 def sha256(text: str) -> str:

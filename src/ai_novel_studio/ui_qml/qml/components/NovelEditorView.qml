@@ -47,4 +47,11 @@ WebEngineView {
             "window.__novelEditor.applyTheme(" + tokensJson + ")"
         )
     }
+
+    function revealRange(from, to) {
+        runJavaScript(
+            "window.__novelEditor && " +
+            "window.__novelEditor.revealRange(" + from + ", " + to + ")"
+        )
+    }
 }

@@ -244,6 +244,12 @@ pyproject.toml                  （仅新增 ai-novel-studio-qml gui-script 入�
 > runJavaScript 桥与安全加固（见 `2026-08-03-phase1-editor-bridge-delivery.md`）；
 > 真机 IME/滚动手感与 WebEngine 接入主 Shell 仍待人工验收。
 
+> Phase 1 收口（2026-08-03）：真机验收通过，默认入口已统一为 WebEngine
+> 编辑器（`python -m ai_novel_studio.ui_qml`），TextArea 保留为
+> `--textarea` 回退与测试基线；字数实时回传、审校证据定位已接线
+> （见 `2026-08-03-phase1-unify-webengine-entry.md`）；AI 草稿生成在
+> WebEngine 模式仍为迁移后接线点。
+
 ## 9. 结论
 
 当前前端最大的架构债务是 `MainWindow` 组合根与 demo 数据直灌面板；现有 `ui/qt` 适配模式和测试合同是可靠资产。F1 以纯新增方式建立 QML 壳、Design Tokens、Mock Facade 与写作垂直切片，不改旧 UI、不改后端，为 F2 起的渐进接线保留一条可验证的迁移通道。

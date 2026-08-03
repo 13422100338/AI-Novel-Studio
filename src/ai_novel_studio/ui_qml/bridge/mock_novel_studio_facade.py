@@ -154,6 +154,7 @@ class MockNovelStudioFacade(QObject):
     character_detail_changed = Signal()
     memory_detail_changed = Signal()
     evidenceRevealRequested = Signal(str, int, int)
+    web_word_count_changed = Signal()
 
     def __init__(
         self,
@@ -166,6 +167,7 @@ class MockNovelStudioFacade(QObject):
         self._draft_port = draft_port
         self._generation_config = GenerationConfig()
         self._usage = UsageDto()
+        self._web_word_count: int | None = None
         self._overview = OverviewCounts()
         self._readonly_views = ReadonlyViews()
         self._characters_model = CharacterListModel(self)
@@ -257,6 +259,12 @@ class MockNovelStudioFacade(QObject):
     @Property(str, notify=chapter_changed)
     def currentWordCountText(self) -> str:
         return format_word_count(count_words(self._body_text))
+
+    @Property(str, notify=web_word_count_changed)
+    def webEngineWordCountText(self) -> str:
+        if self._web_word_count is None:
+            return format_word_count(count_words(self._body_text))
+        return format_word_count(self._web_word_count)
 
     @Property(str, notify=chapter_changed)
     def currentVolumeTitle(self) -> str:
@@ -623,6 +631,11 @@ class MockNovelStudioFacade(QObject):
         """Surface bridge/editor errors in the status bar."""
         self._save_status = message
         self.editor_state_changed.emit()
+
+    @Slot(int)
+    def setWebEngineWordCount(self, count: int) -> None:
+        self._web_word_count = max(0, count)
+        self.web_word_count_changed.emit()
         self.chapterChanged.emit()
 
     @Slot()

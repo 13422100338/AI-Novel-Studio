@@ -146,7 +146,7 @@ Item {
 
             StatusChip {
                 label: "字数"
-                value: Facade.currentWordCountText
+                value: root.useWebEngine ? Facade.webEngineWordCountText : Facade.currentWordCountText
                 tone: "accent"
             }
             StatusChip {
@@ -201,7 +201,9 @@ Item {
 
     function revealEvidence(position, length) {
         if (root.useWebEngine) {
-            Facade.setSaveStatusText("WebEngine 编辑器定位待接线，请在 TextArea 模式使用")
+            if (webEditorLoader.item !== null) {
+                webEditorLoader.item.revealRange(position, position + length)
+            }
             return
         }
         editor.forceActiveFocus()
