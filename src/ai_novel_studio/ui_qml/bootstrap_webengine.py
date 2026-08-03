@@ -62,8 +62,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         "EditorAssets",
         EditorAssets((dist / "index.html").as_uri(), engine),
     )
-    qml_root = Path(__file__).resolve().parent / "qml"
-    engine.load(QUrl.fromLocalFile(str(qml_root / "AppWebEngine.qml")))
+    engine.rootContext().setContextProperty("WritingPageUseWebEngine", True)
+    engine.load(QUrl.fromLocalFile(str(Path(__file__).resolve().parent / "qml" / "App.qml")))
     if not engine.rootObjects():
         return 1
     return app.exec()

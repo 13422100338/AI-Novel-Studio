@@ -33,6 +33,7 @@ def register_frontend_types(
     theme = theme if theme is not None else ThemeProvider()
     engine.rootContext().setContextProperty("Facade", facade)
     engine.rootContext().setContextProperty("Theme", theme)
+    engine.rootContext().setContextProperty("WritingPageUseWebEngine", False)
     return facade, theme
 
 

@@ -6,6 +6,9 @@ import "../components"
 Item {
     id: root
 
+    property bool useWebEngine: false
+    property string lastEditorChapterId: ""
+
     Rectangle {
         anchors.fill: parent
         color: Theme.tokens.color.bgCanvas
@@ -55,13 +58,14 @@ Item {
             AppButton {
                 objectName: "draftButton"
                 text: "生成草稿"
-                enabled: Facade.draftStatus !== "GENERATING" && Facade.draftStatus !== "QUEUED"
+                visible: !root.useWebEngine
+                enabled: !root.useWebEngine && Facade.draftStatus !== "GENERATING" && Facade.draftStatus !== "QUEUED"
                 onClicked: generationDialog.openRequested = true
             }
             AppButton {
                 objectName: "cancelDraftButton"
                 text: "取消生成"
-                visible: Facade.draftStatus === "GENERATING" || Facade.draftStatus === "QUEUED"
+                visible: !root.useWebEngine && (Facade.draftStatus === "GENERATING" || Facade.draftStatus === "QUEUED")
                 onClicked: Facade.cancelDraft()
             }
         }
@@ -69,7 +73,9 @@ Item {
         Text {
             id: infoText
             Layout.fillWidth: true
-            text: "F1 Mock 工作区：编辑正文并保存；「生成草稿」会创建一条 AI 建议（候选层，不直接改正文）。"
+            text: root.useWebEngine
+                ? "WebEngine 编辑器：编辑正文并保存；草稿生成在 TextArea 模式可用。"
+                : "F1 Mock 工作区：编辑正文并保存；「生成草稿」会创建一条 AI 建议（候选层，不直接改正文）。"
             font.pixelSize: 11
             wrapMode: Text.WordWrap
             color: Theme.tokens.color.textSecondary
@@ -85,6 +91,7 @@ Item {
             clip: true
 
             ScrollView {
+                visible: !root.useWebEngine
                 anchors.fill: parent
                 anchors.margins: 12
 
@@ -102,6 +109,33 @@ Item {
                     placeholderText: "开始写作…"
                     placeholderTextColor: Theme.tokens.color.textSecondary
                     onTextChanged: Facade.editorTextChanged(editor.text)
+                }
+            }
+
+            Loader {
+                id: webEditorLoader
+                anchors.fill: parent
+                anchors.margins: 12
+                active: root.useWebEngine
+
+                sourceComponent: NovelEditorView {
+                    id: webEditor
+                    objectName: "novelEditorView"
+                    editorUrl: EditorAssets.indexUrl
+
+                    function loadCurrentChapter() {
+                        var payload = {
+                            chapterId: Facade.currentChapterId,
+                            baseRevision: Facade.currentRevision,
+                            markdown: Facade.currentChapterBody
+                        }
+                        webEditor.loadChapter(JSON.stringify(payload))
+                    }
+
+                    onEditorLoaded: {
+                        root.lastEditorChapterId = Facade.currentChapterId
+                        webEditor.loadCurrentChapter()
+                    }
                 }
             }
         }
@@ -134,7 +168,7 @@ Item {
                 objectName: "saveButton"
                 text: "保存"
                 primary: true
-                onClicked: Facade.requestSave()
+                onClicked: root.useWebEngine ? webEditor.requestSave() : Facade.requestSave()
             }
             AppButton {
                 objectName: "reloadButton"
@@ -166,7 +200,17 @@ Item {
     }
 
     function revealEvidence(position, length) {
+        if (root.useWebEngine) {
+            Facade.setSaveStatusText("WebEngine 编辑器定位待接线，请在 TextArea 模式使用")
+            return
+        }
         editor.forceActiveFocus()
         editor.select(position, position + length)
+    }
+
+    function reloadFromFacade() {
+        if (root.useWebEngine && webEditorLoader.item !== null) {
+            webEditorLoader.item.loadCurrentChapter()
+        }
     }
 }

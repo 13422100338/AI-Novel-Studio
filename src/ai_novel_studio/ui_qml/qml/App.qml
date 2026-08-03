@@ -18,6 +18,8 @@ ApplicationWindow {
     font.family: Theme.tokens.font.ui
 
     property bool sidebarVisible: true
+    property bool useWebEngine: WritingPageUseWebEngine
+    property string lastEditorChapterId: ""
 
     function navTitle(navId) {
         const map = {
@@ -108,6 +110,7 @@ ApplicationWindow {
 
                     WritingPage {
                         id: writingPage
+                        useWebEngine: window.useWebEngine
                     }
 
                     CharactersPage {}
@@ -223,6 +226,12 @@ ApplicationWindow {
         target: Facade
         function onEvidenceRevealRequested(evidence, position, length) {
             writingPage.revealEvidence(position, length)
+        }
+        function onChapterChanged() {
+            if (Facade.currentChapterId !== window.lastEditorChapterId) {
+                window.lastEditorChapterId = Facade.currentChapterId
+                writingPage.reloadFromFacade()
+            }
         }
     }
 }
