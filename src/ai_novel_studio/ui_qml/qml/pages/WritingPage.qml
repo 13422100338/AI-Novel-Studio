@@ -51,11 +51,43 @@ Item {
                 text: "保存"
                 primary: true
                 visible: root.useWebEngine
+                Layout.minimumWidth: 64
                 onClicked: {
                     if (webEditorLoader.item !== null) {
                         webEditorLoader.item.requestSave()
                     }
                 }
+            }
+            AppButton {
+                objectName: "draftButton"
+                text: "生成草稿"
+                Layout.minimumWidth: 88
+                enabled: Facade.draftStatus !== "GENERATING" && Facade.draftStatus !== "QUEUED"
+                onClicked: generationDialog.openRequested = true
+            }
+            AppButton {
+                objectName: "cancelDraftButton"
+                text: "取消生成"
+                Layout.minimumWidth: 88
+                visible: Facade.draftStatus === "GENERATING" || Facade.draftStatus === "QUEUED"
+                onClicked: Facade.cancelDraft()
+            }
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 8
+
+            Text {
+                id: infoText
+                Layout.fillWidth: true
+                text: root.useWebEngine
+                    ? "WebEngine 编辑器：编辑正文并保存；「生成草稿」将草稿送入 AI 参考抽屉，整章采用后写回编辑器。"
+                    : "F1 Mock 工作区：编辑正文并保存；「生成草稿」会创建一条 AI 建议（候选层，不直接改正文）。"
+                font.pixelSize: 11
+                wrapMode: Text.WordWrap
+                elide: Text.ElideRight
+                color: Theme.tokens.color.textSecondary
             }
             AppButton {
                 text: "章节信息"
@@ -66,29 +98,6 @@ Item {
                 primary: true
                 onClicked: Facade.toggleAiDrawer(true)
             }
-            AppButton {
-                objectName: "draftButton"
-                text: "生成草稿"
-                enabled: Facade.draftStatus !== "GENERATING" && Facade.draftStatus !== "QUEUED"
-                onClicked: generationDialog.openRequested = true
-            }
-            AppButton {
-                objectName: "cancelDraftButton"
-                text: "取消生成"
-                visible: Facade.draftStatus === "GENERATING" || Facade.draftStatus === "QUEUED"
-                onClicked: Facade.cancelDraft()
-            }
-        }
-
-        Text {
-            id: infoText
-            Layout.fillWidth: true
-            text: root.useWebEngine
-                ? "WebEngine 编辑器：编辑正文并保存；「生成草稿」将草稿送入 AI 参考抽屉，整章采用后写回编辑器。"
-                : "F1 Mock 工作区：编辑正文并保存；「生成草稿」会创建一条 AI 建议（候选层，不直接改正文）。"
-            font.pixelSize: 11
-            wrapMode: Text.WordWrap
-            color: Theme.tokens.color.textSecondary
         }
 
         Rectangle {
