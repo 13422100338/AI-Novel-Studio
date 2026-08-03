@@ -25,6 +25,7 @@ dev = [
 [project.gui-scripts]
 ai-novel-studio = "ai_novel_studio.__main__:main"
 ai-novel-studio-qml = "ai_novel_studio.ui_qml.__main__:main"
+ai-novel-studio-editor = "ai_novel_studio.ui_qml.webengine:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

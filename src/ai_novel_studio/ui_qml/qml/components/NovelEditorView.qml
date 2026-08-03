@@ -1,12 +1,10 @@
 import QtQuick
-import QtWebChannel
 import QtWebEngine
 
 WebEngineView {
     id: webView
     objectName: "novelEditorView"
 
-    property var bridge: null
     property url editorUrl: ""
     signal editorLoaded()
 
@@ -15,17 +13,7 @@ WebEngineView {
         offTheRecord: true
     }
 
-    webChannel: QWebChannel {
-        id: channel
-        function rebind() {
-            if (webView.bridge !== null) {
-                registerObject("pythonBridge", webView.bridge)
-            }
-        }
-        Component.onCompleted: rebind()
-    }
-
-    onBridgeChanged: channel.rebind()
+    webChannel: EditorChannel
     url: webView.editorUrl
 
     onLoadingChanged: {
@@ -52,4 +40,3 @@ WebEngineView {
         )
     }
 }
-

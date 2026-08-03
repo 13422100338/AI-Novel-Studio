@@ -1,6 +1,11 @@
 """Phase 1: editor bridge payload validation."""
 
+from pathlib import Path
+
 from ai_novel_studio.ui_qml.bridge.editor_bridge import EditorBridge, sha256
+from ai_novel_studio.ui_qml.bridge.mock_novel_studio_facade import MockNovelStudioFacade
+
+from .test_project_wiring import create_temp_project
 
 
 def test_editor_ready_accepts_valid_protocol() -> None:
@@ -92,3 +97,18 @@ def test_selection_changed_ignores_negative_positions() -> None:
     bridge.selectionChanged(2, 8)
     assert emitted == [(2, 8)]
 
+
+def test_bridge_save_flows_into_facade_persistence(tmp_path: Path) -> None:
+    root = create_temp_project(tmp_path / "novel")
+    facade = MockNovelStudioFacade()
+    facade.openProject(str(root))
+    chapter_id = facade.property("currentChapterId")
+    bridge = EditorBridge()
+    bridge.save_requested.connect(facade.saveFromEditor)
+    markdown = "来自 WebEngine 的正文"
+
+    bridge.saveRequested(chapter_id, 1, markdown, sha256(markdown))
+
+    assert facade.property("editorState") == "CLEAN"
+    assert facade.property("currentRevision") == 2
+    assert facade.property("currentChapterBody") == markdown

@@ -559,6 +559,59 @@ class MockNovelStudioFacade(QObject):
         self.chapter_changed.emit()
         self.editor_state_changed.emit()
 
+    @Slot(str, int, str)
+    def saveFromEditor(
+        self,
+        chapter_id: str,
+        expected_revision: int,
+        markdown: str,
+    ) -> None:
+        """Persist a chapter payload coming from the WebEngine editor.
+
+        The bridge validates hash/size before this slot; the facade still
+        verifies the chapter matches the current editor and uses the F3
+        expected-revision save path (stale revisions become CONFLICT).
+        """
+        if self._workspace is None:
+            self._save_status = "未打开项目，无法保存"
+            self.editor_state_changed.emit()
+            return
+        current = self._chapters[self._current_index].id
+        if chapter_id != current:
+            self._save_status = "编辑器章节与当前章节不一致，拒绝保存"
+            self.editor_state_changed.emit()
+            return
+        if expected_revision != self._revision:
+            self._editor_state = "CONFLICT"
+            self._save_status = "编辑器保存修订已过期 · 未覆盖任何内容，请重新载入"
+            self.editor_state_changed.emit()
+            return
+        self._body_text = markdown
+        self._editor_state = "SAVING"
+        self.editor_state_changed.emit()
+        try:
+            result = self._workspace.save_chapter(
+                chapter_id,
+                markdown,
+                expected_revision=expected_revision,
+            )
+        except RuntimeError as exc:
+            message = str(exc)
+            if "revision is stale" in message:
+                self._editor_state = "CONFLICT"
+                self._save_status = "正文已在其他位置修改（修订冲突）· 未覆盖任何内容，请重新载入"
+            else:
+                self._editor_state = "DIRTY"
+                self._save_status = f"保存失败：{message}"
+            self.editor_state_changed.emit()
+            return
+        self._saved_body = markdown
+        self._revision = result.revision
+        self._editor_state = "CLEAN"
+        self._save_status = f"已保存 · 修订 {result.revision}"
+        self.editor_state_changed.emit()
+        self.chapter_changed.emit()
+
     @Slot()
     def requestDraft(self) -> None:
         if self._workspace is not None:

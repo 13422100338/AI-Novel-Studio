@@ -169,6 +169,51 @@ def test_editing_during_conflict_keeps_conflict_state(tmp_path: Path) -> None:
     facade.requestSave()
     assert facade.property("editorState") == "CONFLICT"
 
+
+def test_save_from_editor_persists_and_bumps_revision(tmp_path: Path) -> None:
+    root = create_temp_project(tmp_path / "novel")
+    facade = MockNovelStudioFacade()
+    facade.openProject(str(root))
+    chapter_id = facade.property("currentChapterId")
+
+    facade.saveFromEditor(chapter_id, 1, "来自 WebEngine 编辑器的正文")
+
+    assert facade.property("editorState") == "CLEAN"
+    assert facade.property("currentRevision") == 2
+    assert facade.property("currentChapterBody") == "来自 WebEngine 编辑器的正文"
+
+    facade.closeProject()
+    verify = ProjectWorkspaceService()
+    verify.open_project(root)
+    workspace = verify.load_chapter(chapter_id)
+    assert workspace.content == "来自 WebEngine 编辑器的正文"
+    assert workspace.revision == 2
+    verify.close_project()
+
+
+def test_save_from_editor_rejects_wrong_chapter(tmp_path: Path) -> None:
+    root = create_temp_project(tmp_path / "novel")
+    facade = MockNovelStudioFacade()
+    facade.openProject(str(root))
+
+    facade.saveFromEditor("wrong-chapter", 1, "正文")
+
+    assert "不一致" in facade.property("saveStatusText")
+    assert facade.property("editorState") == "CLEAN"
+
+
+def test_save_from_editor_stale_revision_enters_conflict(tmp_path: Path) -> None:
+    root = create_temp_project(tmp_path / "novel")
+    facade = MockNovelStudioFacade()
+    facade.openProject(str(root))
+    chapter_id = facade.property("currentChapterId")
+    _external_edit(root, chapter_id, "外部写入", expected_revision=1)
+
+    facade.saveFromEditor(chapter_id, 1, "编辑器正文")
+
+    assert facade.property("editorState") == "CONFLICT"
+    assert "修订" in facade.property("saveStatusText")
+
     facade.editorTextChanged("冲突期间继续打字")
 
     assert facade.property("editorState") == "CONFLICT"

@@ -38,7 +38,8 @@ window.__novelEditor.loadDocument({
 2. `NovelEditorView` 挂到 WritingPage（替换 TextArea 的垂直切片）；
 3. `editorLoaded` 后 `runJavaScript` 注入 `loadDocument`，并接
    `EditorBridge.save_requested` → Facade 保存（复用 F3 路径）；
-4. 启动 `python -m ai_novel_studio.ui_qml`，打开真实项目切章验证。
+4. 启动 `python -m ai_novel_studio.ui_qml.webengine`，打开真实项目切章验证
+   （WebEngine 写作切片入口，P1-5）。
 
 人工确认：
 - 打开/切章加载 20 万字符稿，滚动与撤销流畅；
