@@ -95,12 +95,13 @@ All Wave 1 tasks were dispatched from `3382dd36c2a4aeb4acdab411e9211885b633e678`
 | Task | Model / reasoning | Thread | Worktree | Assigned branch | HEAD state | Status |
 | --- | --- | --- | --- | --- | --- | --- |
 
-| `manifest-eligibility-v2` | `gpt-5.6-sol` / `high` | `019f87e8-6d32-7141-b9b4-4f1142e4db4e` | `C:\Users\钟子诚\.codex\worktrees\93d7\AI-Novel-Studio` | `codex/manifest-eligibility-r1b` | branch | R1b merged as `c4450e3`; no schema ownership; lane paused |
+| `manifest-eligibility-v2` | `gpt-5.6-sol` / `high` | `019f87e8-6d32-7141-b9b4-4f1142e4db4e` | `C:\Users\钟子诚\.codex\worktrees\93d7\AI-Novel-Studio` | `codex/manifest-eligibility-r1b` | branch | R2a strict read-only RevisionImpact/local-maintenance readiness authorized; implementation not authorized |
 | `generation-profile-audit-policy` | `gpt-5.6-terra` / `medium` | `019f87e8-696e-7f11-bcfe-1552f51cabc3` | `C:\Users\钟子诚\.codex\worktrees\4df4\AI-Novel-Studio` | `codex/generation-profile-audit-policy-b5` | branch | B1-B7 merged; B7 is `663f932`; lane paused pending explicit instruction |
 | `view-operations-ui` | `gpt-5.6-luna` / `max` | `019f87e8-7a77-7902-b3d1-a38f32240136` | `C:\Users\钟子诚\.codex\worktrees\8802\AI-Novel-Studio` | `codex/view-operations-ui-s1` | branch | S1 merged as `03f223e`; lane paused pending explicit instruction |
 
-Current dispatch override: no implementation is active. A is paused after R1b; B is paused after
-its Gate S0 report; `view-operations-ui` is paused after S1; `style-engine` remains paused after ST1,
+Current dispatch override: no implementation is active. A owns only strict read-only R2a
+RevisionImpact/revision-local-maintenance readiness after R1b; B is paused after its Gate S0
+report; `view-operations-ui` is paused after S1; `style-engine` remains paused after ST1,
 `generation-profile-audit-policy` remains paused after B14, and `fix-p0-logging` remains paused
 after P0-1. P0-2 requires a separate ticket decision.
 
@@ -109,7 +110,8 @@ Formal Manuscript exact-evidence retrieval are now planned in
 `2026-08-09-backend-refactor-supplemental-upgrade.md`. Gate S0 and its no-schema S1 prerequisite
 are complete. ADR 0022 freezes the Formal Manuscript range, chunk identity, and structured
 embedding-cache contract. R1a/schema v19 and the no-schema R1b manual-build projection are
-integrated; R2-R4, O1-O2, H1, and V1 remain unauthorized.
+integrated. R2a read-only readiness is active, but R2 implementation, R3-R4, O1-O2, H1, and V1
+remain unauthorized.
 
 Product decision: Manual Pins are immutable materialized snapshots. They never automatically re-resolve or refresh from their source; authors update them only by removing and re-pinning. Do not add a live-pointer, automatic stale gate, or refresh behavior without a new explicit decision.
 
