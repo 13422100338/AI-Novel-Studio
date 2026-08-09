@@ -1,5 +1,12 @@
 # AI Novel Studio 后端重构交接说明
 
+> **2026-08-09 更新：** 本文保留为 2026-07-22 历史快照。A1-A4、B1-B14、
+> C1-C14、M1、E1 系列、SE1-SE3 与 ST1 的当前集成状态以
+> `docs/handoffs/BACKEND_WORKTREE_BOARD.md` 为准；其中“Embedding 尚未真正接入生产
+> 主链”等历史缺口已经完成。共享 Occurrence / View 稀疏化 / Subject 历程查询 /
+> Formal Manuscript 历史证据回查的新约束与后续实施顺序，见
+> `docs/handoffs/2026-08-09-backend-refactor-supplemental-upgrade.md`。
+
 > 状态快照：2026-07-22<br>
 > 项目目录：`C:\Users\钟子诚\Desktop\AI-Novel-Studio`<br>
 > 后端方案：`C:\Users\钟子诚\Downloads\AI_Novel_Studio_后端改进方案_Subject_View_Time_Context_Compiler_修订版.md`

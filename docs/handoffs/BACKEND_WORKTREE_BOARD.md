@@ -11,6 +11,7 @@
 - Latest integrated business commit: `36b0c2f` (P0-1 model-boundary exception logging and credential-safe log redaction, including prior A1-A4, B1-B14, C1-C14, M1, E1a, E1b-SR1, E1b-SS1, E1b-CR1, E1b-CS1, E1b-CE1, E1b-SM1, SE1-SE3, and ST1 increments).
 - Planning sources:
   - `docs/handoffs/2026-07-22-backend-refactor-handoff.md`
+  - `docs/handoffs/2026-08-09-backend-refactor-supplemental-upgrade.md`
   - `C:\Users\钟子诚\Downloads\AI_Novel_Studio_后端改进方案_Subject_View_Time_Context_Compiler_修订版.md`
 
 ## Worktree Startup Rules
@@ -92,6 +93,11 @@ All Wave 1 tasks were dispatched from `3382dd36c2a4aeb4acdab411e9211885b633e678`
 | `view-operations-ui` | `gpt-5.6-luna` / `medium` | `019f87e8-7a77-7902-b3d1-a38f32240136` | `C:\Users\钟子诚\.codex\worktrees\8802\AI-Novel-Studio` | `codex/view-operations-ui` | branch | C1-C10 merged; C10 is `bc41148`; lane paused pending explicit instruction |
 
 Current dispatch override: `style-engine` is paused after ST1; `generation-profile-audit-policy` is paused after B14 because no safe B15 rule exists without a new POV/visibility product contract; `view-operations-ui` is paused after C14; `fix-p0-logging` is paused after P0-1 and P0-2 requires a separate ticket decision.
+
+Supplemental planning status: shared Occurrence/View sparsification/Subject progressive history and
+Formal Manuscript exact-evidence retrieval are now planned in
+`2026-08-09-backend-refactor-supplemental-upgrade.md`. No implementation or schema owner is active;
+the first allowed action is the read-only `Gate S0` audit after a separate user authorization.
 
 Product decision: Manual Pins are immutable materialized snapshots. They never automatically re-resolve or refresh from their source; authors update them only by removing and re-pinning. Do not add a live-pointer, automatic stale gate, or refresh behavior without a new explicit decision.
 
