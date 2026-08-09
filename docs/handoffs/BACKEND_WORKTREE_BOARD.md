@@ -96,7 +96,7 @@ All Wave 1 tasks were dispatched from `3382dd36c2a4aeb4acdab411e9211885b633e678`
 
 | `manifest-eligibility-v2` | `gpt-5.6-sol` / `high` | `019f87e8-6d32-7141-b9b4-4f1142e4db4e` | `C:\Users\钟子诚\.codex\worktrees\93d7\AI-Novel-Studio` | `codex/manifest-eligibility-v2` | branch | M1, E1a, E1b-SR1, E1b-SS1, E1b-CR1, and E1b-CS1 merged at `812a737`, `5233ccd`, `453a709`, `5e1062e`, `14b1a1f`, and `ce4e7ba`; lane paused pending explicit instruction |
 | `generation-profile-audit-policy` | `gpt-5.6-terra` / `medium` | `019f87e8-696e-7f11-bcfe-1552f51cabc3` | `C:\Users\钟子诚\.codex\worktrees\4df4\AI-Novel-Studio` | `codex/generation-profile-audit-policy-b5` | branch | B1-B7 merged; B7 is `663f932`; lane paused pending explicit instruction |
-| `view-operations-ui` | `gpt-5.6-luna` / `max` | `019f87e8-7a77-7902-b3d1-a38f32240136` | `C:\Users\钟子诚\.codex\worktrees\8802\AI-Novel-Studio` | `codex/view-operations-ui` | branch | S1 authorized after Gate S0; implementation must start from latest main and stop at review |
+| `view-operations-ui` | `gpt-5.6-luna` / `max` | `019f87e8-7a77-7902-b3d1-a38f32240136` | `C:\Users\钟子诚\.codex\worktrees\8802\AI-Novel-Studio` | `codex/view-operations-ui-s1` | branch | S1 clean-start branch created from `10e043b`; implementation must stop at review |
 
 Current dispatch override: `view-operations-ui` owns S1 only. The A and B tasks are paused after
 their Gate S0 reports; `style-engine` remains paused after ST1,
