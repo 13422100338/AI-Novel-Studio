@@ -34,11 +34,13 @@
 
 All Wave 1 tasks were dispatched from `3382dd36c2a4aeb4acdab411e9211885b633e678`; their initial business-code baseline remains `e35b50d`.
 
-- Active implementations authorized by the user: none.
-- Active read-only audits authorized by the user: `Gate S0`, split across the existing A/B/C
-  backend tasks. A audits Formal Manuscript RAG/evidence/context trace, B audits
-  Occurrence/Participant Link/revision invalidation, and C audits sparse View/Reader
-  visibility/progressive Subject History. No implementation or schema ownership is implied.
+- Active implementations authorized by the user: `S1 Canonical Chapter Sequence Boundary`,
+  assigned to the existing `view-operations-ui` task. S1 is a no-schema prerequisite that
+  unifies canonical cross-volume chapter order, one-based sequence lookup, deterministic
+  same-position ID tie-breaking, and Reader visibility from `source sequence + 1`.
+- Completed read-only audit: `Gate S0` across A/B/C. Its reports froze the dependency direction
+  `R1 -> R2 -> R3 -> R4`, require R1 and O1 schema ownership to be serialized, require O2 to
+  consume R2 revision impact, and require H1 to reuse the R3 evidence facade.
 - Integrated increments:
   - `embedding-production` increment A1 (provider and gateway embedding contract), merged as `fdbfb088278c18a0efb3e062cd5f9e8a6ddd01f4`.
   - `embedding-production` increment A2 (Gateway-backed document/query embedding provider plus fail-open semantic recall), merged as `03b2263043262cdf371f1929a1255162decabfac`.
@@ -94,18 +96,18 @@ All Wave 1 tasks were dispatched from `3382dd36c2a4aeb4acdab411e9211885b633e678`
 
 | `manifest-eligibility-v2` | `gpt-5.6-sol` / `high` | `019f87e8-6d32-7141-b9b4-4f1142e4db4e` | `C:\Users\钟子诚\.codex\worktrees\93d7\AI-Novel-Studio` | `codex/manifest-eligibility-v2` | branch | M1, E1a, E1b-SR1, E1b-SS1, E1b-CR1, and E1b-CS1 merged at `812a737`, `5233ccd`, `453a709`, `5e1062e`, `14b1a1f`, and `ce4e7ba`; lane paused pending explicit instruction |
 | `generation-profile-audit-policy` | `gpt-5.6-terra` / `medium` | `019f87e8-696e-7f11-bcfe-1552f51cabc3` | `C:\Users\钟子诚\.codex\worktrees\4df4\AI-Novel-Studio` | `codex/generation-profile-audit-policy-b5` | branch | B1-B7 merged; B7 is `663f932`; lane paused pending explicit instruction |
-| `view-operations-ui` | `gpt-5.6-luna` / `medium` | `019f87e8-7a77-7902-b3d1-a38f32240136` | `C:\Users\钟子诚\.codex\worktrees\8802\AI-Novel-Studio` | `codex/view-operations-ui` | branch | C1-C10 merged; C10 is `bc41148`; lane paused pending explicit instruction |
+| `view-operations-ui` | `gpt-5.6-luna` / `max` | `019f87e8-7a77-7902-b3d1-a38f32240136` | `C:\Users\钟子诚\.codex\worktrees\8802\AI-Novel-Studio` | `codex/view-operations-ui` | branch | S1 authorized after Gate S0; implementation must start from latest main and stop at review |
 
-Current dispatch override: the existing A/B/C tasks are active only for the read-only `Gate S0`
-audit described above. Their previous implementation lanes remain paused: `style-engine` after
-ST1, `generation-profile-audit-policy` after B14, and `view-operations-ui` after C14.
-`fix-p0-logging` remains paused after P0-1; P0-2 requires a separate ticket decision.
+Current dispatch override: `view-operations-ui` owns S1 only. The A and B tasks are paused after
+their Gate S0 reports; `style-engine` remains paused after ST1,
+`generation-profile-audit-policy` remains paused after B14, and `fix-p0-logging` remains paused
+after P0-1. P0-2 requires a separate ticket decision.
 
 Supplemental planning status: shared Occurrence/View sparsification/Subject progressive history and
 Formal Manuscript exact-evidence retrieval are now planned in
-`2026-08-09-backend-refactor-supplemental-upgrade.md`. No implementation or schema owner is active.
-The user authorized the read-only `Gate S0` audit on 2026-08-09; its A/B/C reports must be
-consolidated by the master before any R1-R4, O1-O2, H1, or V1 implementation ticket is proposed.
+`2026-08-09-backend-refactor-supplemental-upgrade.md`. Gate S0 is complete and S1 is the first
+authorized prerequisite. No schema owner is active. S1 must not start R1-R4, O1-O2, H1, or V1,
+and must not alter persisted View rows or chapter numbering data.
 
 Product decision: Manual Pins are immutable materialized snapshots. They never automatically re-resolve or refresh from their source; authors update them only by removing and re-pinning. Do not add a live-pointer, automatic stale gate, or refresh behavior without a new explicit decision.
 
