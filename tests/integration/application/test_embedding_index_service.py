@@ -3,13 +3,17 @@ from pathlib import Path
 import pytest
 
 from ai_novel_studio.application.embedding_index_service import EmbeddingIndexService
+from ai_novel_studio.domain.embedding import EmbeddingIndexIdentity
 from ai_novel_studio.domain.memory import MemoryStatus, ReviewStatus
 from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
-from ai_novel_studio.infrastructure.storage.search_repository import SearchRepository
+from ai_novel_studio.infrastructure.storage.search_repository import (
+    SearchDocument,
+    SearchRepository,
+)
 
 
 class RecordingEmbeddingProvider:
-    model_id = "embedding-model"
+    identity = EmbeddingIndexIdentity("provider-a", "embedding-model", 1)
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, ...]] = []
@@ -23,7 +27,7 @@ class RecordingEmbeddingProvider:
 
 
 class WrongCardinalityProvider:
-    model_id = "embedding-model"
+    identity = EmbeddingIndexIdentity("provider-a", "embedding-model", 1)
 
     def embed_documents(
         self,
@@ -33,7 +37,7 @@ class WrongCardinalityProvider:
 
 
 class PartlyInvalidProvider:
-    model_id = "embedding-model"
+    identity = EmbeddingIndexIdentity("provider-a", "embedding-model", 1)
 
     def embed_documents(
         self,
@@ -43,7 +47,7 @@ class PartlyInvalidProvider:
 
 
 class MixedDimensionsProvider:
-    model_id = "embedding-model"
+    identity = EmbeddingIndexIdentity("provider-a", "embedding-model", 1)
 
     def embed_documents(
         self,
@@ -75,7 +79,7 @@ class FirstBatchHasEmptyVectorProvider(RecordingEmbeddingProvider):
 
 
 class SourceChangingProvider:
-    model_id = "embedding-model"
+    identity = EmbeddingIndexIdentity("provider-a", "embedding-model", 1)
 
     def __init__(self, search: SearchRepository) -> None:
         self.search = search
@@ -103,7 +107,7 @@ def _index_document(
     source_id: str,
     content: str = "公爵曾经私下指定继承人。",
     pinned_weight: float = 0,
-):  # type: ignore[no-untyped-def]
+) -> SearchDocument:
     return search.index_document(
         document_type="CANON",
         source_id=source_id,
@@ -141,9 +145,9 @@ def test_rebuild_pending_batches_sources_and_persists_each_valid_vector(
     assert report.indexed_embeddings == 3
     assert report.failures == ()
     assert [len(call) for call in provider.calls] == [2, 1]
-    assert search.pending_embedding_sources("embedding-model", limit=10) == ()
+    assert search.pending_embedding_sources(provider.identity, limit=10) == ()
     assert all(
-        search.get_embedding(document.id, "embedding-model").status
+        search.get_embedding(document.id, provider.identity).status
         == MemoryStatus.CURRENT
         for document in documents
     )
@@ -196,8 +200,11 @@ def test_rebuild_pending_keeps_valid_items_when_one_vector_is_invalid(
     assert len(report.failures) == 1
     assert report.failures[0].document_id == documents[0].id
     with pytest.raises(KeyError):
-        search.get_embedding(documents[0].id, "embedding-model")
-    assert search.get_embedding(documents[1].id, "embedding-model").status == (
+        search.get_embedding(documents[0].id, PartlyInvalidProvider.identity)
+    assert search.get_embedding(
+        documents[1].id,
+        PartlyInvalidProvider.identity,
+    ).status == (
         MemoryStatus.CURRENT
     )
 
@@ -242,8 +249,11 @@ def test_rebuild_pending_reports_source_race_without_saving_the_old_vector(
     assert [failure.document_id for failure in report.failures] == [document.id]
     assert "source changed" in report.failures[0].message
     with pytest.raises(KeyError):
-        search.get_embedding(document.id, "embedding-model")
-    pending = search.pending_embedding_sources("embedding-model", limit=10)
+        search.get_embedding(document.id, SourceChangingProvider.identity)
+    pending = search.pending_embedding_sources(
+        SourceChangingProvider.identity,
+        limit=10,
+    )
     assert [source.document_id for source in pending] == [document.id]
     assert pending[0].text.endswith("模型调用期间来源已经被修改。")
 

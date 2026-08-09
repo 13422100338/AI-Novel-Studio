@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
+from ai_novel_studio.domain.embedding import EmbeddingIndexIdentity
 from ai_novel_studio.domain.memory import MemoryStatus
 from ai_novel_studio.infrastructure.storage.search_repository import (
     MAX_RECALL_CANDIDATES,
@@ -28,7 +29,7 @@ class EmbeddingRecallProvider(Protocol):
 
 class QueryEmbeddingProvider(Protocol):
     @property
-    def model_id(self) -> str: ...
+    def identity(self) -> EmbeddingIndexIdentity: ...
 
     def embed_query(self, query: str) -> tuple[float, ...]: ...
 
@@ -49,7 +50,7 @@ class StoredEmbeddingRecallProvider:
         limit: int,
     ) -> tuple[EmbeddingCandidate, ...]:
         return self.repository.recall_embeddings(
-            self.query_embeddings.model_id,
+            self.query_embeddings.identity,
             self.query_embeddings.embed_query(query),
             limit=limit,
         )

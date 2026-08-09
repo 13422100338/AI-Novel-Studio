@@ -3,6 +3,10 @@ from __future__ import annotations
 from ai_novel_studio.core.context.history_retriever import (
     EmbeddingUnavailableError,
 )
+from ai_novel_studio.domain.embedding import (
+    CURRENT_EMBEDDING_SCHEMA_VERSION,
+    EmbeddingIndexIdentity,
+)
 from ai_novel_studio.infrastructure.llm.gateway import (
     LLMGateway,
     MissingCredentialError,
@@ -24,6 +28,7 @@ _EMBEDDING_UNAVAILABLE_ERRORS = (
     ProviderRequestError,
     ProviderProtocolError,
 )
+_EMBEDDING_IDENTITY_ERRORS = (*_EMBEDDING_UNAVAILABLE_ERRORS, ValueError)
 
 
 class GatewayEmbeddingProvider:
@@ -31,14 +36,22 @@ class GatewayEmbeddingProvider:
         self.gateway = gateway
 
     @property
-    def model_id(self) -> str:
+    def identity(self) -> EmbeddingIndexIdentity:
         try:
             route = self.gateway.configuration.routes.resolve(
                 TaskPurpose.MEMORY_EMBEDDING
             )
-        except _EMBEDDING_UNAVAILABLE_ERRORS as error:
+            return EmbeddingIndexIdentity(
+                route.provider_id,
+                route.model_id,
+                CURRENT_EMBEDDING_SCHEMA_VERSION,
+            )
+        except _EMBEDDING_IDENTITY_ERRORS as error:
             raise EmbeddingUnavailableError("Embedding 暂不可用") from error
-        return route.model_id
+
+    @property
+    def model_id(self) -> str:
+        return self.identity.model_id
 
     def embed_documents(
         self,

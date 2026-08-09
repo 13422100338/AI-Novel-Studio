@@ -7,6 +7,7 @@ from ai_novel_studio.core.context.history_retriever import (
     HistoryRetriever,
     StoredEmbeddingRecallProvider,
 )
+from ai_novel_studio.domain.embedding import EmbeddingIndexIdentity
 from ai_novel_studio.domain.memory import MemoryStatus, ReviewStatus
 from ai_novel_studio.infrastructure.storage.chapter_repository import ChapterRepository
 from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
@@ -42,7 +43,7 @@ class _BrokenEmbeddingRecall:
 
 
 class _StaticQueryEmbeddings:
-    model_id = "embedding-model"
+    identity = EmbeddingIndexIdentity("provider-a", "embedding-model", 1)
 
     def __init__(self, vector: tuple[float, ...]) -> None:
         self.vector = vector
@@ -341,13 +342,13 @@ def test_stored_embedding_provider_uses_existing_history_retrieval_path(
         status=MemoryStatus.CURRENT,
     )
     source = search.embedding_source(document.id)
+    query_embeddings = _StaticQueryEmbeddings((1.0, 0.0))
     search.save_embedding(
         document.id,
-        "embedding-model",
+        query_embeddings.identity,
         (1.0, 0.0),
         expected_content_hash=source.content_hash,
     )
-    query_embeddings = _StaticQueryEmbeddings((1.0, 0.0))
 
     hits = HistoryRetriever(
         search,

@@ -12,6 +12,7 @@ from ai_novel_studio.core.context.history_retriever import (
     EmbeddingUnavailableError,
     QueryEmbeddingProvider,
 )
+from ai_novel_studio.domain.embedding import EmbeddingIndexIdentity
 from ai_novel_studio.infrastructure.llm import (
     EmbeddingRequest,
     LLMGateway,
@@ -73,17 +74,21 @@ class _EmbeddingAdapter:
         return result
 
 
-def _configuration(*, embedding_route: bool = True) -> ModelConfiguration:
+def _configuration(
+    *,
+    embedding_route: bool = True,
+    provider_id: str = "relay",
+) -> ModelConfiguration:
     provider = ProviderProfile(
-        id="relay",
+        id=provider_id,
         name="Relay",
         base_url="https://relay.example/v1",
         credential_id="credential-relay",
     )
-    route = ModelRoute("relay", "embedding-model")
+    route = ModelRoute(provider_id, "embedding-model")
     return ModelConfiguration(
         providers=(provider,),
-        models=(ModelProfile(provider_id="relay", model_id="embedding-model"),),
+        models=(ModelProfile(provider_id=provider_id, model_id="embedding-model"),),
         routes=TaskRoutes(
             plot=route,
             prose=route,
@@ -101,13 +106,17 @@ def _gateway(
     *,
     embedding_route: bool = True,
     credential: bool = True,
+    provider_id: str = "relay",
 ) -> LLMGateway:
     credentials = MemoryCredentialStore()
     if credential:
         credentials.set("credential-relay", "unit-secret")
     adapters = {"openai_compatible": adapter} if adapter is not None else {}
     return LLMGateway(
-        _configuration(embedding_route=embedding_route),
+        _configuration(
+            embedding_route=embedding_route,
+            provider_id=provider_id,
+        ),
         credentials,
         adapters,
         UsageTracker(),
@@ -129,7 +138,12 @@ def test_gateway_embedding_provider_uses_one_route_for_documents_and_query() -> 
     document_vectors = document_provider.embed_documents(("first", "second"))
     query_vector = query_provider.embed_query("question")
 
-    assert document_provider.model_id == query_provider.model_id == "embedding-model"
+    assert document_provider.identity == query_provider.identity == EmbeddingIndexIdentity(
+        "relay",
+        "embedding-model",
+        1,
+    )
+    assert provider.model_id == "embedding-model"
     assert document_vectors == ((0.1, 0.2), (0.3, 0.4))
     assert query_vector == (0.5, 0.6)
     assert [call[0] for call in adapter.calls] == [
@@ -144,7 +158,19 @@ def test_gateway_embedding_provider_normalizes_missing_route() -> None:
     )
 
     with pytest.raises(EmbeddingUnavailableError, match="暂不可用"):
-        _ = provider.model_id
+        _ = provider.identity
+
+
+def test_gateway_embedding_provider_normalizes_invalid_cache_identity() -> None:
+    provider = GatewayEmbeddingProvider(
+        _gateway(
+            _EmbeddingAdapter([]),
+            provider_id="p" * 201,
+        )
+    )
+
+    with pytest.raises(EmbeddingUnavailableError, match="暂不可用"):
+        _ = provider.identity
 
 
 @pytest.mark.parametrize("failure", ["credential", "adapter"])

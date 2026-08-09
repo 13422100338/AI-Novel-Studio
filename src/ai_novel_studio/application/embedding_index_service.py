@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
+from ai_novel_studio.domain.embedding import EmbeddingIndexIdentity
 from ai_novel_studio.infrastructure.storage.search_repository import (
     MAX_RECALL_CANDIDATES,
     SearchRepository,
@@ -13,7 +14,7 @@ MAX_EMBEDDING_BATCH_SIZE = 64
 
 class DocumentEmbeddingProvider(Protocol):
     @property
-    def model_id(self) -> str: ...
+    def identity(self) -> EmbeddingIndexIdentity: ...
 
     def embed_documents(
         self,
@@ -68,9 +69,9 @@ class EmbeddingIndexService:
             raise ValueError(
                 f"embedding batch size must be between 1 and {MAX_EMBEDDING_BATCH_SIZE}"
             )
-        model_id = self.provider.model_id
+        identity = self.provider.identity
         sources = self.repository.pending_embedding_sources(
-            model_id,
+            identity,
             limit=limit,
         )
         failures: list[EmbeddingIndexFailure] = []
@@ -119,7 +120,7 @@ class EmbeddingIndexService:
                         raise ValueError("embedding provider vector must be a tuple")
                     self.repository.save_embedding(
                         source.document_id,
-                        model_id,
+                        identity,
                         vector,
                         expected_content_hash=source.content_hash,
                     )
@@ -135,7 +136,7 @@ class EmbeddingIndexService:
                         expected_dimensions = len(vector)
                     indexed += 1
         return EmbeddingIndexReport(
-            model_id.strip(),
+            identity.model_id,
             len(sources),
             indexed,
             tuple(failures),

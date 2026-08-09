@@ -9,13 +9,28 @@ from datetime import UTC, datetime
 from math import fsum, hypot, isfinite
 from typing import Literal
 
-from ai_novel_studio.domain.identifiers import new_id
+from ai_novel_studio.domain.embedding import EmbeddingIndexIdentity
+from ai_novel_studio.domain.identifiers import new_id, validate_id
 from ai_novel_studio.domain.memory import MemoryStatus, ReviewStatus
+from ai_novel_studio.infrastructure.storage.formal_manuscript_projection import (
+    FORMAL_MANUSCRIPT_DOCUMENT_TYPE,
+    _chunk_policy_version,
+    _nonnegative_integer,
+    _same_formal_projection,
+    _validated_formal_chunks,
+)
+from ai_novel_studio.infrastructure.storage.formal_manuscript_projection import (
+    FormalManuscriptChunk as FormalManuscriptChunk,
+)
+from ai_novel_studio.infrastructure.storage.formal_manuscript_projection import (
+    formal_manuscript_chunk_source_id as formal_manuscript_chunk_source_id,
+)
 from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
 
 RetrievalRoute = Literal["EXACT_PHRASE", "KEYWORD", "EMBEDDING", "SUBJECT"]
 MAX_RECALL_CANDIDATES = 250
 MAX_SEARCH_QUERY_CHARS = 20_000
+MAX_FORMAL_CHUNKS_PER_CHAPTER = 10_000
 
 _SEARCH_TERM = re.compile(r"[a-z0-9_]{3,}|[\u3400-\u4dbf\u4e00-\u9fff]+")
 _MAX_KEYWORD_TERMS = 24
@@ -53,6 +68,10 @@ class SearchDocument:
     review_status: ReviewStatus
     status: MemoryStatus
     updated_at: datetime
+    source_start: int | None = None
+    source_end: int | None = None
+    chunk_ordinal: int | None = None
+    chunk_policy_version: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,13 +102,25 @@ class EmbeddingSource:
 @dataclass(frozen=True, slots=True)
 class StoredEmbedding:
     document_id: str
-    model_id: str
+    identity: EmbeddingIndexIdentity
     dimensions: int
     vector: tuple[float, ...]
     content_hash: str
     status: MemoryStatus
     created_at: datetime
     updated_at: datetime
+
+    @property
+    def provider_id(self) -> str:
+        return self.identity.provider_id
+
+    @property
+    def model_id(self) -> str:
+        return self.identity.model_id
+
+    @property
+    def embedding_schema_version(self) -> int:
+        return self.identity.embedding_schema_version
 
 
 @dataclass(frozen=True, slots=True)
@@ -155,6 +186,10 @@ class SearchRepository:
     ) -> SearchDocument:
         if not document_type.strip() or not source_id.strip() or not content.strip():
             raise ValueError("检索文档类型、来源 ID 和正文不能为空")
+        if document_type.strip() == FORMAL_MANUSCRIPT_DOCUMENT_TYPE:
+            raise ValueError(
+                "FORMAL_MANUSCRIPT rows require the dedicated revision-aware operation"
+            )
         if pinned_weight < 0:
             raise ValueError("人工固定权重不能为负数")
         revision = source_revision
@@ -182,7 +217,11 @@ class SearchRepository:
             document_id = existing["id"] if existing is not None else new_id()
             connection.execute(
                 """
-                INSERT INTO memory_documents VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO memory_documents (
+                    id, document_type, source_id, chapter_id, volume_id,
+                    source_revision, source_hash, title, content, participants,
+                    pinned_weight, review_status, status, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(document_type, source_id) DO UPDATE SET
                     chapter_id = excluded.chapter_id,
                     volume_id = excluded.volume_id,
@@ -240,6 +279,270 @@ class SearchRepository:
                 )
         return self.get(document_id)
 
+    def replace_formal_manuscript_chunks(
+        self,
+        chapter_id: str,
+        *,
+        expected_revision: int,
+        expected_source_hash: str,
+        chunk_policy_version: str,
+        chunks: tuple[FormalManuscriptChunk, ...],
+    ) -> tuple[SearchDocument, ...]:
+        canonical_chapter_id = validate_id(chapter_id)
+        revision = _nonnegative_integer(expected_revision, "chapter revision")
+        source_hash = _source_hash(expected_source_hash)
+        policy_version = _chunk_policy_version(chunk_policy_version)
+        if not isinstance(chunks, tuple):
+            raise ValueError("formal manuscript chunks must be a tuple")
+        if len(chunks) > MAX_FORMAL_CHUNKS_PER_CHAPTER:
+            raise ValueError("formal manuscript chunk count exceeds storage limit")
+        now = _now()
+        with self.project.database.connect() as connection, connection:
+            connection.execute("BEGIN IMMEDIATE")
+            chapter, current_content = self._current_formal_source(
+                connection,
+                canonical_chapter_id,
+                revision,
+                source_hash,
+            )
+            normalized_chunks = _validated_formal_chunks(
+                canonical_chapter_id,
+                revision,
+                policy_version,
+                current_content,
+                chunks,
+            )
+            existing_rows = connection.execute(
+                """
+                SELECT * FROM memory_documents
+                WHERE document_type = ? AND chapter_id = ?
+                ORDER BY chunk_ordinal, id
+                """,
+                (FORMAL_MANUSCRIPT_DOCUMENT_TYPE, canonical_chapter_id),
+            ).fetchall()
+            existing_by_source = {
+                str(row["source_id"]): row for row in existing_rows
+            }
+            retained_ids: set[str] = set()
+            for chunk in normalized_chunks:
+                existing = existing_by_source.get(chunk.source_id)
+                if existing is not None:
+                    if not _same_formal_projection(
+                        existing,
+                        chapter_id=canonical_chapter_id,
+                        chapter_volume_id=str(chapter["volume_id"]),
+                        chapter_title=str(chapter["title"]),
+                        revision=revision,
+                        source_hash=source_hash,
+                        policy_version=policy_version,
+                        chunk=chunk,
+                    ):
+                        raise RuntimeError(
+                            "formal manuscript deterministic identity changed projection"
+                        )
+                    retained_ids.add(str(existing["id"]))
+                    continue
+                document_id = new_id()
+                retained_ids.add(document_id)
+                cursor = connection.execute(
+                    """
+                    INSERT INTO memory_documents (
+                        id, document_type, source_id, chapter_id, volume_id,
+                        source_revision, source_hash, title, content, participants,
+                        pinned_weight, review_status, status, updated_at,
+                        source_start, source_end, chunk_ordinal, chunk_policy_version
+                    ) VALUES (
+                        ?, 'FORMAL_MANUSCRIPT', ?, ?, ?, ?, ?, ?, ?, '',
+                        0, 'APPROVED', 'CURRENT', ?, ?, ?, ?, ?
+                    )
+                    ON CONFLICT(document_type, source_id) DO UPDATE SET
+                        chapter_id = excluded.chapter_id,
+                        volume_id = excluded.volume_id,
+                        source_revision = excluded.source_revision,
+                        source_hash = excluded.source_hash,
+                        title = excluded.title,
+                        content = excluded.content,
+                        participants = '',
+                        pinned_weight = 0,
+                        review_status = 'APPROVED',
+                        status = 'CURRENT',
+                        updated_at = excluded.updated_at,
+                        source_start = excluded.source_start,
+                        source_end = excluded.source_end,
+                        chunk_ordinal = excluded.chunk_ordinal,
+                        chunk_policy_version = excluded.chunk_policy_version
+                    WHERE memory_documents.chapter_id = excluded.chapter_id
+                    """,
+                    (
+                        document_id,
+                        chunk.source_id,
+                        canonical_chapter_id,
+                        chapter["volume_id"],
+                        revision,
+                        source_hash,
+                        chapter["title"],
+                        chunk.content,
+                        now.isoformat(),
+                        chunk.source_start,
+                        chunk.source_end,
+                        chunk.ordinal,
+                        policy_version,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise RuntimeError(
+                        "formal manuscript source ID belongs to another chapter"
+                    )
+                connection.execute(
+                    "DELETE FROM memory_fts WHERE document_id = ?",
+                    (document_id,),
+                )
+                connection.execute(
+                    "INSERT INTO memory_fts VALUES (?, ?, ?, '')",
+                    (document_id, chapter["title"], chunk.content),
+                )
+                connection.execute(
+                    """
+                    UPDATE memory_embeddings
+                    SET status = 'STALE', updated_at = ?
+                    WHERE document_id = ? AND status != 'STALE'
+                      AND content_hash != ?
+                    """,
+                    (
+                        now.isoformat(),
+                        document_id,
+                        _embedding_content_hash(chapter["title"], chunk.content),
+                    ),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO memory_dependencies
+                    VALUES (?, 'SEARCH', ?, ?, ?, ?, 'CURRENT')
+                    ON CONFLICT(memory_type, memory_id, source_chapter_id)
+                    DO UPDATE SET
+                        source_revision = excluded.source_revision,
+                        source_hash = excluded.source_hash,
+                        status = 'CURRENT'
+                    """,
+                    (
+                        new_id(),
+                        document_id,
+                        canonical_chapter_id,
+                        revision,
+                        source_hash,
+                    ),
+                )
+            obsolete_ids = {
+                str(row["id"]) for row in existing_rows
+            }.difference(retained_ids)
+            for document_id in sorted(obsolete_ids):
+                connection.execute(
+                    """
+                    DELETE FROM memory_dependencies
+                    WHERE memory_type = 'SEARCH' AND memory_id = ?
+                    """,
+                    (document_id,),
+                )
+                connection.execute(
+                    "DELETE FROM memory_fts WHERE document_id = ?",
+                    (document_id,),
+                )
+                connection.execute(
+                    "DELETE FROM memory_documents WHERE id = ?",
+                    (document_id,),
+                )
+            self._current_formal_source(
+                connection,
+                canonical_chapter_id,
+                revision,
+                source_hash,
+            )
+        return self.read_formal_manuscript_chunks(
+            canonical_chapter_id,
+            expected_revision=revision,
+            expected_source_hash=source_hash,
+            chunk_policy_version=policy_version,
+        )
+
+    def read_formal_manuscript_chunks(
+        self,
+        chapter_id: str,
+        *,
+        expected_revision: int,
+        expected_source_hash: str,
+        chunk_policy_version: str,
+    ) -> tuple[SearchDocument, ...]:
+        canonical_chapter_id = validate_id(chapter_id)
+        revision = _nonnegative_integer(expected_revision, "chapter revision")
+        source_hash = _source_hash(expected_source_hash)
+        policy_version = _chunk_policy_version(chunk_policy_version)
+        with self.project.database.connect() as connection:
+            chapter, current_content = self._current_formal_source(
+                connection,
+                canonical_chapter_id,
+                revision,
+                source_hash,
+            )
+            rows = connection.execute(
+                """
+                SELECT * FROM memory_documents
+                WHERE document_type = ? AND chapter_id = ?
+                ORDER BY chunk_ordinal, id
+                """,
+                (FORMAL_MANUSCRIPT_DOCUMENT_TYPE, canonical_chapter_id),
+            ).fetchall()
+            documents = tuple(self._document(row) for row in rows)
+            _validate_stored_formal_documents(
+                connection,
+                documents,
+                chapter_title=str(chapter["title"]),
+                chapter_volume_id=str(chapter["volume_id"]),
+                chapter_id=canonical_chapter_id,
+                revision=revision,
+                source_hash=source_hash,
+                policy_version=policy_version,
+                current_content=current_content,
+            )
+        return documents
+
+    def _current_formal_source(
+        self,
+        connection: sqlite3.Connection,
+        chapter_id: str,
+        expected_revision: int,
+        expected_source_hash: str,
+    ) -> tuple[sqlite3.Row, str]:
+        chapter = connection.execute(
+            """
+            SELECT id, volume_id, title, content_path, revision, content_hash
+            FROM chapters
+            WHERE id = ? AND is_deleted = 0
+            """,
+            (chapter_id,),
+        ).fetchone()
+        if chapter is None:
+            raise KeyError(f"unknown or deleted chapter: {chapter_id}")
+        if int(chapter["revision"]) != expected_revision:
+            raise RuntimeError("formal manuscript chapter revision changed")
+        if _source_hash(str(chapter["content_hash"])) != expected_source_hash:
+            raise RuntimeError("formal manuscript chapter hash changed")
+        manuscript_root = self.project.layout.manuscript.resolve()
+        source_path = (
+            self.project.layout.root / str(chapter["content_path"])
+        ).resolve()
+        try:
+            source_path.relative_to(manuscript_root)
+        except ValueError as error:
+            raise RuntimeError(
+                "formal manuscript source path is outside manuscript directory"
+            ) from error
+        if not source_path.is_file():
+            raise RuntimeError("formal manuscript source file is missing")
+        current_content = source_path.read_text(encoding="utf-8")
+        if _hash_text(current_content) != expected_source_hash:
+            raise RuntimeError("formal manuscript source file does not match current chapter")
+        return chapter, current_content
+
     def get(self, document_id: str) -> SearchDocument:
         with self.project.database.connect() as connection:
             row = connection.execute(
@@ -255,12 +558,12 @@ class SearchRepository:
     def save_embedding(
         self,
         document_id: str,
-        model_id: str,
+        identity: EmbeddingIndexIdentity,
         vector: tuple[float, ...],
         *,
         expected_content_hash: str,
     ) -> StoredEmbedding:
-        normalized_model_id = _model_id(model_id)
+        normalized_identity = _embedding_identity(identity)
         normalized_vector = _embedding_vector(vector)
         normalized_hash = _content_hash(expected_content_hash)
         vector_json = json.dumps(
@@ -285,21 +588,29 @@ class SearchRepository:
             dimensions_mismatch = connection.execute(
                 """
                 SELECT 1 FROM memory_embeddings
-                WHERE model_id = ? AND status = 'CURRENT' AND document_id != ?
+                WHERE provider_id = ? AND model_id = ?
+                  AND embedding_schema_version = ?
                   AND dimensions != ?
                 LIMIT 1
                 """,
-                (normalized_model_id, document_id, len(normalized_vector)),
+                (
+                    normalized_identity.provider_id,
+                    normalized_identity.model_id,
+                    normalized_identity.embedding_schema_version,
+                    len(normalized_vector),
+                ),
             ).fetchone()
             if dimensions_mismatch is not None:
-                raise ValueError("embedding dimensions changed for the same model ID")
+                raise ValueError("embedding dimensions changed for the same identity")
             connection.execute(
                 """
                 INSERT INTO memory_embeddings (
-                    document_id, model_id, dimensions, vector_json, content_hash,
-                    status, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, 'CURRENT', ?, ?)
-                ON CONFLICT(document_id, model_id) DO UPDATE SET
+                    document_id, provider_id, model_id, embedding_schema_version,
+                    dimensions, vector_json, content_hash, status, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'CURRENT', ?, ?)
+                ON CONFLICT(
+                    document_id, provider_id, model_id, embedding_schema_version
+                ) DO UPDATE SET
                     dimensions = excluded.dimensions,
                     vector_json = excluded.vector_json,
                     content_hash = excluded.content_hash,
@@ -308,7 +619,9 @@ class SearchRepository:
                 """,
                 (
                     document_id,
-                    normalized_model_id,
+                    normalized_identity.provider_id,
+                    normalized_identity.model_id,
+                    normalized_identity.embedding_schema_version,
                     len(normalized_vector),
                     vector_json,
                     normalized_hash,
@@ -316,29 +629,49 @@ class SearchRepository:
                     now.isoformat(),
                 ),
             )
-        return self.get_embedding(document_id, normalized_model_id)
+        return self.get_embedding(document_id, normalized_identity)
 
-    def get_embedding(self, document_id: str, model_id: str) -> StoredEmbedding:
-        normalized_model_id = _model_id(model_id)
+    def get_embedding(
+        self,
+        document_id: str,
+        identity: EmbeddingIndexIdentity,
+    ) -> StoredEmbedding:
+        normalized_identity = _embedding_identity(identity)
         with self.project.database.connect() as connection:
             row = connection.execute(
                 """
                 SELECT * FROM memory_embeddings
-                WHERE document_id = ? AND model_id = ?
+                WHERE document_id = ?
+                  AND provider_id = ?
+                  AND model_id = ?
+                  AND embedding_schema_version = ?
                 """,
-                (document_id, normalized_model_id),
+                (
+                    document_id,
+                    normalized_identity.provider_id,
+                    normalized_identity.model_id,
+                    normalized_identity.embedding_schema_version,
+                ),
             ).fetchone()
         if row is None:
-            raise KeyError(f"unknown memory embedding: {document_id}/{normalized_model_id}")
-        return _stored_embedding(row)
+            raise KeyError(
+                "unknown memory embedding: "
+                f"{document_id}/{normalized_identity.provider_id}/"
+                f"{normalized_identity.model_id}/"
+                f"{normalized_identity.embedding_schema_version}"
+            )
+        stored = _stored_embedding(row)
+        if stored.identity != normalized_identity:
+            raise RuntimeError("stored embedding identity mismatch")
+        return stored
 
     def pending_embedding_sources(
         self,
-        model_id: str,
+        identity: EmbeddingIndexIdentity,
         *,
         limit: int = 100,
     ) -> tuple[EmbeddingSource, ...]:
-        normalized_model_id = _model_id(model_id)
+        normalized_identity = _embedding_identity(identity)
         if limit <= 0 or limit > MAX_RECALL_CANDIDATES:
             raise ValueError(
                 f"embedding rebuild limit must be between 1 and {MAX_RECALL_CANDIDATES}"
@@ -348,25 +681,33 @@ class SearchRepository:
                 """
                 SELECT d.* FROM memory_documents d
                 LEFT JOIN memory_embeddings e
-                  ON e.document_id = d.id AND e.model_id = ?
+                  ON e.document_id = d.id
+                 AND e.provider_id = ?
+                 AND e.model_id = ?
+                 AND e.embedding_schema_version = ?
                 WHERE d.status = 'CURRENT'
                   AND d.review_status IN ('APPROVED', 'LOCKED')
                   AND (e.document_id IS NULL OR e.status = 'STALE')
                 ORDER BY d.pinned_weight DESC, d.updated_at DESC, d.id
                 LIMIT ?
                 """,
-                (normalized_model_id, limit),
+                (
+                    normalized_identity.provider_id,
+                    normalized_identity.model_id,
+                    normalized_identity.embedding_schema_version,
+                    limit,
+                ),
             ).fetchall()
         return tuple(_embedding_source(self._document(row)) for row in rows)
 
     def recall_embeddings(
         self,
-        model_id: str,
+        identity: EmbeddingIndexIdentity,
         query_vector: tuple[float, ...],
         *,
         limit: int,
     ) -> tuple[EmbeddingCandidate, ...]:
-        normalized_model_id = _model_id(model_id)
+        normalized_identity = _embedding_identity(identity)
         if limit <= 0 or limit > MAX_RECALL_CANDIDATES:
             raise ValueError(
                 f"embedding recall limit must be between 1 and {MAX_RECALL_CANDIDATES}"
@@ -388,14 +729,21 @@ class SearchRepository:
                 SELECT e.*, d.title AS source_title, d.content AS source_content
                 FROM memory_embeddings e
                 JOIN memory_documents d ON d.id = e.document_id
-                WHERE e.model_id = ?
+                WHERE e.provider_id = ?
+                  AND e.model_id = ?
+                  AND e.embedding_schema_version = ?
                   AND e.status = 'CURRENT'
                   AND d.status = 'CURRENT'
                   AND d.review_status IN ('APPROVED', 'LOCKED')
                 ORDER BY d.pinned_weight DESC, d.updated_at DESC, d.id
                 LIMIT ?
                 """,
-                (normalized_model_id, scan_limit),
+                (
+                    normalized_identity.provider_id,
+                    normalized_identity.model_id,
+                    normalized_identity.embedding_schema_version,
+                    scan_limit,
+                ),
             ).fetchall()
         candidates: list[EmbeddingCandidate] = []
         for row in rows:
@@ -407,6 +755,8 @@ class SearchRepository:
             try:
                 stored = _stored_embedding(row)
             except (TypeError, ValueError):
+                continue
+            if stored.identity != normalized_identity:
                 continue
             similarity = _cosine_similarity(query_unit, stored.vector)
             if similarity is not None:
@@ -644,7 +994,111 @@ class SearchRepository:
             ReviewStatus(row["review_status"]),
             MemoryStatus(row["status"]),
             datetime.fromisoformat(row["updated_at"]),
+            _optional_integer(row["source_start"]),
+            _optional_integer(row["source_end"]),
+            _optional_integer(row["chunk_ordinal"]),
+            (
+                str(row["chunk_policy_version"])
+                if row["chunk_policy_version"] is not None
+                else None
+            ),
         )
+
+
+def _validate_stored_formal_documents(
+    connection: sqlite3.Connection,
+    documents: tuple[SearchDocument, ...],
+    *,
+    chapter_title: str,
+    chapter_volume_id: str,
+    chapter_id: str,
+    revision: int,
+    source_hash: str,
+    policy_version: str,
+    current_content: str,
+) -> None:
+    dependency_rows = connection.execute(
+        """
+        SELECT memory_id, source_revision, source_hash, status
+        FROM memory_dependencies
+        WHERE memory_type = 'SEARCH' AND source_chapter_id = ?
+        """,
+        (chapter_id,),
+    ).fetchall()
+    dependencies_by_document: dict[str, list[sqlite3.Row]] = {}
+    for row in dependency_rows:
+        dependencies_by_document.setdefault(str(row["memory_id"]), []).append(row)
+    fts_rows = connection.execute(
+        """
+        SELECT f.document_id, f.title, f.content, f.participants
+        FROM memory_fts f
+        JOIN memory_documents d ON d.id = f.document_id
+        WHERE d.document_type = ? AND d.chapter_id = ?
+        """,
+        (FORMAL_MANUSCRIPT_DOCUMENT_TYPE, chapter_id),
+    ).fetchall()
+    fts_by_document: dict[str, list[sqlite3.Row]] = {}
+    for row in fts_rows:
+        fts_by_document.setdefault(str(row["document_id"]), []).append(row)
+    ordinals: list[int] = []
+    for document in documents:
+        metadata = (
+            document.source_start,
+            document.source_end,
+            document.chunk_ordinal,
+            document.chunk_policy_version,
+        )
+        if any(value is None for value in metadata):
+            raise RuntimeError("formal manuscript projection metadata is incomplete")
+        source_start = _nonnegative_integer(
+            document.source_start,
+            "chunk range start",
+        )
+        source_end = _nonnegative_integer(document.source_end, "chunk range end")
+        ordinal = _nonnegative_integer(document.chunk_ordinal, "chunk ordinal")
+        stored_policy = _chunk_policy_version(str(document.chunk_policy_version))
+        if not 0 <= source_start < source_end <= len(current_content):
+            raise RuntimeError("stored formal manuscript range is invalid")
+        if current_content[source_start:source_end] != document.content:
+            raise RuntimeError("stored formal manuscript slice does not match current source")
+        expected_source_id = formal_manuscript_chunk_source_id(
+            chapter_id,
+            revision,
+            policy_version,
+            ordinal,
+        )
+        if (
+            document.document_type != FORMAL_MANUSCRIPT_DOCUMENT_TYPE
+            or document.source_id != expected_source_id
+            or document.chapter_id != chapter_id
+            or document.volume_id != chapter_volume_id
+            or document.source_revision != revision
+            or document.source_hash != source_hash
+            or document.title != chapter_title
+            or document.participants
+            or document.pinned_weight != 0
+            or document.review_status != ReviewStatus.APPROVED
+            or document.status != MemoryStatus.CURRENT
+            or stored_policy != policy_version
+        ):
+            raise RuntimeError("stored formal manuscript identity is invalid")
+        dependencies = dependencies_by_document.get(document.id, [])
+        if len(dependencies) != 1 or tuple(dependencies[0])[1:] != (
+            revision,
+            source_hash,
+            "CURRENT",
+        ):
+            raise RuntimeError("stored formal manuscript dependency is invalid")
+        document_fts_rows = fts_by_document.get(document.id, [])
+        if len(document_fts_rows) != 1 or tuple(document_fts_rows[0])[1:] != (
+            chapter_title,
+            document.content,
+            "",
+        ):
+            raise RuntimeError("stored formal manuscript FTS projection is invalid")
+        ordinals.append(ordinal)
+    if ordinals != list(range(len(documents))):
+        raise RuntimeError("stored formal manuscript ordinal set is invalid")
 
 
 def _keyword_query(query: str) -> str:
@@ -692,11 +1146,27 @@ def _hash_text(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
-def _model_id(value: str) -> str:
-    normalized = value.strip()
-    if not normalized or len(normalized) > 200:
-        raise ValueError("embedding model ID is invalid")
-    return normalized
+def _source_hash(value: object) -> str:
+    if not isinstance(value, str):
+        raise ValueError("formal manuscript source hash is invalid")
+    try:
+        return _content_hash(value)
+    except ValueError as error:
+        raise ValueError("formal manuscript source hash is invalid") from error
+
+
+def _optional_integer(value: object) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError("stored projection integer is invalid")
+    return value
+
+
+def _embedding_identity(value: EmbeddingIndexIdentity) -> EmbeddingIndexIdentity:
+    if not isinstance(value, EmbeddingIndexIdentity):
+        raise TypeError("embedding index identity is invalid")
+    return value
 
 
 def _content_hash(value: str) -> str:
@@ -766,7 +1236,11 @@ def _stored_embedding(row: sqlite3.Row) -> StoredEmbedding:
         raise ValueError("stored embedding dimensions do not match vector")
     return StoredEmbedding(
         row["document_id"],
-        row["model_id"],
+        EmbeddingIndexIdentity(
+            row["provider_id"],
+            row["model_id"],
+            int(row["embedding_schema_version"]),
+        ),
         dimensions,
         vector,
         _content_hash(row["content_hash"]),
