@@ -48,6 +48,24 @@ Chunking is a pure deterministic projection owned above storage. Its policy is e
 versioned. Paragraph-aware boundaries, maximum size, and overlap are policy inputs, not permanent
 architecture constants. R1a does not freeze attractive numeric defaults.
 
+R1b introduces the initial policy `paragraph-codepoint-v1` with validated, injectable defaults:
+
+- maximum chunk length: 1,600 Unicode code points;
+- target overlap: 200 Unicode code points;
+- blank-line-separated paragraphs are preferred boundaries;
+- an oversized paragraph is split deterministically so every emitted range stays within the
+  maximum;
+- a whitespace-only chapter produces no Formal chunks;
+- every chunk body is the exact source slice for its stored half-open range, including original
+  whitespace and line endings.
+
+These values are the first benchmarkable operating defaults, not permanent architectural
+constants. Callers may inject another validated size/overlap combination only under a distinct
+policy version. Changing the meaning or defaults of an already persisted policy version is
+forbidden. Overlap may cross a preferred paragraph boundary when required for deterministic
+coverage, but the projection must always make forward progress and must never infer, normalize, or
+rewrite manuscript text.
+
 For a given chapter revision and policy version, chunk ordinals are zero-based and deterministic.
 The derived `source_id` is stable for that exact `(chapter_id, revision, policy_version, ordinal)`
 identity. A later chapter revision creates a different derived identity; it never silently
@@ -105,7 +123,8 @@ R1 is split into independently reviewable tickets:
    - no production chunk generation or automatic revision maintenance.
 2. **R1b — deterministic chunk projection and bounded build**
    - pure versioned chunk policy;
-   - `ManuscriptMemoryBuildService` opt-in to the new repository operation;
+   - `ManuscriptMemoryBuildService` writes current `FORMAL_MANUSCRIPT` chunks through the new
+     repository operation while retaining its legacy `CHAPTER` indexing during rollout;
    - FTS and pending embedding rows for current Formal chunks;
    - no automatic save/accept/repair indexing.
 3. **R2 — revision-local maintenance**
