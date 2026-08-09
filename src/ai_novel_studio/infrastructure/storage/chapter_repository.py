@@ -206,6 +206,24 @@ class ChapterRepository:
         chapter = self.get_chapter(chapter_id, include_deleted=False)
         return (self.project.layout.root / chapter.content_path).read_text(encoding="utf-8")
 
+    def read_content_exact(self, chapter_id: str) -> str:
+        chapter = self.get_chapter(chapter_id, include_deleted=False)
+        manuscript_root = self.project.layout.manuscript.resolve()
+        source_path = (self.project.layout.root / chapter.content_path).resolve()
+        try:
+            source_path.relative_to(manuscript_root)
+        except ValueError as error:
+            raise RuntimeError(
+                "chapter source path is outside manuscript directory"
+            ) from error
+        if not source_path.is_file():
+            raise RuntimeError("chapter source file is missing")
+        try:
+            with source_path.open("r", encoding="utf-8", newline="") as stream:
+                return stream.read()
+        except (OSError, UnicodeError):
+            raise RuntimeError("chapter source file cannot be read as UTF-8") from None
+
     def rename_chapter(self, chapter_id: str, title: str) -> Chapter:
         chapter = self.get_chapter(chapter_id, include_deleted=False)
         normalized = title.strip()

@@ -157,6 +157,39 @@ def test_formal_chunks_round_trip_exact_unicode_ranges_without_touching_legacy_r
     }
 
 
+def test_formal_chunks_round_trip_exact_crlf_source_without_normalization(
+    tmp_path: Path,
+) -> None:
+    content = "第一段\r\n\r\n第二段😀\r\n"
+    _project, _chapters, search, chapter = _repositories(
+        tmp_path,
+        content=content,
+    )
+    chunks = (
+        _chunk(chapter.id, chapter.revision, 0, 0, 8, content),
+        _chunk(chapter.id, chapter.revision, 1, 6, len(content), content),
+    )
+
+    stored = search.replace_formal_manuscript_chunks(
+        chapter.id,
+        expected_revision=chapter.revision,
+        expected_source_hash=_source_hash(content),
+        chunk_policy_version=_POLICY,
+        chunks=chunks,
+    )
+
+    assert search.read_formal_manuscript_chunks(
+        chapter.id,
+        expected_revision=chapter.revision,
+        expected_source_hash=_source_hash(content),
+        chunk_policy_version=_POLICY,
+    ) == stored
+    assert [document.content for document in stored] == [
+        content[0:8],
+        content[6:],
+    ]
+
+
 def test_same_revision_replacement_is_idempotent_and_preserves_matching_vectors(
     tmp_path: Path,
 ) -> None:

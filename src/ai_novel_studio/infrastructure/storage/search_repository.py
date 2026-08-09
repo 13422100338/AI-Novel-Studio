@@ -538,7 +538,13 @@ class SearchRepository:
             ) from error
         if not source_path.is_file():
             raise RuntimeError("formal manuscript source file is missing")
-        current_content = source_path.read_text(encoding="utf-8")
+        try:
+            with source_path.open("r", encoding="utf-8", newline="") as stream:
+                current_content = stream.read()
+        except (OSError, UnicodeError):
+            raise RuntimeError(
+                "formal manuscript source file cannot be read as UTF-8"
+            ) from None
         if _hash_text(current_content) != expected_source_hash:
             raise RuntimeError("formal manuscript source file does not match current chapter")
         return chapter, current_content

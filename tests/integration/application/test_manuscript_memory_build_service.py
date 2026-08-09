@@ -1,4 +1,7 @@
+import hashlib
 from pathlib import Path
+
+import pytest
 
 from ai_novel_studio.application.manuscript_memory_build_service import (
     ManuscriptMemoryBuildService,
@@ -14,6 +17,11 @@ from ai_novel_studio.application.memory_analysis_service import (
     StyleCandidate,
     SummaryCandidate,
 )
+from ai_novel_studio.core.context.manuscript_chunking import (
+    DEFAULT_MANUSCRIPT_CHUNK_POLICY,
+    ManuscriptChunkPolicy,
+)
+from ai_novel_studio.domain.embedding import EmbeddingIndexIdentity
 from ai_novel_studio.domain.memory import (
     ClueAction,
     ClueType,
@@ -29,7 +37,14 @@ from ai_novel_studio.infrastructure.storage.character_memory_repository import (
     CharacterMemoryRepository,
 )
 from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
+from ai_novel_studio.infrastructure.storage.search_repository import SearchRepository
 from ai_novel_studio.infrastructure.storage.summary_repository import SummaryRepository
+
+_EMBEDDING_IDENTITY = EmbeddingIndexIdentity("provider-a", "embedding-model", 1)
+
+
+def _source_hash(content: str) -> str:
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
 class FakeMemoryAnalyzer:
@@ -102,10 +117,336 @@ def test_build_all_creates_review_summaries_and_search_documents(
         rows = connection.execute(
             "SELECT source_id, document_type FROM memory_documents ORDER BY source_id"
         ).fetchall()
+    search = SearchRepository(project)
+    formal_by_chapter = {
+        chapter.id: search.read_formal_manuscript_chunks(
+            chapter.id,
+            expected_revision=chapter.revision,
+            expected_source_hash=_source_hash(chapters.read_content(chapter.id)),
+            chunk_policy_version=DEFAULT_MANUSCRIPT_CHUNK_POLICY.version,
+        )
+        for chapter in (first, second)
+    }
     assert {(row["source_id"], row["document_type"]) for row in rows} == {
         (first.id, "CHAPTER"),
         (second.id, "CHAPTER"),
+        (formal_by_chapter[first.id][0].source_id, "FORMAL_MANUSCRIPT"),
+        (formal_by_chapter[second.id][0].source_id, "FORMAL_MANUSCRIPT"),
     }
+    assert all(
+        (
+            documents[0].source_revision,
+            documents[0].source_start,
+            documents[0].source_end,
+            documents[0].chunk_ordinal,
+            documents[0].chunk_policy_version,
+            documents[0].content,
+        )
+        == (
+            chapter.revision,
+            0,
+            len(chapters.read_content(chapter.id)),
+            0,
+            DEFAULT_MANUSCRIPT_CHUNK_POLICY.version,
+            chapters.read_content(chapter.id),
+        )
+        for chapter in (first, second)
+        for documents in (formal_by_chapter[chapter.id],)
+    )
+
+
+def test_build_all_replay_preserves_formal_rows_vectors_fts_and_dependencies(
+    tmp_path: Path,
+) -> None:
+    content = "第一段原文。\n\n第二段原文。"
+    project = ProjectRepository.create(tmp_path / "novel", "Imported Novel")
+    chapter = ChapterRepository(project).create_chapter(
+        project.list_volumes()[0].id,
+        "第一章",
+        "1",
+        content,
+    )
+    service = ManuscriptMemoryBuildService()
+    search = SearchRepository(project)
+
+    first_report = service.build_all(project)
+    first = search.read_formal_manuscript_chunks(
+        chapter.id,
+        expected_revision=chapter.revision,
+        expected_source_hash=_source_hash(content),
+        chunk_policy_version=DEFAULT_MANUSCRIPT_CHUNK_POLICY.version,
+    )
+    source = search.embedding_source(first[0].id)
+    search.save_embedding(
+        first[0].id,
+        _EMBEDDING_IDENTITY,
+        (1.0, 0.0),
+        expected_content_hash=source.content_hash,
+    )
+    with project.database.connect() as connection:
+        before = (
+            tuple(
+                connection.execute(
+                    "SELECT id, updated_at FROM memory_documents WHERE id = ?",
+                    (first[0].id,),
+                ).fetchone()
+            ),
+            tuple(
+                connection.execute(
+                    "SELECT rowid, title, content, participants "
+                    "FROM memory_fts WHERE document_id = ?",
+                    (first[0].id,),
+                ).fetchone()
+            ),
+            tuple(
+                connection.execute(
+                    "SELECT id, source_revision, source_hash, status "
+                    "FROM memory_dependencies "
+                    "WHERE memory_type = 'SEARCH' AND memory_id = ?",
+                    (first[0].id,),
+                ).fetchone()
+            ),
+        )
+
+    second_report = service.build_all(project)
+    second = search.read_formal_manuscript_chunks(
+        chapter.id,
+        expected_revision=chapter.revision,
+        expected_source_hash=_source_hash(content),
+        chunk_policy_version=DEFAULT_MANUSCRIPT_CHUNK_POLICY.version,
+    )
+    with project.database.connect() as connection:
+        after = (
+            tuple(
+                connection.execute(
+                    "SELECT id, updated_at FROM memory_documents WHERE id = ?",
+                    (first[0].id,),
+                ).fetchone()
+            ),
+            tuple(
+                connection.execute(
+                    "SELECT rowid, title, content, participants "
+                    "FROM memory_fts WHERE document_id = ?",
+                    (first[0].id,),
+                ).fetchone()
+            ),
+            tuple(
+                connection.execute(
+                    "SELECT id, source_revision, source_hash, status "
+                    "FROM memory_dependencies "
+                    "WHERE memory_type = 'SEARCH' AND memory_id = ?",
+                    (first[0].id,),
+                ).fetchone()
+            ),
+        )
+
+    assert first_report.indexed_documents == 1
+    assert second_report.indexed_documents == 1
+    assert second == first
+    assert after == before
+    assert search.get_embedding(first[0].id, _EMBEDDING_IDENTITY).vector == (1.0, 0.0)
+
+
+def test_build_all_revision_change_replaces_only_that_chapters_formal_projection(
+    tmp_path: Path,
+) -> None:
+    project = ProjectRepository.create(tmp_path / "novel", "Imported Novel")
+    chapters = ChapterRepository(project)
+    volume = project.list_volumes()[0]
+    changed = chapters.create_chapter(volume.id, "First", "1", "Old first body")
+    untouched = chapters.create_chapter(volume.id, "Second", "2", "Stable second body")
+    service = ManuscriptMemoryBuildService()
+    search = SearchRepository(project)
+
+    service.build_all(project)
+    old_changed = search.read_formal_manuscript_chunks(
+        changed.id,
+        expected_revision=changed.revision,
+        expected_source_hash=_source_hash("Old first body"),
+        chunk_policy_version=DEFAULT_MANUSCRIPT_CHUNK_POLICY.version,
+    )
+    old_untouched = search.read_formal_manuscript_chunks(
+        untouched.id,
+        expected_revision=untouched.revision,
+        expected_source_hash=_source_hash("Stable second body"),
+        chunk_policy_version=DEFAULT_MANUSCRIPT_CHUNK_POLICY.version,
+    )
+    old_source = search.embedding_source(old_changed[0].id)
+    search.save_embedding(
+        old_changed[0].id,
+        _EMBEDDING_IDENTITY,
+        (1.0, 0.0),
+        expected_content_hash=old_source.content_hash,
+    )
+
+    current = chapters.save_content(
+        changed.id,
+        "New first body",
+        source="manual",
+        reason="rewrite",
+    )
+    report = service.build_all(project)
+    new_changed = search.read_formal_manuscript_chunks(
+        current.id,
+        expected_revision=current.revision,
+        expected_source_hash=_source_hash("New first body"),
+        chunk_policy_version=DEFAULT_MANUSCRIPT_CHUNK_POLICY.version,
+    )
+    new_untouched = search.read_formal_manuscript_chunks(
+        untouched.id,
+        expected_revision=untouched.revision,
+        expected_source_hash=_source_hash("Stable second body"),
+        chunk_policy_version=DEFAULT_MANUSCRIPT_CHUNK_POLICY.version,
+    )
+
+    assert report.indexed_documents == 2
+    assert new_changed[0].id != old_changed[0].id
+    assert new_changed[0].content == "New first body"
+    assert new_untouched == old_untouched
+    with pytest.raises(KeyError):
+        search.get(old_changed[0].id)
+    with pytest.raises(KeyError):
+        search.get_embedding(old_changed[0].id, _EMBEDDING_IDENTITY)
+    with project.database.connect() as connection:
+        legacy = connection.execute(
+            "SELECT chapter_id, content, status FROM memory_documents "
+            "WHERE document_type = 'CHAPTER' ORDER BY chapter_id"
+        ).fetchall()
+    assert {(row["chapter_id"], row["content"], row["status"]) for row in legacy} == {
+        (changed.id, "New first body", "CURRENT"),
+        (untouched.id, "Stable second body", "CURRENT"),
+    }
+
+
+def test_build_all_policy_change_replaces_only_formal_projection_identity(
+    tmp_path: Path,
+) -> None:
+    content = "甲" * 1_700
+    project = ProjectRepository.create(tmp_path / "novel", "Imported Novel")
+    chapter = ChapterRepository(project).create_chapter(
+        project.list_volumes()[0].id,
+        "First",
+        "1",
+        content,
+    )
+    search = SearchRepository(project)
+
+    ManuscriptMemoryBuildService().build_all(project)
+    default_documents = search.read_formal_manuscript_chunks(
+        chapter.id,
+        expected_revision=chapter.revision,
+        expected_source_hash=_source_hash(content),
+        chunk_policy_version=DEFAULT_MANUSCRIPT_CHUNK_POLICY.version,
+    )
+    alternate_policy = ManuscriptChunkPolicy("paragraph-codepoint-v2", 800, 100)
+
+    report = ManuscriptMemoryBuildService(chunk_policy=alternate_policy).build_all(
+        project
+    )
+    alternate_documents = search.read_formal_manuscript_chunks(
+        chapter.id,
+        expected_revision=chapter.revision,
+        expected_source_hash=_source_hash(content),
+        chunk_policy_version=alternate_policy.version,
+    )
+
+    assert report.indexed_documents == 1
+    assert len(default_documents) == 2
+    assert len(alternate_documents) == 3
+    assert {document.source_id for document in default_documents}.isdisjoint(
+        document.source_id for document in alternate_documents
+    )
+    for document in default_documents:
+        with pytest.raises(KeyError):
+            search.get(document.id)
+    with project.database.connect() as connection:
+        legacy_count = int(
+            connection.execute(
+                "SELECT COUNT(*) FROM memory_documents "
+                "WHERE document_type = 'CHAPTER' AND chapter_id = ?",
+                (chapter.id,),
+            ).fetchone()[0]
+        )
+    assert legacy_count == 1
+
+
+def test_build_all_whitespace_revision_removes_prior_formal_projection(
+    tmp_path: Path,
+) -> None:
+    project = ProjectRepository.create(tmp_path / "novel", "Imported Novel")
+    chapters = ChapterRepository(project)
+    chapter = chapters.create_chapter(
+        project.list_volumes()[0].id,
+        "First",
+        "1",
+        "Previously indexed body",
+    )
+    service = ManuscriptMemoryBuildService()
+    search = SearchRepository(project)
+
+    service.build_all(project)
+    prior = search.read_formal_manuscript_chunks(
+        chapter.id,
+        expected_revision=chapter.revision,
+        expected_source_hash=_source_hash("Previously indexed body"),
+        chunk_policy_version=DEFAULT_MANUSCRIPT_CHUNK_POLICY.version,
+    )
+    current = chapters.save_content(
+        chapter.id,
+        " \r\n\t ",
+        source="manual",
+        reason="clear chapter",
+    )
+
+    report = service.build_all(project)
+
+    assert report.processed_chapters == 1
+    assert report.indexed_documents == 0
+    assert (
+        search.read_formal_manuscript_chunks(
+            current.id,
+            expected_revision=current.revision,
+            expected_source_hash=_source_hash(" \r\n\t "),
+            chunk_policy_version=DEFAULT_MANUSCRIPT_CHUNK_POLICY.version,
+        )
+        == ()
+    )
+    with pytest.raises(KeyError):
+        search.get(prior[0].id)
+
+
+def test_build_all_formal_chunks_are_pending_for_embedding_without_writing_vectors(
+    tmp_path: Path,
+) -> None:
+    content = "甲" * 1_700
+    project = ProjectRepository.create(tmp_path / "novel", "Imported Novel")
+    chapter = ChapterRepository(project).create_chapter(
+        project.list_volumes()[0].id,
+        "First",
+        "1",
+        content,
+    )
+    search = SearchRepository(project)
+
+    ManuscriptMemoryBuildService().build_all(project)
+
+    formal = search.read_formal_manuscript_chunks(
+        chapter.id,
+        expected_revision=chapter.revision,
+        expected_source_hash=_source_hash(content),
+        chunk_policy_version=DEFAULT_MANUSCRIPT_CHUNK_POLICY.version,
+    )
+    pending = search.pending_embedding_sources(_EMBEDDING_IDENTITY, limit=10)
+    with project.database.connect() as connection:
+        embedding_count = int(
+            connection.execute("SELECT COUNT(*) FROM memory_embeddings").fetchone()[0]
+        )
+
+    assert len(formal) == 2
+    assert {source.document_id for source in pending}.issuperset(
+        document.id for document in formal
+    )
+    assert embedding_count == 0
 
 
 def test_build_all_uses_model_memory_candidates_and_updates_character_states(

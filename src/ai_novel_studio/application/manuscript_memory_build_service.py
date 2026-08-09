@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
@@ -8,6 +9,11 @@ from typing import Protocol
 from ai_novel_studio.application.memory_analysis_service import (
     CharacterStateCandidate,
     MemoryCandidateBundle,
+)
+from ai_novel_studio.core.context.manuscript_chunking import (
+    DEFAULT_MANUSCRIPT_CHUNK_POLICY,
+    ManuscriptChunkPolicy,
+    project_formal_manuscript_chunks,
 )
 from ai_novel_studio.domain.chapter import Chapter
 from ai_novel_studio.domain.memory import (
@@ -90,8 +96,14 @@ class ManuscriptMemoryBuildService:
     fallback_model_profile_id = "local-import-baseline"
     model_profile_id = "memory-extraction"
 
-    def __init__(self, analyzer: MemoryAnalyzer | None = None) -> None:
+    def __init__(
+        self,
+        analyzer: MemoryAnalyzer | None = None,
+        *,
+        chunk_policy: ManuscriptChunkPolicy = DEFAULT_MANUSCRIPT_CHUNK_POLICY,
+    ) -> None:
         self.analyzer = analyzer
+        self.chunk_policy = chunk_policy
 
     def build_all(
         self,
@@ -139,6 +151,22 @@ class ManuscriptMemoryBuildService:
                         chapter.title,
                     )
                 )
+            exact_content = chapters.read_content_exact(chapter.id)
+            formal_chunks = project_formal_manuscript_chunks(
+                chapter.id,
+                chapter.revision,
+                exact_content,
+                policy=self.chunk_policy,
+            )
+            search.replace_formal_manuscript_chunks(
+                chapter.id,
+                expected_revision=chapter.revision,
+                expected_source_hash=hashlib.sha256(
+                    exact_content.encode("utf-8")
+                ).hexdigest(),
+                chunk_policy_version=self.chunk_policy.version,
+                chunks=formal_chunks,
+            )
             content = chapters.read_content(chapter.id)
             processed += 1
             if content.strip():

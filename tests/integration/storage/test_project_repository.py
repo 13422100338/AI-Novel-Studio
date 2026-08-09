@@ -139,6 +139,71 @@ def test_create_initializes_portable_project_and_default_volume(tmp_path: Path) 
     assert volumes[0].title == "未分卷"
 
 
+def test_read_content_exact_preserves_crlf_codepoints(tmp_path: Path) -> None:
+    project = ProjectRepository.create(tmp_path / "novel", "My Novel")
+    chapters = ChapterRepository(project)
+    content = "第一段\r\n\r\n第二段😀\r\n"
+    chapter = chapters.create_chapter(
+        project.list_volumes()[0].id,
+        "第一章",
+        "1",
+        content,
+    )
+
+    assert chapters.read_content_exact(chapter.id) == content
+
+
+def test_read_content_exact_fails_closed_for_unknown_deleted_or_outside_source(
+    tmp_path: Path,
+) -> None:
+    project = ProjectRepository.create(tmp_path / "novel", "My Novel")
+    chapters = ChapterRepository(project)
+    chapter = chapters.create_chapter(
+        project.list_volumes()[0].id,
+        "第一章",
+        "1",
+        "正文",
+    )
+    original_content_path = chapter.content_path
+
+    with pytest.raises(KeyError, match="unknown"):
+        chapters.read_content_exact("00000000-0000-0000-0000-000000000001")
+
+    outside_content = "private asset body"
+    outside_path = project.layout.assets / "not-manuscript.txt"
+    outside_path.write_text(outside_content, encoding="utf-8")
+    with project.database.connect() as connection, connection:
+        connection.execute(
+            "UPDATE chapters SET content_path = ? WHERE id = ?",
+            (
+                outside_path.relative_to(project.layout.root).as_posix(),
+                chapter.id,
+            ),
+        )
+
+    with pytest.raises(RuntimeError, match="manuscript") as captured:
+        chapters.read_content_exact(chapter.id)
+    assert outside_content not in str(captured.value)
+    assert str(outside_path) not in str(captured.value)
+
+    with project.database.connect() as connection, connection:
+        connection.execute(
+            "UPDATE chapters SET content_path = ? WHERE id = ?",
+            (original_content_path, chapter.id),
+        )
+    manuscript_path = project.layout.root / original_content_path
+    manuscript_path.write_bytes(b"\xffprivate manuscript bytes")
+    with pytest.raises(RuntimeError, match="UTF-8") as captured:
+        chapters.read_content_exact(chapter.id)
+    assert "private manuscript bytes" not in str(captured.value)
+    assert str(manuscript_path) not in str(captured.value)
+
+    chapters.delete_chapter(chapter.id)
+
+    with pytest.raises(KeyError, match="unknown"):
+        chapters.read_content_exact(chapter.id)
+
+
 def test_schema_migration_is_idempotent(tmp_path: Path) -> None:
     repository = ProjectRepository.create(tmp_path / "novel", "My Novel")
 
