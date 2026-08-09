@@ -35,7 +35,8 @@
 
 All Wave 1 tasks were dispatched from `3382dd36c2a4aeb4acdab411e9211885b633e678`; their initial business-code baseline remains `e35b50d`.
 
-- Active implementations authorized by the user: none.
+- Active implementations authorized by the user: R2b-C routing of existing content-revision
+  callers through the integrated RevisionImpact maintainer on A.
 - Completed read-only audit: `Gate S0` across A/B/C. Its reports froze the dependency direction
   `R1 -> R2 -> R3 -> R4`, require R1 and O1 schema ownership to be serialized, require O2 to
   consume R2 revision impact, and require H1 to reuse the R3 evidence facade.
@@ -96,14 +97,15 @@ All Wave 1 tasks were dispatched from `3382dd36c2a4aeb4acdab411e9211885b633e678`
 | Task | Model / reasoning | Thread | Worktree | Assigned branch | HEAD state | Status |
 | --- | --- | --- | --- | --- | --- | --- |
 
-| `manifest-eligibility-v2` | `gpt-5.6-sol` / `xhigh` | `019f87e8-6d32-7141-b9b4-4f1142e4db4e` | `C:\Users\钟子诚\.codex\worktrees\93d7\AI-Novel-Studio` | `codex/manifest-eligibility-r2a-f` | branch | R2a-F merged as `dbb32f4`; lane paused pending explicit instruction |
+| `manifest-eligibility-v2` | `gpt-5.6-sol` / `high` | `019f87e8-6d32-7141-b9b4-4f1142e4db4e` | `C:\Users\钟子诚\.codex\worktrees\93d7\AI-Novel-Studio` | `codex/manifest-eligibility-r2b-c` | branch | R2b-C implementation authorized from latest main; no schema ownership |
 | `generation-profile-audit-policy` | `gpt-5.6-terra` / `medium` | `019f87e8-696e-7f11-bcfe-1552f51cabc3` | `C:\Users\钟子诚\.codex\worktrees\4df4\AI-Novel-Studio` | `codex/generation-profile-audit-policy-b5` | branch | B1-B7 merged; B7 is `663f932`; lane paused pending explicit instruction |
 | `view-operations-ui` | `gpt-5.6-luna` / `max` | `019f87e8-7a77-7902-b3d1-a38f32240136` | `C:\Users\钟子诚\.codex\worktrees\8802\AI-Novel-Studio` | `codex/view-operations-ui-s1` | branch | S1 merged as `03f223e`; lane paused pending explicit instruction |
 
-Current dispatch override: no backend implementation ticket is active. A is paused after R2a-F.
-Product decision A is approved: title rename and chapter relocation advance Chapter.revision and
-create an unchanged-content ChapterVersion snapshot, but those lifecycle callers remain R2c-L
-scope and are not authorized. B is paused after its Gate S0 report; `view-operations-ui` is paused
+Current dispatch override: A owns only R2b-C routing of existing content revisions through the
+integrated RevisionImpact maintainer. Product decision A is approved: title rename and chapter
+relocation advance Chapter.revision and create an unchanged-content ChapterVersion snapshot, but
+those lifecycle callers remain R2c-L scope and are not authorized. B is paused after its Gate S0
+report; `view-operations-ui` is paused
 after S1; `style-engine` remains paused after ST1,
 `generation-profile-audit-policy` remains paused after B14, and `fix-p0-logging` remains paused
 after P0-1. P0-2 requires a separate ticket decision.
@@ -113,8 +115,9 @@ Formal Manuscript exact-evidence retrieval are now planned in
 `2026-08-09-backend-refactor-supplemental-upgrade.md`. Gate S0 and its no-schema S1 prerequisite
 are complete. ADR 0022 freezes the Formal Manuscript range, chunk identity, and structured
 embedding-cache contract. R1a/schema v19, the no-schema R1b manual-build projection, and R2a-F
-revision-local maintenance/recovery foundation are integrated. The remaining split is
-R2b-C -> R2c-L; neither is authorized. R3-R4, O1-O2, H1, and V1 also remain unauthorized.
+revision-local maintenance/recovery foundation are integrated. R2b-C is authorized as the sole
+active implementation; R2c-L remains unauthorized. R3-R4, O1-O2, H1, and V1 also remain
+unauthorized.
 
 Product decision: Manual Pins are immutable materialized snapshots. They never automatically re-resolve or refresh from their source; authors update them only by removing and re-pinning. Do not add a live-pointer, automatic stale gate, or refresh behavior without a new explicit decision.
 
