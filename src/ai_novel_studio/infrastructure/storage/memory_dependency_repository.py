@@ -5,6 +5,56 @@ import sqlite3
 
 class MemoryDependencyRepository:
     @staticmethod
+    def invalidate_formal_manuscript_in_connection(
+        connection: sqlite3.Connection,
+        chapter_id: str,
+        new_revision: int,
+        new_hash: str,
+    ) -> tuple[tuple[str, str], ...]:
+        rows = connection.execute(
+            """
+            SELECT id FROM memory_documents
+            WHERE document_type = 'FORMAL_MANUSCRIPT' AND chapter_id = ?
+              AND (source_revision != ? OR source_hash != ?)
+            """,
+            (chapter_id, new_revision, new_hash),
+        ).fetchall()
+        affected = tuple(("SEARCH", str(row["id"])) for row in rows)
+        connection.execute(
+            """
+            UPDATE memory_dependencies SET status = 'STALE'
+            WHERE memory_type = 'SEARCH'
+              AND memory_id IN (
+                  SELECT id FROM memory_documents
+                  WHERE document_type = 'FORMAL_MANUSCRIPT' AND chapter_id = ?
+                    AND (source_revision != ? OR source_hash != ?)
+              )
+            """,
+            (chapter_id, new_revision, new_hash),
+        )
+        connection.execute(
+            """
+            UPDATE memory_embeddings
+            SET status = 'STALE', updated_at = CURRENT_TIMESTAMP
+            WHERE document_id IN (
+                SELECT id FROM memory_documents
+                WHERE document_type = 'FORMAL_MANUSCRIPT' AND chapter_id = ?
+                  AND (source_revision != ? OR source_hash != ?)
+            ) AND status != 'STALE'
+            """,
+            (chapter_id, new_revision, new_hash),
+        )
+        connection.execute(
+            """
+            UPDATE memory_documents SET status = 'STALE'
+            WHERE document_type = 'FORMAL_MANUSCRIPT' AND chapter_id = ?
+              AND (source_revision != ? OR source_hash != ?)
+            """,
+            (chapter_id, new_revision, new_hash),
+        )
+        return affected
+
+    @staticmethod
     def invalidate_in_connection(
         connection: sqlite3.Connection,
         chapter_id: str,

@@ -6,6 +6,10 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol
 
+from ai_novel_studio.application.chapter_revision_service import (
+    ChapterRevisionService,
+    FormalMaintenanceStatus,
+)
 from ai_novel_studio.application.memory_analysis_service import (
     CharacterStateCandidate,
     MemoryCandidateBundle,
@@ -13,7 +17,6 @@ from ai_novel_studio.application.memory_analysis_service import (
 from ai_novel_studio.core.context.manuscript_chunking import (
     DEFAULT_MANUSCRIPT_CHUNK_POLICY,
     ManuscriptChunkPolicy,
-    project_formal_manuscript_chunks,
 )
 from ai_novel_studio.domain.chapter import Chapter
 from ai_novel_studio.domain.memory import (
@@ -116,6 +119,10 @@ class ManuscriptMemoryBuildService:
         summaries = SummaryRepository(project)
         characters = CharacterMemoryRepository(project)
         search = SearchRepository(project)
+        revision_maintenance = ChapterRevisionService(
+            project,
+            chunk_policy=self.chunk_policy,
+        )
         processed = 0
         created = 0
         skipped = 0
@@ -152,21 +159,23 @@ class ManuscriptMemoryBuildService:
                     )
                 )
             exact_content = chapters.read_content_exact(chapter.id)
-            formal_chunks = project_formal_manuscript_chunks(
-                chapter.id,
-                chapter.revision,
-                exact_content,
-                policy=self.chunk_policy,
-            )
-            search.replace_formal_manuscript_chunks(
+            maintenance = revision_maintenance.maintain_current_revision(
                 chapter.id,
                 expected_revision=chapter.revision,
                 expected_source_hash=hashlib.sha256(
                     exact_content.encode("utf-8")
                 ).hexdigest(),
-                chunk_policy_version=self.chunk_policy.version,
-                chunks=formal_chunks,
             )
+            if maintenance.status not in {
+                FormalMaintenanceStatus.CURRENT,
+                FormalMaintenanceStatus.REPAIRED,
+            }:
+                message = (
+                    maintenance.failure.message
+                    if maintenance.failure is not None
+                    else "formal manuscript projection requires recovery"
+                )
+                raise RuntimeError(message)
             content = chapters.read_content(chapter.id)
             processed += 1
             if content.strip():

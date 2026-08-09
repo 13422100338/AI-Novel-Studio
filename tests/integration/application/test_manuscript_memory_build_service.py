@@ -3,6 +3,10 @@ from pathlib import Path
 
 import pytest
 
+from ai_novel_studio.application.chapter_revision_service import (
+    ChapterRevisionService,
+    FormalMaintenanceResult,
+)
 from ai_novel_studio.application.manuscript_memory_build_service import (
     ManuscriptMemoryBuildService,
     MemoryBuildProgress,
@@ -153,6 +157,49 @@ def test_build_all_creates_review_summaries_and_search_documents(
         for chapter in (first, second)
         for documents in (formal_by_chapter[chapter.id],)
     )
+
+
+def test_build_all_reuses_chapter_revision_maintainer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = ProjectRepository.create(tmp_path / "novel", "Shared maintainer")
+    chapters = ChapterRepository(project)
+    chapter = chapters.create_chapter(
+        project.list_volumes()[0].id,
+        "Opening",
+        "1",
+        "Body",
+    )
+    calls: list[tuple[str, int, str]] = []
+    original = ChapterRevisionService.maintain_current_revision
+
+    def track_maintenance(
+        service: ChapterRevisionService,
+        chapter_id: str,
+        *,
+        expected_revision: int,
+        expected_source_hash: str,
+    ) -> FormalMaintenanceResult:
+        calls.append((chapter_id, expected_revision, expected_source_hash))
+        return original(
+            service,
+            chapter_id,
+            expected_revision=expected_revision,
+            expected_source_hash=expected_source_hash,
+        )
+
+    monkeypatch.setattr(
+        ChapterRevisionService,
+        "maintain_current_revision",
+        track_maintenance,
+    )
+
+    report = ManuscriptMemoryBuildService().build_all(project)
+
+    assert calls == [(chapter.id, chapter.revision, _source_hash("Body"))]
+    assert report.processed_chapters == 1
+    assert report.indexed_documents == 1
 
 
 def test_build_all_replay_preserves_formal_rows_vectors_fts_and_dependencies(

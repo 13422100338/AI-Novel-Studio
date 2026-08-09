@@ -303,6 +303,12 @@ class ChapterRepository:
                 )
                 if cursor.rowcount != 1:
                     raise RuntimeError("chapter changed concurrently")
+                MemoryDependencyRepository.invalidate_formal_manuscript_in_connection(
+                    connection,
+                    chapter.id,
+                    chapter.revision + 1,
+                    _hash(content),
+                )
                 if invalidate_memory:
                     MemoryDependencyRepository.invalidate_in_connection(
                         connection,

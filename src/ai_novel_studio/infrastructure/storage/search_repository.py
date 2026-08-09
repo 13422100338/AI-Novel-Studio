@@ -288,6 +288,118 @@ class SearchRepository:
         chunk_policy_version: str,
         chunks: tuple[FormalManuscriptChunk, ...],
     ) -> tuple[SearchDocument, ...]:
+        return self._write_formal_manuscript_chunks(
+            chapter_id,
+            expected_revision=expected_revision,
+            expected_source_hash=expected_source_hash,
+            chunk_policy_version=chunk_policy_version,
+            chunks=chunks,
+            repair=False,
+        )
+
+    def repair_formal_manuscript_chunks(
+        self,
+        chapter_id: str,
+        *,
+        expected_revision: int,
+        expected_source_hash: str,
+        chunk_policy_version: str,
+        chunks: tuple[FormalManuscriptChunk, ...],
+    ) -> tuple[SearchDocument, ...]:
+        return self._write_formal_manuscript_chunks(
+            chapter_id,
+            expected_revision=expected_revision,
+            expected_source_hash=expected_source_hash,
+            chunk_policy_version=chunk_policy_version,
+            chunks=chunks,
+            repair=True,
+        )
+
+    def invalidate_formal_manuscript_chunks(
+        self,
+        chapter_id: str,
+        *,
+        expected_revision: int,
+        expected_source_hash: str,
+    ) -> int:
+        canonical_chapter_id = validate_id(chapter_id)
+        revision = _nonnegative_integer(expected_revision, "chapter revision")
+        source_hash = _source_hash(expected_source_hash)
+        now = _now().isoformat()
+        try:
+            with self.project.database.connect() as connection, connection:
+                connection.execute("BEGIN IMMEDIATE")
+                self._current_formal_source(
+                    connection,
+                    canonical_chapter_id,
+                    revision,
+                    source_hash,
+                )
+                rows = connection.execute(
+                    """
+                    SELECT id FROM memory_documents
+                    WHERE document_type = ? AND chapter_id = ?
+                    ORDER BY id
+                    """,
+                    (FORMAL_MANUSCRIPT_DOCUMENT_TYPE, canonical_chapter_id),
+                ).fetchall()
+                connection.execute(
+                    """
+                    UPDATE memory_dependencies SET status = 'STALE'
+                    WHERE memory_type = 'SEARCH'
+                      AND memory_id IN (
+                          SELECT id FROM memory_documents
+                          WHERE document_type = ? AND chapter_id = ?
+                      )
+                    """,
+                    (FORMAL_MANUSCRIPT_DOCUMENT_TYPE, canonical_chapter_id),
+                )
+                connection.execute(
+                    """
+                    UPDATE memory_embeddings
+                    SET status = 'STALE', updated_at = ?
+                    WHERE status != 'STALE'
+                      AND document_id IN (
+                          SELECT id FROM memory_documents
+                          WHERE document_type = ? AND chapter_id = ?
+                      )
+                    """,
+                    (
+                        now,
+                        FORMAL_MANUSCRIPT_DOCUMENT_TYPE,
+                        canonical_chapter_id,
+                    ),
+                )
+                connection.execute(
+                    """
+                    UPDATE memory_documents SET status = 'STALE'
+                    WHERE document_type = ? AND chapter_id = ?
+                      AND status != 'STALE'
+                    """,
+                    (FORMAL_MANUSCRIPT_DOCUMENT_TYPE, canonical_chapter_id),
+                )
+                self._current_formal_source(
+                    connection,
+                    canonical_chapter_id,
+                    revision,
+                    source_hash,
+                )
+        except sqlite3.Error:
+            raise RuntimeError(
+                "formal manuscript projection invalidation failed"
+            ) from None
+        return len(rows)
+
+    def _write_formal_manuscript_chunks(
+        self,
+        chapter_id: str,
+        *,
+        expected_revision: int,
+        expected_source_hash: str,
+        chunk_policy_version: str,
+        chunks: tuple[FormalManuscriptChunk, ...],
+        repair: bool,
+    ) -> tuple[SearchDocument, ...]:
         canonical_chapter_id = validate_id(chapter_id)
         revision = _nonnegative_integer(expected_revision, "chapter revision")
         source_hash = _source_hash(expected_source_hash)
@@ -320,6 +432,23 @@ class SearchRepository:
                 """,
                 (FORMAL_MANUSCRIPT_DOCUMENT_TYPE, canonical_chapter_id),
             ).fetchall()
+            if repair:
+                expected_source_ids = {
+                    chunk.source_id for chunk in normalized_chunks
+                }
+                if any(
+                    str(row["source_id"]) in expected_source_ids
+                    and (
+                        str(row["title"]) != str(chapter["title"])
+                        or str(row["volume_id"]) != str(chapter["volume_id"])
+                    )
+                    for row in existing_rows
+                ):
+                    raise RuntimeError(
+                        "formal manuscript source metadata requires a new revision"
+                    )
+                _delete_formal_document_rows(connection, existing_rows)
+                existing_rows = []
             existing_by_source = {
                 str(row["source_id"]): row for row in existing_rows
             }
@@ -463,6 +592,62 @@ class SearchRepository:
             expected_source_hash=source_hash,
             chunk_policy_version=policy_version,
         )
+
+    def formal_manuscript_recovery_chapter_ids(
+        self,
+        *,
+        after_chapter_id: str | None = None,
+        limit: int,
+    ) -> tuple[str, ...]:
+        if after_chapter_id is not None:
+            after_chapter_id = validate_id(after_chapter_id)
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 101:
+            raise ValueError("formal manuscript recovery limit must be between 1 and 101")
+        with self.project.database.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT chapter_id
+                FROM (
+                    SELECT id AS chapter_id FROM chapters
+                    UNION
+                    SELECT chapter_id FROM memory_documents
+                    WHERE document_type = 'FORMAL_MANUSCRIPT'
+                      AND chapter_id IS NOT NULL
+                )
+                WHERE (? IS NULL OR chapter_id > ?)
+                ORDER BY chapter_id
+                LIMIT ?
+                """,
+                (after_chapter_id, after_chapter_id, limit),
+            ).fetchall()
+        return tuple(str(row["chapter_id"]) for row in rows)
+
+    def remove_orphaned_formal_manuscript_chunks(self, chapter_id: str) -> int:
+        canonical_chapter_id = validate_id(chapter_id)
+        with self.project.database.connect() as connection, connection:
+            connection.execute("BEGIN IMMEDIATE")
+            source_row = connection.execute(
+                "SELECT is_deleted FROM chapters WHERE id = ?",
+                (canonical_chapter_id,),
+            ).fetchone()
+            if source_row is not None and int(source_row["is_deleted"]) == 0:
+                raise RuntimeError("current chapter formal projection cannot be removed")
+            existing_rows = connection.execute(
+                """
+                SELECT * FROM memory_documents
+                WHERE document_type = ? AND chapter_id = ?
+                ORDER BY chunk_ordinal, id
+                """,
+                (FORMAL_MANUSCRIPT_DOCUMENT_TYPE, canonical_chapter_id),
+            ).fetchall()
+            _delete_formal_document_rows(connection, existing_rows)
+            source_row = connection.execute(
+                "SELECT is_deleted FROM chapters WHERE id = ?",
+                (canonical_chapter_id,),
+            ).fetchone()
+            if source_row is not None and int(source_row["is_deleted"]) == 0:
+                raise RuntimeError("chapter became current during formal removal")
+        return len(existing_rows)
 
     def read_formal_manuscript_chunks(
         self,
@@ -1105,6 +1290,29 @@ def _validate_stored_formal_documents(
         ordinals.append(ordinal)
     if ordinals != list(range(len(documents))):
         raise RuntimeError("stored formal manuscript ordinal set is invalid")
+
+
+def _delete_formal_document_rows(
+    connection: sqlite3.Connection,
+    rows: tuple[sqlite3.Row, ...] | list[sqlite3.Row],
+) -> None:
+    for row in rows:
+        document_id = str(row["id"])
+        connection.execute(
+            """
+            DELETE FROM memory_dependencies
+            WHERE memory_type = 'SEARCH' AND memory_id = ?
+            """,
+            (document_id,),
+        )
+        connection.execute(
+            "DELETE FROM memory_fts WHERE document_id = ?",
+            (document_id,),
+        )
+        connection.execute(
+            "DELETE FROM memory_documents WHERE id = ?",
+            (document_id,),
+        )
 
 
 def _keyword_query(query: str) -> str:

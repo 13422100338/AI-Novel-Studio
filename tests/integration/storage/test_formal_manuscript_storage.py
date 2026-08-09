@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -782,6 +783,301 @@ def test_formal_chunk_replacement_bounds_aggregate_stored_codepoints_and_rolls_b
         chapter.id,
         expected_revision=0,
         expected_source_hash=_source_hash("abcdefghij"),
+        chunk_policy_version=_POLICY,
+    ) == prior
+    assert search.get_embedding(prior[0].id, _IDENTITY) == prior_embedding
+
+
+def test_formal_orphan_cleanup_refuses_a_current_source(tmp_path: Path) -> None:
+    _project, _chapters, search, chapter = _repositories(
+        tmp_path,
+        content="current source",
+    )
+    content = "current source"
+    stored = search.replace_formal_manuscript_chunks(
+        chapter.id,
+        expected_revision=chapter.revision,
+        expected_source_hash=_source_hash(content),
+        chunk_policy_version=_POLICY,
+        chunks=(_chunk(chapter.id, 0, 0, 0, len(content), content),),
+    )
+
+    with pytest.raises(RuntimeError, match="current chapter"):
+        search.remove_orphaned_formal_manuscript_chunks(chapter.id)
+
+    assert search.get(stored[0].id) == stored[0]
+
+
+def test_formal_invalidation_is_idempotent_and_leaves_legacy_rows_current(
+    tmp_path: Path,
+) -> None:
+    project, _chapters, search, chapter = _repositories(
+        tmp_path,
+        content="current formal source",
+    )
+    content = "current formal source"
+    legacy = search.index_chapter(chapter.id, chapter.title, content)
+    formal = search.replace_formal_manuscript_chunks(
+        chapter.id,
+        expected_revision=chapter.revision,
+        expected_source_hash=_source_hash(content),
+        chunk_policy_version=_POLICY,
+        chunks=(_chunk(chapter.id, 0, 0, 0, len(content), content),),
+    )
+    source = search.embedding_source(formal[0].id)
+    search.save_embedding(
+        formal[0].id,
+        _IDENTITY,
+        (1.0, 0.0),
+        expected_content_hash=source.content_hash,
+    )
+
+    first = search.invalidate_formal_manuscript_chunks(
+        chapter.id,
+        expected_revision=chapter.revision,
+        expected_source_hash=_source_hash(content),
+    )
+    second = search.invalidate_formal_manuscript_chunks(
+        chapter.id,
+        expected_revision=chapter.revision,
+        expected_source_hash=_source_hash(content),
+    )
+
+    with project.database.connect() as connection:
+        formal_status = str(
+            connection.execute(
+                "SELECT status FROM memory_documents WHERE id = ?",
+                (formal[0].id,),
+            ).fetchone()["status"]
+        )
+        dependency_status = str(
+            connection.execute(
+                "SELECT status FROM memory_dependencies "
+                "WHERE memory_type = 'SEARCH' AND memory_id = ?",
+                (formal[0].id,),
+            ).fetchone()["status"]
+        )
+        embedding_status = str(
+            connection.execute(
+                "SELECT status FROM memory_embeddings WHERE document_id = ?",
+                (formal[0].id,),
+            ).fetchone()["status"]
+        )
+
+    assert first == second == 1
+    assert (formal_status, dependency_status, embedding_status) == (
+        "STALE",
+        "STALE",
+        "STALE",
+    )
+    assert search.get(legacy.id).status.value == "CURRENT"
+
+
+def test_formal_invalidation_rolls_back_when_exact_source_changes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project, _chapters, search, chapter = _repositories(
+        tmp_path,
+        content="stable source",
+    )
+    content = "stable source"
+    formal = search.replace_formal_manuscript_chunks(
+        chapter.id,
+        expected_revision=chapter.revision,
+        expected_source_hash=_source_hash(content),
+        chunk_policy_version=_POLICY,
+        chunks=(_chunk(chapter.id, 0, 0, 0, len(content), content),),
+    )
+    source = search.embedding_source(formal[0].id)
+    search.save_embedding(
+        formal[0].id,
+        _IDENTITY,
+        (1.0, 0.0),
+        expected_content_hash=source.content_hash,
+    )
+    manuscript_path = project.layout.root / chapter.content_path
+    real_source_check = search._current_formal_source
+    source_checks = 0
+
+    def change_source_before_commit(
+        connection: sqlite3.Connection,
+        chapter_id: str,
+        revision: int,
+        source_hash: str,
+    ) -> tuple[sqlite3.Row, str]:
+        nonlocal source_checks
+        source_checks += 1
+        if source_checks == 2:
+            with manuscript_path.open("w", encoding="utf-8", newline="") as stream:
+                stream.write("changed source")
+        return real_source_check(
+            connection,
+            chapter_id,
+            revision,
+            source_hash,
+        )
+
+    monkeypatch.setattr(
+        search,
+        "_current_formal_source",
+        change_source_before_commit,
+    )
+
+    try:
+        with pytest.raises(RuntimeError, match="source file does not match"):
+            search.invalidate_formal_manuscript_chunks(
+                chapter.id,
+                expected_revision=chapter.revision,
+                expected_source_hash=_source_hash(content),
+            )
+    finally:
+        with manuscript_path.open("w", encoding="utf-8", newline="") as stream:
+            stream.write(content)
+
+    with project.database.connect() as connection:
+        statuses = (
+            str(
+                connection.execute(
+                    "SELECT status FROM memory_documents WHERE id = ?",
+                    (formal[0].id,),
+                ).fetchone()["status"]
+            ),
+            str(
+                connection.execute(
+                    "SELECT status FROM memory_dependencies "
+                    "WHERE memory_type = 'SEARCH' AND memory_id = ?",
+                    (formal[0].id,),
+                ).fetchone()["status"]
+            ),
+            str(
+                connection.execute(
+                    "SELECT status FROM memory_embeddings WHERE document_id = ?",
+                    (formal[0].id,),
+                ).fetchone()["status"]
+            ),
+        )
+    assert source_checks == 2
+    assert statuses == ("CURRENT", "CURRENT", "CURRENT")
+
+
+def test_formal_invalidation_normalizes_storage_errors_and_rolls_back(
+    tmp_path: Path,
+) -> None:
+    project, _chapters, search, chapter = _repositories(
+        tmp_path,
+        content="private manuscript body",
+    )
+    content = "private manuscript body"
+    formal = search.replace_formal_manuscript_chunks(
+        chapter.id,
+        expected_revision=chapter.revision,
+        expected_source_hash=_source_hash(content),
+        chunk_policy_version=_POLICY,
+        chunks=(_chunk(chapter.id, 0, 0, 0, len(content), content),),
+    )
+    source = search.embedding_source(formal[0].id)
+    search.save_embedding(
+        formal[0].id,
+        _IDENTITY,
+        (1.0, 0.0),
+        expected_content_hash=source.content_hash,
+    )
+    raw_error = f"raw storage failure: {project.layout.root}: {content}"
+    with project.database.connect() as connection, connection:
+        connection.execute(
+            f"""
+            CREATE TRIGGER fail_formal_invalidation
+            BEFORE UPDATE OF status ON memory_documents
+            WHEN OLD.document_type = 'FORMAL_MANUSCRIPT'
+            BEGIN
+                SELECT RAISE(ABORT, '{raw_error}');
+            END
+            """
+        )
+
+    with pytest.raises(RuntimeError) as captured:
+        search.invalidate_formal_manuscript_chunks(
+            chapter.id,
+            expected_revision=chapter.revision,
+            expected_source_hash=_source_hash(content),
+        )
+
+    assert str(captured.value) == "formal manuscript projection invalidation failed"
+    assert content not in str(captured.value)
+    assert str(project.layout.root) not in str(captured.value)
+    with project.database.connect() as connection:
+        statuses = (
+            str(
+                connection.execute(
+                    "SELECT status FROM memory_documents WHERE id = ?",
+                    (formal[0].id,),
+                ).fetchone()["status"]
+            ),
+            str(
+                connection.execute(
+                    "SELECT status FROM memory_dependencies "
+                    "WHERE memory_type = 'SEARCH' AND memory_id = ?",
+                    (formal[0].id,),
+                ).fetchone()["status"]
+            ),
+            str(
+                connection.execute(
+                    "SELECT status FROM memory_embeddings WHERE document_id = ?",
+                    (formal[0].id,),
+                ).fetchone()["status"]
+            ),
+        )
+    assert statuses == ("CURRENT", "CURRENT", "CURRENT")
+
+
+def test_formal_chunk_repair_rolls_back_deleted_rows_when_insert_fails(
+    tmp_path: Path,
+) -> None:
+    project, _chapters, search, chapter = _repositories(
+        tmp_path,
+        content="repair rollback body",
+    )
+    content = "repair rollback body"
+    prior = search.replace_formal_manuscript_chunks(
+        chapter.id,
+        expected_revision=chapter.revision,
+        expected_source_hash=_source_hash(content),
+        chunk_policy_version=_POLICY,
+        chunks=(_chunk(chapter.id, 0, 0, 0, len(content), content),),
+    )
+    source = search.embedding_source(prior[0].id)
+    prior_embedding = search.save_embedding(
+        prior[0].id,
+        _IDENTITY,
+        (1.0, 0.0),
+        expected_content_hash=source.content_hash,
+    )
+    with project.database.connect() as connection, connection:
+        connection.execute(
+            """
+            CREATE TRIGGER fail_formal_repair_insert
+            BEFORE INSERT ON memory_documents
+            WHEN NEW.document_type = 'FORMAL_MANUSCRIPT'
+            BEGIN
+                SELECT RAISE(ABORT, 'injected formal repair failure');
+            END
+            """
+        )
+
+    with pytest.raises(sqlite3.IntegrityError, match="injected formal repair"):
+        search.repair_formal_manuscript_chunks(
+            chapter.id,
+            expected_revision=chapter.revision,
+            expected_source_hash=_source_hash(content),
+            chunk_policy_version=_POLICY,
+            chunks=(_chunk(chapter.id, 0, 0, 0, len(content), content),),
+        )
+
+    assert search.read_formal_manuscript_chunks(
+        chapter.id,
+        expected_revision=chapter.revision,
+        expected_source_hash=_source_hash(content),
         chunk_policy_version=_POLICY,
     ) == prior
     assert search.get_embedding(prior[0].id, _IDENTITY) == prior_embedding

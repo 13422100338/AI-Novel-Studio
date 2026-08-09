@@ -3,8 +3,11 @@ from pathlib import Path
 
 import pytest
 
+from ai_novel_studio.application.chapter_revision_service import ChapterRevisionService
+from ai_novel_studio.domain.embedding import EmbeddingIndexIdentity
 from ai_novel_studio.infrastructure.storage.chapter_repository import ChapterRepository
 from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
+from ai_novel_studio.infrastructure.storage.search_repository import SearchRepository
 from ai_novel_studio.infrastructure.storage.view_assertion_repository import (
     ViewAssertionRepository,
 )
@@ -79,6 +82,91 @@ def test_view_invalidation_failure_restores_chapter_file_and_database(
     assert chapters.list_versions(chapter.id) == []
     history = project.layout.history / chapter.id
     assert not history.exists() or not tuple(history.iterdir())
+
+
+def test_noninvalidating_save_stales_only_prior_formal_projection(
+    tmp_path: Path,
+) -> None:
+    project, chapters = _repositories(tmp_path)
+    chapter = chapters.create_chapter(
+        project.list_volumes()[0].id,
+        "Opening",
+        "1",
+        "old body",
+    )
+    search = SearchRepository(project)
+    legacy = search.index_chapter(chapter.id, chapter.title, "old body")
+    old_hash = hashlib.sha256(b"old body").hexdigest()
+    maintained = ChapterRevisionService(project).maintain_current_revision(
+        chapter.id,
+        expected_revision=chapter.revision,
+        expected_source_hash=old_hash,
+    )
+    formal = search.read_formal_manuscript_chunks(
+        chapter.id,
+        expected_revision=chapter.revision,
+        expected_source_hash=old_hash,
+        chunk_policy_version=maintained.policy_version,
+    )[0]
+    identity = EmbeddingIndexIdentity("provider", "model", 1)
+    source = search.embedding_source(formal.id)
+    search.save_embedding(
+        formal.id,
+        identity,
+        (1.0, 0.0),
+        expected_content_hash=source.content_hash,
+    )
+
+    updated = chapters.save_content(
+        chapter.id,
+        "new body",
+        source="manual",
+        reason="punctuation",
+        invalidate_memory=False,
+    )
+
+    with project.database.connect() as connection:
+        document_rows = connection.execute(
+            """
+            SELECT id, status FROM memory_documents
+            WHERE id IN (?, ?)
+            ORDER BY id
+            """,
+            (formal.id, legacy.id),
+        ).fetchall()
+        dependency_rows = connection.execute(
+            """
+            SELECT memory_id, status FROM memory_dependencies
+            WHERE memory_type = 'SEARCH' AND memory_id IN (?, ?)
+            ORDER BY memory_id
+            """,
+            (formal.id, legacy.id),
+        ).fetchall()
+        embedding_status = connection.execute(
+            """
+            SELECT status FROM memory_embeddings
+            WHERE document_id = ? AND provider_id = ? AND model_id = ?
+              AND embedding_schema_version = ?
+            """,
+            (
+                formal.id,
+                identity.provider_id,
+                identity.model_id,
+                identity.embedding_schema_version,
+            ),
+        ).fetchone()["status"]
+
+    assert updated.revision == chapter.revision + 1
+    assert updated.memory_status == chapter.memory_status
+    assert {row["id"]: row["status"] for row in document_rows} == {
+        formal.id: "STALE",
+        legacy.id: "CURRENT",
+    }
+    assert {row["memory_id"]: row["status"] for row in dependency_rows} == {
+        formal.id: "STALE",
+        legacy.id: "CURRENT",
+    }
+    assert embedding_status == "STALE"
 
 
 def test_delete_moves_chapter_to_trash_and_restore_recovers_it(tmp_path: Path) -> None:
