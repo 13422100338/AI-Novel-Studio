@@ -8,7 +8,7 @@
 - Superpowers: disabled for this project workflow.
 - Initial business-code baseline: `e35b50d` (the backend code state before the governance-only dispatch commit).
 - Wave 1 dispatched baseline: `3382dd36c2a4aeb4acdab411e9211885b633e678`.
-- Latest integrated business commit: `36b0c2f` (P0-1 model-boundary exception logging and credential-safe log redaction, including prior A1-A4, B1-B14, C1-C14, M1, E1a, E1b-SR1, E1b-SS1, E1b-CR1, E1b-CS1, E1b-CE1, E1b-SM1, SE1-SE3, and ST1 increments).
+- Latest integrated business commit: `03f223e` (S1 canonical chapter sequence boundary, including prior P0-1, A1-A4, B1-B14, C1-C14, M1, E1a, E1b-SR1, E1b-SS1, E1b-CR1, E1b-CS1, E1b-CE1, E1b-SM1, SE1-SE3, and ST1 increments).
 - Planning sources:
   - `docs/handoffs/2026-07-22-backend-refactor-handoff.md`
   - `docs/handoffs/2026-08-09-backend-refactor-supplemental-upgrade.md`
@@ -34,10 +34,7 @@
 
 All Wave 1 tasks were dispatched from `3382dd36c2a4aeb4acdab411e9211885b633e678`; their initial business-code baseline remains `e35b50d`.
 
-- Active implementations authorized by the user: `S1 Canonical Chapter Sequence Boundary`,
-  assigned to the existing `view-operations-ui` task. S1 is a no-schema prerequisite that
-  unifies canonical cross-volume chapter order, one-based sequence lookup, deterministic
-  same-position ID tie-breaking, and Reader visibility from `source sequence + 1`.
+- Active implementations authorized by the user: none.
 - Completed read-only audit: `Gate S0` across A/B/C. Its reports froze the dependency direction
   `R1 -> R2 -> R3 -> R4`, require R1 and O1 schema ownership to be serialized, require O2 to
   consume R2 revision impact, and require H1 to reuse the R3 evidence facade.
@@ -89,6 +86,7 @@ All Wave 1 tasks were dispatched from `3382dd36c2a4aeb4acdab411e9211885b633e678`
   - `style-engine` increment ST1 (bounded Writer Style Exemplar Retrieval), merged as `f55065f`.
   - `view-operations-ui` increment C14 (read-only Character physical-state semantics hint), merged as `fe91b52`.
   - `fix-p0-logging` increment P0-1 (model-boundary exception logging with path and credential redaction), merged as `ab13f98` plus security correction `36b0c2f`.
+  - `view-operations-ui` increment S1 (canonical cross-volume chapter sequence and Reader visibility boundary), merged as `03f223e`.
 - Active schema owner: none.
 
 | Task | Model / reasoning | Thread | Worktree | Assigned branch | HEAD state | Status |
@@ -96,22 +94,22 @@ All Wave 1 tasks were dispatched from `3382dd36c2a4aeb4acdab411e9211885b633e678`
 
 | `manifest-eligibility-v2` | `gpt-5.6-sol` / `high` | `019f87e8-6d32-7141-b9b4-4f1142e4db4e` | `C:\Users\钟子诚\.codex\worktrees\93d7\AI-Novel-Studio` | `codex/manifest-eligibility-v2` | branch | M1, E1a, E1b-SR1, E1b-SS1, E1b-CR1, and E1b-CS1 merged at `812a737`, `5233ccd`, `453a709`, `5e1062e`, `14b1a1f`, and `ce4e7ba`; lane paused pending explicit instruction |
 | `generation-profile-audit-policy` | `gpt-5.6-terra` / `medium` | `019f87e8-696e-7f11-bcfe-1552f51cabc3` | `C:\Users\钟子诚\.codex\worktrees\4df4\AI-Novel-Studio` | `codex/generation-profile-audit-policy-b5` | branch | B1-B7 merged; B7 is `663f932`; lane paused pending explicit instruction |
-| `view-operations-ui` | `gpt-5.6-luna` / `max` | `019f87e8-7a77-7902-b3d1-a38f32240136` | `C:\Users\钟子诚\.codex\worktrees\8802\AI-Novel-Studio` | `codex/view-operations-ui-s1` | branch | S1 clean-start branch created from `10e043b`; implementation must stop at review |
+| `view-operations-ui` | `gpt-5.6-luna` / `max` | `019f87e8-7a77-7902-b3d1-a38f32240136` | `C:\Users\钟子诚\.codex\worktrees\8802\AI-Novel-Studio` | `codex/view-operations-ui-s1` | branch | S1 merged as `03f223e`; lane paused pending explicit instruction |
 
-Current dispatch override: `view-operations-ui` owns S1 only. The A and B tasks are paused after
-their Gate S0 reports; `style-engine` remains paused after ST1,
+Current dispatch override: no implementation is active. A and B are paused after their Gate S0
+reports; `view-operations-ui` is paused after S1; `style-engine` remains paused after ST1,
 `generation-profile-audit-policy` remains paused after B14, and `fix-p0-logging` remains paused
 after P0-1. P0-2 requires a separate ticket decision.
 
 Supplemental planning status: shared Occurrence/View sparsification/Subject progressive history and
 Formal Manuscript exact-evidence retrieval are now planned in
-`2026-08-09-backend-refactor-supplemental-upgrade.md`. Gate S0 is complete and S1 is the first
-authorized prerequisite. No schema owner is active. S1 must not start R1-R4, O1-O2, H1, or V1,
-and must not alter persisted View rows or chapter numbering data.
+`2026-08-09-backend-refactor-supplemental-upgrade.md`. Gate S0 and its no-schema S1 prerequisite
+are complete. No schema owner is active. R1-R4, O1-O2, H1, and V1 each still require a separate
+user authorization.
 
 Product decision: Manual Pins are immutable materialized snapshots. They never automatically re-resolve or refresh from their source; authors update them only by removing and re-pinning. Do not add a live-pointer, automatic stale gate, or refresh behavior without a new explicit decision.
 
-E1a, E1b-SR1, E1b-SS1, E1b-CR1, E1b-CS1, E1b-CE1, E1b-SM1, SE1, SE2a, SE2c-W1, SE3, ST1, C6a, C6b, C7, C8, C9, C10, C11, C12, C13, C14, B4, B5, B6, B7, B8, B9, B10, B11, B12, B13, B14, and P0-1 are integrated. Every later increment still requires a new user decision.
+E1a, E1b-SR1, E1b-SS1, E1b-CR1, E1b-CS1, E1b-CE1, E1b-SM1, SE1, SE2a, SE2c-W1, SE3, ST1, S1, C6a, C6b, C7, C8, C9, C10, C11, C12, C13, C14, B4, B5, B6, B7, B8, B9, B10, B11, B12, B13, B14, and P0-1 are integrated. Every later increment still requires a new user decision.
 
 ## Later Waves and Dependencies
 
