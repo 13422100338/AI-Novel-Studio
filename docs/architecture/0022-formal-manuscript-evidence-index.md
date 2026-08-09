@@ -71,6 +71,28 @@ The derived `source_id` is stable for that exact `(chapter_id, revision, policy_
 identity. A later chapter revision creates a different derived identity; it never silently
 reinterprets an old row.
 
+### Formal source-projection revision semantics
+
+For Formal Manuscript indexing, `Chapter.revision` versions the complete source projection, not
+only the chapter body. Any mutation to metadata that participates in the persisted, FTS, or
+embedding projection must advance the existing chapter revision.
+
+The initial metadata mutations covered by this rule are:
+
+- chapter title changes;
+- chapter relocation to another volume, including relocation performed by volume deletion.
+
+A metadata-only revision keeps the exact manuscript body and `content_hash` unchanged. It creates
+a normal `ChapterVersion` snapshot of that unchanged exact content with an explicit metadata-change
+source and reason, then invalidates revision-bound derived rows in the same way as a content
+revision. The new revision produces new Formal chunk source IDs; old source IDs are never deleted
+and recreated under a changed title or volume.
+
+Chapter deletion is a lifecycle operation rather than a metadata revision: current Formal rows are
+invalidated/removed and current reads fail closed. Restoring unchanged content rebuilds its Formal
+projection under the retained revision after deleted rows have been removed. No SQLite schema
+migration is required for these semantics.
+
 ### Schema v19 and compatibility
 
 R1a exclusively owns schema v19.
