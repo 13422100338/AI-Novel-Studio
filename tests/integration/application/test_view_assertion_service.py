@@ -387,6 +387,52 @@ def test_user_can_explicitly_replace_one_reviewed_legacy_reader_event(
         )
 
 
+def test_legacy_reader_candidates_use_canonical_cross_volume_sequence(
+    tmp_path: Path,
+) -> None:
+    project, _eric, _christine = _project_with_characters(tmp_path)
+    chapters = ChapterRepository(project)
+    first_volume = project.list_volumes()[0]
+    second_volume = project.create_volume("Second volume")
+    canonical_volume_ids = sorted((first_volume.id, second_volume.id), reverse=True)
+    with project.database.connect() as connection, connection:
+        connection.executemany(
+            "UPDATE volumes SET sort_index = ? WHERE id = ?",
+            tuple(enumerate(canonical_volume_ids)),
+        )
+    chapters.create_chapter(canonical_volume_ids[0], "Earlier", "1", "Earlier")
+    target = chapters.create_chapter(
+        canonical_volume_ids[1], "Current", "1", "Current"
+    )
+    memory = CharacterMemoryRepository(project)
+    item = memory.create_knowledge_item(
+        "Cross-volume reader fact",
+        "The reader sees the courier.",
+        Authority.USER_CONFIRMED,
+        ReviewStatus.APPROVED,
+    )
+    event = memory.append_knowledge_event(
+        item.id,
+        KnowledgeSubject.READER,
+        project.project.id,
+        target.id,
+        KnowledgeState.KNOWN,
+        "Reader evidence",
+        SourceType.HUMAN,
+        ReviewStatus.APPROVED,
+    )
+
+    candidates = ViewAssertionService(project).list_legacy_reader_view_candidates()
+
+    candidate_sequences = [
+        (candidate.event_id, candidate.narrative_visible_from_sequence)
+        for candidate in candidates
+    ]
+    assert candidate_sequences == [
+        (event.id, 3)
+    ]
+
+
 def test_legacy_reader_replacement_rejects_wrong_subject_or_unsafe_state(
     tmp_path: Path,
 ) -> None:

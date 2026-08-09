@@ -103,6 +103,33 @@ def test_extracts_validated_model_candidates_with_deterministic_provenance(
     assert {item.narrative_visible_from_sequence for item in result} == {3}
 
 
+def test_extraction_uses_canonical_cross_volume_sequence(tmp_path: Path) -> None:
+    project = ProjectRepository.create(tmp_path / "novel", "Novel")
+    chapters = ChapterRepository(project)
+    first_volume = project.list_volumes()[0]
+    second_volume = project.create_volume("Second volume")
+    canonical_volume_ids = sorted((first_volume.id, second_volume.id), reverse=True)
+    with project.database.connect() as connection, connection:
+        connection.executemany(
+            "UPDATE volumes SET sort_index = ? WHERE id = ?",
+            tuple(enumerate(canonical_volume_ids)),
+        )
+    chapters.create_chapter(canonical_volume_ids[0], "Earlier", "1", "Earlier")
+    target = chapters.create_chapter(
+        canonical_volume_ids[1], "Current", "1", "Chapter body"
+    )
+    characters = CharacterMemoryRepository(project)
+    subject = characters.create_character("Subject")
+    viewer = characters.create_character("Viewer")
+    gateway = _Gateway([_payload(subject_id=subject.id, viewer_id=viewer.id)])
+
+    result = ViewAssertionExtractionService(LLMContractRunner(gateway)).extract(
+        project, target.id
+    )
+
+    assert {item.narrative_visible_from_sequence for item in result} == {3}
+
+
 def test_rejects_existing_current_revision_before_another_model_call(
     tmp_path: Path,
 ) -> None:

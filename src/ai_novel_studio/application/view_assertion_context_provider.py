@@ -30,7 +30,7 @@ class ViewAssertionContextProvider:
         *,
         pov_character_id: str | None,
     ) -> tuple[ContextBlock, ...]:
-        narrative_sequence = len(self.chapters.list_before(chapter_id)) + 1
+        narrative_sequence = self.chapters.get_chapter_sequence(chapter_id)
         candidates: list[ViewAssertion] = []
         if pov_character_id is not None:
             candidates.extend(
@@ -74,7 +74,7 @@ class ViewAssertionContextProvider:
         """Return legacy reader events explicitly replaced by safe reader views."""
         if not event_ids:
             return frozenset()
-        narrative_sequence = len(self.chapters.list_before(chapter_id)) + 1
+        narrative_sequence = self.chapters.get_chapter_sequence(chapter_id)
         known_event_ids = frozenset(event_ids)
         candidates = self.assertions.list_context_candidates(
             view_type=ViewType.READER_VIEW,

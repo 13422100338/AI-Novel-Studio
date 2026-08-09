@@ -60,16 +60,7 @@ class ViewAssertionExtractionService:
         active_ids = frozenset(character.id for character in characters)
         if not active_ids:
             raise ValueError("没有可用于 View Assertion 的活跃人物")
-        chapter_sequence = next(
-            (
-                index
-                for index, item in enumerate(chapters.list_chapters(), start=1)
-                if item.id == chapter.id
-            ),
-            None,
-        )
-        if chapter_sequence is None:
-            raise ValueError("当前章节不在有效章节顺序中")
+        chapter_sequence = chapters.get_chapter_sequence(chapter.id)
         payload = self._runner.run_json(
             TaskPurpose.MEMORY_EXTRACTION,
             self._messages(chapter.id, chapter.revision, content, active_ids),

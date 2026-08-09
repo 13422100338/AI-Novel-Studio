@@ -149,7 +149,7 @@ class AuditWorkflowService:
             and requirement_content == current_requirement.content
             else None
         )
-        chapter_sequence = len(self.chapters.list_before(chapter_id)) + 1
+        chapter_sequence = self.chapters.get_chapter_sequence(chapter_id)
         candidates = self.deterministic.run(
             DeterministicAuditRequest(
                 chapter_id=chapter_id,

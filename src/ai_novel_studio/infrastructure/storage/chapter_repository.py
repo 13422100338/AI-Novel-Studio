@@ -132,7 +132,10 @@ class ChapterRepository:
         try:
             if volume_id is None:
                 rows = connection.execute(
-                    "SELECT * FROM chapters WHERE is_deleted = 0 ORDER BY volume_id, sort_index, id"
+                    "SELECT c.* FROM chapters c "
+                    "JOIN volumes v ON v.id = c.volume_id "
+                    "WHERE c.is_deleted = 0 "
+                    "ORDER BY v.sort_index, c.sort_index, c.id"
                 ).fetchall()
             else:
                 validate_id(volume_id)
@@ -145,6 +148,22 @@ class ChapterRepository:
             connection.close()
         return [_chapter_from_row(row) for row in rows]
 
+    def get_chapter_sequences(self) -> dict[str, int]:
+        """Return one-based sequences for all non-deleted chapters in book order."""
+        return {
+            chapter.id: sequence
+            for sequence, chapter in enumerate(self.list_chapters(), start=1)
+        }
+
+    def get_chapter_sequence(self, chapter_id: str) -> int:
+        """Return the one-based sequence of a non-deleted chapter in book order."""
+        validate_id(chapter_id)
+        sequences = self.get_chapter_sequences()
+        try:
+            return sequences[chapter_id]
+        except KeyError as error:
+            raise KeyError(f"unknown or deleted chapter: {chapter_id}") from error
+
     def list_before(self, chapter_id: str) -> list[Chapter]:
         """Return non-deleted chapters before the target in canonical book order."""
         validate_id(chapter_id)
@@ -152,7 +171,9 @@ class ChapterRepository:
             rows = connection.execute(
                 """
                 WITH target AS (
-                    SELECT v.sort_index AS volume_order, c.sort_index AS chapter_order
+                    SELECT c.id AS chapter_id,
+                           v.sort_index AS volume_order,
+                           c.sort_index AS chapter_order
                     FROM chapters c
                     JOIN volumes v ON v.id = c.volume_id
                     WHERE c.id = ? AND c.is_deleted = 0
@@ -164,7 +185,16 @@ class ChapterRepository:
                 WHERE c.is_deleted = 0
                   AND (
                     v.sort_index < t.volume_order
-                    OR (v.sort_index = t.volume_order AND c.sort_index < t.chapter_order)
+                    OR (
+                        v.sort_index = t.volume_order
+                        AND (
+                            c.sort_index < t.chapter_order
+                            OR (
+                                c.sort_index = t.chapter_order
+                                AND c.id < t.chapter_id
+                            )
+                        )
+                    )
                   )
                 ORDER BY v.sort_index, c.sort_index, c.id
                 """,

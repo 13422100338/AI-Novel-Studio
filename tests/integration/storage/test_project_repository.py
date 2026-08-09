@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from ai_novel_studio.domain.character_identity import CharacterIdentityReviewDecisionType
+from ai_novel_studio.infrastructure.storage.chapter_repository import ChapterRepository
 from ai_novel_studio.infrastructure.storage.character_identity_repository import (
     CharacterIdentityRepository,
 )
@@ -323,3 +324,82 @@ def test_open_rejects_database_with_future_schema(tmp_path: Path) -> None:
 
     with pytest.raises(RuntimeError, match="newer schema"):
         ProjectRepository.open(root)
+
+
+def test_chapters_follow_volume_order_and_expose_one_based_sequence(
+    tmp_path: Path,
+) -> None:
+    project = ProjectRepository.create(tmp_path / "novel", "My Novel")
+    chapters = ChapterRepository(project)
+    first_volume = project.list_volumes()[0]
+    second_volume = project.create_volume("Second volume")
+    first_chapter = chapters.create_chapter(first_volume.id, "First", "1", "first")
+    second_chapter = chapters.create_chapter(second_volume.id, "Second", "1", "second")
+
+    volume_ids_in_canonical_order = sorted(
+        (first_volume.id, second_volume.id), reverse=True
+    )
+    with project.database.connect() as connection, connection:
+        connection.executemany(
+            "UPDATE volumes SET sort_index = ? WHERE id = ?",
+            tuple(enumerate(volume_ids_in_canonical_order)),
+        )
+
+    chapter_ids_by_volume = {
+        first_volume.id: first_chapter.id,
+        second_volume.id: second_chapter.id,
+    }
+    expected_chapter_ids = [
+        chapter_ids_by_volume[volume_id] for volume_id in volume_ids_in_canonical_order
+    ]
+    assert chapters.get_chapter_sequences() == {
+        expected_chapter_ids[0]: 1,
+        expected_chapter_ids[1]: 2,
+    }
+    assert [chapter.id for chapter in chapters.list_chapters()] == expected_chapter_ids
+    assert chapters.get_chapter_sequence(expected_chapter_ids[0]) == 1
+    assert chapters.get_chapter_sequence(expected_chapter_ids[1]) == 2
+
+
+def test_same_position_uses_chapter_id_tie_break_for_before_and_sequence(
+    tmp_path: Path,
+) -> None:
+    project = ProjectRepository.create(tmp_path / "novel", "My Novel")
+    chapters = ChapterRepository(project)
+    volume = project.list_volumes()[0]
+    first = chapters.create_chapter(volume.id, "First", "1", "first")
+    second = chapters.create_chapter(volume.id, "Second", "2", "second")
+    with project.database.connect() as connection, connection:
+        connection.execute(
+            "UPDATE chapters SET sort_index = 0 WHERE id IN (?, ?)",
+            (first.id, second.id),
+        )
+
+    earlier, target = sorted((first, second), key=lambda chapter: chapter.id)
+
+    assert [chapter.id for chapter in chapters.list_chapters()] == [
+        earlier.id,
+        target.id,
+    ]
+    assert [chapter.id for chapter in chapters.list_before(target.id)] == [
+        earlier.id
+    ]
+    assert chapters.get_chapter_sequence(earlier.id) == 1
+    assert chapters.get_chapter_sequence(target.id) == 2
+
+
+def test_chapter_sequence_fails_closed_for_unknown_or_deleted_target(
+    tmp_path: Path,
+) -> None:
+    project = ProjectRepository.create(tmp_path / "novel", "My Novel")
+    chapters = ChapterRepository(project)
+    chapter = chapters.create_chapter(
+        project.list_volumes()[0].id, "Opening", "1", "body"
+    )
+
+    with pytest.raises(KeyError):
+        chapters.get_chapter_sequence("00000000-0000-0000-0000-000000000099")
+
+    chapters.delete_chapter(chapter.id)
+    with pytest.raises(KeyError):
+        chapters.get_chapter_sequence(chapter.id)

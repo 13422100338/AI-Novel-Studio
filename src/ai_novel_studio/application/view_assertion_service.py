@@ -183,10 +183,8 @@ class ViewAssertionService:
             KnowledgeState.MISUNDERSTOOD,
         }
         replaced_ids = self.repository.list_active_reader_replacement_source_ids()
+        chapter_sequences = self.chapters.get_chapter_sequences()
         chapters = self.chapters.list_chapters()
-        chapter_sequences = {
-            chapter.id: index for index, chapter in enumerate(chapters, start=1)
-        }
         chapter_titles = {chapter.id: chapter.title for chapter in chapters}
         candidates: list[LegacyReaderViewCandidate] = []
         for entry in self.knowledge.latest_knowledge_entries(
@@ -209,9 +207,8 @@ class ViewAssertionService:
                     state=event.state,
                     source_chapter_id=event.chapter_id,
                     source_chapter_title=chapter_titles[event.chapter_id],
-                    narrative_visible_from_sequence=(
-                        chapter_sequences[event.chapter_id] + 1
-                    ),
+                    narrative_visible_from_sequence=chapter_sequences[event.chapter_id]
+                    + 1,
                 )
             )
         return tuple(candidates)
@@ -230,12 +227,8 @@ class ViewAssertionService:
             event = self.knowledge.get_knowledge_entry(legacy_event_id).event
         except KeyError as error:
             raise ValueError("旧知识事件不存在") from error
-        chapter_sequences = {
-            chapter.id: index
-            for index, chapter in enumerate(self.chapters.list_chapters(), start=1)
-        }
         try:
-            visible_from = chapter_sequences[event.chapter_id] + 1
+            visible_from = self.chapters.get_chapter_sequence(event.chapter_id) + 1
         except KeyError as error:
             raise ValueError("旧知识事件的来源章节不存在") from error
         return self.create_user_reader_view_from_legacy_event(

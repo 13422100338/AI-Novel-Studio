@@ -121,9 +121,7 @@ class ReaderKnowledgeSummaryService:
     def _ordered(
         self, entries: tuple[KnowledgeSnapshotEntry, ...]
     ) -> tuple[KnowledgeSnapshotEntry, ...]:
-        positions = {
-            chapter.id: index for index, chapter in enumerate(self.chapters.list_chapters())
-        }
+        positions = self.chapters.get_chapter_sequences()
         return tuple(
             sorted(
                 entries,

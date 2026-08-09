@@ -95,3 +95,41 @@ def test_reader_summary_is_one_plain_language_time_bounded_card(tmp_path: Path) 
     assert "作废线索" not in summary.content
     assert "当前章秘密" not in summary.content
     assert summary.source_event_ids == (first_id, second_id)
+
+
+def test_reader_summary_orders_cross_volume_events_canonically(tmp_path: Path) -> None:
+    project = ProjectRepository.create(tmp_path / "novel", "Novel")
+    chapters = ChapterRepository(project)
+    first_volume = project.list_volumes()[0]
+    second_volume = project.create_volume("Second volume")
+    canonical_volume_ids = sorted((first_volume.id, second_volume.id), reverse=True)
+    with project.database.connect() as connection, connection:
+        connection.executemany(
+            "UPDATE volumes SET sort_index = ? WHERE id = ?",
+            tuple(enumerate(canonical_volume_ids)),
+        )
+    earlier = chapters.create_chapter(canonical_volume_ids[0], "Earlier", "1", "Earlier")
+    later = chapters.create_chapter(canonical_volume_ids[1], "Later", "1", "Later")
+    memory = CharacterMemoryRepository(project)
+    earlier_id = _add_reader_fact(
+        memory,
+        project.project.id,
+        earlier.id,
+        "Earlier fact",
+        "The reader saw the earlier clue.",
+        KnowledgeState.KNOWN,
+    )
+    later_id = _add_reader_fact(
+        memory,
+        project.project.id,
+        later.id,
+        "Later fact",
+        "The reader saw the later clue.",
+        KnowledgeState.KNOWN,
+    )
+
+    summary = ReaderKnowledgeSummaryService(project).summary_all()
+
+    assert summary is not None
+    assert summary.source_event_ids == (earlier_id, later_id)
+    assert summary.content.index("Earlier fact") < summary.content.index("Later fact")
