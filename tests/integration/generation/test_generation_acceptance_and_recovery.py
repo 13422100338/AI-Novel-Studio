@@ -5,6 +5,10 @@ from pathlib import Path
 
 import pytest
 
+from ai_novel_studio.application.chapter_revision_service import (
+    ChapterRevisionService,
+    FormalMaintenanceResult,
+)
 from ai_novel_studio.application.generation_acceptance_service import (
     GenerationAcceptanceError,
     GenerationAcceptanceService,
@@ -41,6 +45,7 @@ from ai_novel_studio.infrastructure.storage.generation_repository import (
     GenerationStateError,
 )
 from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
+from ai_novel_studio.infrastructure.storage.search_repository import SearchRepository
 from ai_novel_studio.infrastructure.storage.summary_repository import SummaryRepository
 
 
@@ -170,10 +175,22 @@ def _partial_run(
 
 def test_completed_draft_does_not_change_formal_prose_until_accept(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _, chapters, chapter, runs, checkpoints, service = _workspace(tmp_path)
+    project, chapters, chapter, runs, checkpoints, service = _workspace(tmp_path)
     old_hash = _sha256("old prose")
-    run = _completed_run(_, runs, checkpoints, chapter.id, "generated prose")
+    run = _completed_run(project, runs, checkpoints, chapter.id, "generated prose")
+    revisions = service.revision_service
+    assert isinstance(revisions, ChapterRevisionService)
+    submit_calls = 0
+    real_submit = revisions.submit_revision
+
+    def track_submit(*args: object, **kwargs: object):  # type: ignore[no-untyped-def]
+        nonlocal submit_calls
+        submit_calls += 1
+        return real_submit(*args, **kwargs)
+
+    monkeypatch.setattr(revisions, "submit_revision", track_submit)
 
     assert chapters.read_content(chapter.id) == "old prose"
 
@@ -183,12 +200,111 @@ def test_completed_draft_does_not_change_formal_prose_until_accept(
     assert accepted.run.status == GenerationStatus.ACCEPTED
     assert accepted.run.accepted_chapter_revision == 1
     assert accepted.chapter.revision == 1
+    assert submit_calls == 1
     versions = chapters.list_versions(chapter.id)
     assert len(versions) == 1
     assert versions[0].content_hash == old_hash
     assert (chapters.project.layout.root / versions[0].content_snapshot_path).read_text(
         encoding="utf-8"
     ) == "old prose"
+    formal = SearchRepository(project).read_formal_manuscript_chunks(
+        chapter.id,
+        expected_revision=1,
+        expected_source_hash=_sha256("generated prose"),
+        chunk_policy_version="paragraph-codepoint-v1",
+    )
+    assert tuple(document.content for document in formal) == ("generated prose",)
+
+
+def test_acceptance_maintenance_failure_still_accepts_committed_content(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project, chapters, chapter, runs, checkpoints, _service = _workspace(tmp_path)
+    revisions = ChapterRevisionService(project)
+    revisions.maintain_current_revision(
+        chapter.id,
+        expected_revision=0,
+        expected_source_hash=_sha256("old prose"),
+    )
+    service = GenerationAcceptanceService(
+        project,
+        runs,
+        checkpoints,
+        chapters,
+        revision_service=revisions,
+    )
+    run = _completed_run(project, runs, checkpoints, chapter.id, "accepted private prose")
+    maintenance_calls = 0
+
+    def fail_maintenance(
+        _chapter_id: str,
+        *,
+        expected_revision: int,
+        expected_source_hash: str,
+    ) -> FormalMaintenanceResult:
+        nonlocal maintenance_calls
+        maintenance_calls += 1
+        raise RuntimeError(
+            f"raw maintenance failure: {project.layout.root}: "
+            f"accepted private prose: {expected_revision}: {expected_source_hash}"
+        )
+
+    monkeypatch.setattr(
+        revisions,
+        "maintain_current_revision",
+        fail_maintenance,
+    )
+
+    accepted = service.accept(run.id, expected_chapter_revision=0)
+
+    with project.database.connect() as connection:
+        formal_statuses = tuple(
+            str(row["status"])
+            for row in connection.execute(
+                "SELECT status FROM memory_documents "
+                "WHERE document_type = 'FORMAL_MANUSCRIPT' AND chapter_id = ?",
+                (chapter.id,),
+            ).fetchall()
+        )
+    assert accepted.run.status == GenerationStatus.ACCEPTED
+    assert accepted.chapter.revision == 1
+    assert chapters.read_content_exact(chapter.id) == "accepted private prose"
+    assert maintenance_calls == 1
+    assert formal_statuses == ("STALE",)
+    assert len(chapters.list_versions(chapter.id)) == 1
+
+
+def test_acceptance_run_transition_failure_keeps_committed_revision(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project, chapters, chapter, runs, checkpoints, service = _workspace(tmp_path)
+    run = _completed_run(project, runs, checkpoints, chapter.id, "committed before transition")
+    real_transition = runs.transition
+
+    def fail_accept_transition(*args: object, **kwargs: object):  # type: ignore[no-untyped-def]
+        if len(args) >= 3 and args[2] == GenerationStatus.ACCEPTED:
+            raise RuntimeError("injected run transition failure")
+        return real_transition(*args, **kwargs)
+
+    monkeypatch.setattr(runs, "transition", fail_accept_transition)
+
+    with pytest.raises(RuntimeError, match="run transition"):
+        service.accept(run.id, expected_chapter_revision=0)
+
+    assert chapters.read_content_exact(chapter.id) == "committed before transition"
+    assert chapters.get_chapter(chapter.id).revision == 1
+    assert runs.get(run.id).status == GenerationStatus.COMPLETED
+    formal = SearchRepository(project).read_formal_manuscript_chunks(
+        chapter.id,
+        expected_revision=1,
+        expected_source_hash=_sha256("committed before transition"),
+        chunk_policy_version="paragraph-codepoint-v1",
+    )
+    assert tuple(document.content for document in formal) == (
+        "committed before transition",
+    )
 
 
 def test_partial_draft_requires_explicit_allow_partial(tmp_path: Path) -> None:

@@ -4,6 +4,9 @@ import hashlib
 import json
 from dataclasses import dataclass
 
+from ai_novel_studio.application.chapter_revision_service import (
+    ChapterRevisionService,
+)
 from ai_novel_studio.domain.audit import (
     AuditFinding,
     AuditFindingStatus,
@@ -34,9 +37,18 @@ class AppliedRepair:
 
 
 class RepairApplicationService:
-    def __init__(self, chapters: ChapterRepository, audits: AuditRepository) -> None:
+    def __init__(
+        self,
+        chapters: ChapterRepository,
+        audits: AuditRepository,
+        *,
+        revision_service: ChapterRevisionService | None = None,
+    ) -> None:
         self.chapters = chapters
         self.audits = audits
+        self.revision_service = revision_service or ChapterRevisionService(
+            chapters.project
+        )
 
     def create_validated_text_repair(
         self,
@@ -100,7 +112,7 @@ class RepairApplicationService:
             raise RepairApplicationError("stale repair proposal hash")
         repaired = self._apply_text_strategy(text, proposal)
         try:
-            updated_chapter = self.chapters.save_content(
+            submitted = self.revision_service.submit_revision(
                 chapter_id,
                 repaired,
                 source="audit_repair",
@@ -110,6 +122,7 @@ class RepairApplicationService:
         except StaleChapterRevisionError as error:
             self.audits.update_repair_status(proposal.id, RepairProposalStatus.STALE)
             raise RepairApplicationError("stale repair proposal revision") from error
+        updated_chapter = submitted.chapter
         updated_proposal = self.audits.update_repair_status(
             proposal.id, RepairProposalStatus.APPLIED
         )
@@ -153,4 +166,3 @@ class RepairApplicationService:
 
 def _hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
-

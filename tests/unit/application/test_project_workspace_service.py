@@ -1,13 +1,23 @@
+import hashlib
 from pathlib import Path
 
 import pytest
 
+from ai_novel_studio.application.chapter_revision_service import (
+    ChapterRevisionService,
+    FormalMaintenanceResult,
+)
 from ai_novel_studio.application.project_workspace_service import (
     ProjectWorkspaceService,
     WorkspaceNotOpenError,
 )
 from ai_novel_studio.infrastructure.storage.chapter_repository import ChapterRepository
 from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
+from ai_novel_studio.infrastructure.storage.search_repository import SearchRepository
+
+
+def _source_hash(content: str) -> str:
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
 def test_workspace_creates_project_and_returns_tree(tmp_path: Path) -> None:
@@ -25,6 +35,7 @@ def test_workspace_creates_project_and_returns_tree(tmp_path: Path) -> None:
 
 def test_workspace_loads_and_saves_chapter_without_bypassing_history(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     project = ProjectRepository.create(tmp_path / "novel", "My Novel")
     chapter_repo = ChapterRepository(project)
@@ -36,6 +47,19 @@ def test_workspace_loads_and_saves_chapter_without_bypassing_history(
     )
     service = ProjectWorkspaceService()
     service.open_project(project.layout.root)
+    calls: list[str] = []
+    original = ChapterRevisionService.submit_revision
+
+    def track_submit(
+        revisions: ChapterRevisionService,
+        chapter_id: str,
+        content: str,
+        **kwargs: object,
+    ):  # type: ignore[no-untyped-def]
+        calls.append(chapter_id)
+        return original(revisions, chapter_id, content, **kwargs)
+
+    monkeypatch.setattr(ChapterRevisionService, "submit_revision", track_submit)
 
     workspace = service.load_chapter(chapter.id)
     saved = service.save_chapter(
@@ -54,6 +78,90 @@ def test_workspace_loads_and_saves_chapter_without_bypassing_history(
     assert len(chapter_repo.list_versions(chapter.id)) == 1
     reloaded = service.load_chapter(chapter.id)
     assert reloaded.requirement_content == "must happen"
+    formal = SearchRepository(project).read_formal_manuscript_chunks(
+        chapter.id,
+        expected_revision=1,
+        expected_source_hash=_source_hash("new text"),
+        chunk_policy_version="paragraph-codepoint-v1",
+    )
+    assert calls == [chapter.id]
+    assert tuple(document.content for document in formal) == ("new text",)
+    service.close_project()
+
+
+def test_workspace_maintenance_failure_commits_once_and_recovers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = ProjectRepository.create(tmp_path / "novel", "My Novel")
+    chapters = ChapterRepository(project)
+    chapter = chapters.create_chapter(
+        project.list_volumes()[0].id,
+        "Opening",
+        "1",
+        "old text",
+    )
+    ChapterRevisionService(project).maintain_current_revision(
+        chapter.id,
+        expected_revision=0,
+        expected_source_hash=_source_hash("old text"),
+    )
+    service = ProjectWorkspaceService()
+    service.open_project(project.layout.root)
+    revisions = service.revision_service
+    assert isinstance(revisions, ChapterRevisionService)
+    maintenance_calls = 0
+
+    def fail_maintenance(
+        _chapter_id: str,
+        *,
+        expected_revision: int,
+        expected_source_hash: str,
+    ) -> FormalMaintenanceResult:
+        nonlocal maintenance_calls
+        maintenance_calls += 1
+        raise RuntimeError(
+            f"raw maintenance failure: {project.layout.root}: new private text: "
+            f"{expected_revision}: {expected_source_hash}"
+        )
+
+    monkeypatch.setattr(
+        revisions,
+        "maintain_current_revision",
+        fail_maintenance,
+    )
+
+    saved = service.save_chapter(
+        chapter.id,
+        "new private text",
+        expected_revision=0,
+    )
+
+    with project.database.connect() as connection:
+        formal_statuses = tuple(
+            str(row["status"])
+            for row in connection.execute(
+                "SELECT status FROM memory_documents "
+                "WHERE document_type = 'FORMAL_MANUSCRIPT' AND chapter_id = ?",
+                (chapter.id,),
+            ).fetchall()
+        )
+    assert saved.revision == 1
+    assert chapters.read_content_exact(chapter.id) == "new private text"
+    assert len(chapters.list_versions(chapter.id)) == 1
+    assert maintenance_calls == 1
+    assert formal_statuses == ("STALE",)
+
+    monkeypatch.undo()
+    report = revisions.recover_current_revisions(limit=10)
+    repaired = SearchRepository(project).read_formal_manuscript_chunks(
+        chapter.id,
+        expected_revision=1,
+        expected_source_hash=_source_hash("new private text"),
+        chunk_policy_version="paragraph-codepoint-v1",
+    )
+    assert report.repaired_chapters == 1
+    assert tuple(document.content for document in repaired) == ("new private text",)
     service.close_project()
 
 

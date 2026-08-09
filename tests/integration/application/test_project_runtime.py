@@ -3,6 +3,9 @@ from pathlib import Path
 
 import pytest
 
+from ai_novel_studio.application.chapter_revision_service import (
+    ChapterRevisionService,
+)
 from ai_novel_studio.application.project_runtime import ProjectRuntime
 from ai_novel_studio.core.context.history_retriever import (
     StoredEmbeddingRecallProvider,
@@ -189,6 +192,13 @@ def test_project_runtime_creates_workspace_and_agent_runtime(tmp_path: Path) -> 
 
     assert runtime.workspace.summary().title == "Runtime Novel"
     assert runtime.generation_session.project is runtime.project
+    revisions = runtime.workspace.revision_service
+    assert isinstance(revisions, ChapterRevisionService)
+    assert runtime.generation_session.revision_service is revisions
+    assert runtime.generation_session.acceptance.revision_service is revisions
+    assert runtime.generation_session.project_audits.revision_service is revisions
+    assert runtime.audit_service.revision_service is revisions
+    assert runtime.audit_service.repairs.revision_service is revisions
     assert callable(runtime.generation_session.recover_current)
     assert callable(runtime.generation_session.prepare_pre_accept_audit)
     assert runtime.generation_session.recover_current() is None

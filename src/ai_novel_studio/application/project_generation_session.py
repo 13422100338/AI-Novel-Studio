@@ -3,6 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from ai_novel_studio.application.audit_workflow_service import AuditWorkflowService
+from ai_novel_studio.application.chapter_revision_service import (
+    ChapterRevisionService,
+)
 from ai_novel_studio.application.generation_acceptance_service import (
     GenerationAcceptanceService,
 )
@@ -97,9 +100,12 @@ class ProjectGenerationSession:
         project: ProjectRepository,
         gateway: LLMGateway,
         history: HistoryRetriever,
+        *,
+        revision_service: ChapterRevisionService | None = None,
     ) -> None:
         self.project = project
         self.gateway = gateway
+        self.revision_service = revision_service or ChapterRevisionService(project)
         self.chapters = ChapterRepository(project)
         self.requirements = ChapterRequirementRepository(project)
         self.briefs = ChapterBriefRepository(project)
@@ -127,6 +133,7 @@ class ProjectGenerationSession:
             self.runs,
             self.checkpoints,
             self.chapters,
+            revision_service=self.revision_service,
         )
         self.recovery = GenerationRecoveryService(self.runs, self.checkpoints)
         self.audit_workflow = AuditWorkflowService(
@@ -136,7 +143,10 @@ class ProjectGenerationSession:
             view_assertions=ViewAssertionRepository(project),
             character_memory=CharacterMemoryRepository(project),
         )
-        self.project_audits = ProjectAuditService(project)
+        self.project_audits = ProjectAuditService(
+            project,
+            revision_service=self.revision_service,
+        )
         self.current_chapter_id: str | None = None
         self.current_chapter_revision: int | None = None
         self.current_run_id: str | None = None

@@ -12,8 +12,12 @@ from ai_novel_studio.core.context.manuscript_chunking import (
     ManuscriptChunkPolicy,
     project_formal_manuscript_chunks,
 )
+from ai_novel_studio.domain.chapter import Chapter
 from ai_novel_studio.domain.identifiers import validate_id
-from ai_novel_studio.infrastructure.storage.chapter_repository import ChapterRepository
+from ai_novel_studio.infrastructure.storage.chapter_repository import (
+    ChapterRepository,
+    StaleChapterRevisionError,
+)
 from ai_novel_studio.infrastructure.storage.formal_manuscript_projection import (
     FormalManuscriptChunk,
 )
@@ -179,6 +183,28 @@ class FormalMaintenanceResult:
 
 
 @dataclass(frozen=True, slots=True)
+class SubmittedRevision:
+    chapter: Chapter
+    impact: RevisionImpact
+    maintenance: FormalMaintenanceResult
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.chapter, Chapter):
+            raise ValueError("submitted revision chapter is invalid")
+        if not isinstance(self.impact, RevisionImpact):
+            raise ValueError("submitted revision impact is invalid")
+        if not isinstance(self.maintenance, FormalMaintenanceResult):
+            raise ValueError("submitted revision maintenance is invalid")
+        if (
+            self.impact.chapter_id != self.chapter.id
+            or self.maintenance.chapter_id != self.chapter.id
+            or self.impact.after.revision != self.chapter.revision
+            or not self.impact.manuscript_committed
+        ):
+            raise ValueError("submitted revision contracts are inconsistent")
+
+
+@dataclass(frozen=True, slots=True)
 class FormalRecoveryCursor:
     last_chapter_id: str
 
@@ -253,6 +279,68 @@ class ChapterRevisionService:
         self.chapters = ChapterRepository(project)
         self.search = SearchRepository(project)
         self.chunk_policy = chunk_policy
+
+    def submit_revision(
+        self,
+        chapter_id: str,
+        content: str,
+        *,
+        source: str,
+        reason: str,
+        expected_revision: int,
+        invalidate_memory: bool = True,
+    ) -> SubmittedRevision:
+        canonical_chapter_id = validate_id(chapter_id)
+        before_chapter = self.chapters.get_chapter(
+            canonical_chapter_id,
+            include_deleted=False,
+        )
+        if before_chapter.revision != expected_revision:
+            raise StaleChapterRevisionError(
+                "chapter revision changed: "
+                f"expected {expected_revision}, current {before_chapter.revision}"
+            )
+        before_content = self.chapters.read_content_exact(canonical_chapter_id)
+        chapter = self.chapters.save_content(
+            canonical_chapter_id,
+            content,
+            source=source,
+            reason=reason,
+            invalidate_memory=invalidate_memory,
+            expected_revision=expected_revision,
+        )
+        before = RevisionSourceIdentity(
+            before_chapter.revision,
+            _source_hash(before_content),
+            is_deleted=False,
+        )
+        after = RevisionSourceIdentity(
+            chapter.revision,
+            _source_hash(content),
+            is_deleted=False,
+        )
+        impact = RevisionImpact(
+            ChapterMutationKind.CONTENT,
+            canonical_chapter_id,
+            before,
+            after,
+            manuscript_committed=True,
+            semantic_memory_invalidated=invalidate_memory,
+        )
+        try:
+            maintenance = self.maintain_current_revision(
+                canonical_chapter_id,
+                expected_revision=after.revision,
+                expected_source_hash=after.content_hash,
+            )
+        except Exception:
+            maintenance = self._failed_result(
+                canonical_chapter_id,
+                after,
+                FormalMaintenanceStatus.PENDING,
+                FormalMaintenanceFailureCode.REPAIR_FAILED,
+            )
+        return SubmittedRevision(chapter, impact, maintenance)
 
     def maintain_current_revision(
         self,

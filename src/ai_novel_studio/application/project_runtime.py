@@ -98,6 +98,9 @@ class ProjectRuntime:
         project = workspace.project
         if project is None:
             raise RuntimeError("project workspace did not open a project")
+        revision_service = workspace.revision_service
+        if revision_service is None:
+            raise RuntimeError("project workspace did not open revision maintenance")
         agent_repository = AgentRepository(project)
         search = SearchRepository(project)
         embedding_provider = GatewayEmbeddingProvider(model_runtime.gateway)
@@ -119,9 +122,13 @@ class ProjectRuntime:
                 project,
                 model_runtime.gateway,
                 history,
+                revision_service=revision_service,
             ),
             brief_service=ProjectBriefService(project, history),
-            audit_service=ProjectAuditService(project),
+            audit_service=ProjectAuditService(
+                project,
+                revision_service=revision_service,
+            ),
             chat_repository=ChatHistoryRepository(project),
             embedding_index=EmbeddingIndexService(search, embedding_provider),
         )

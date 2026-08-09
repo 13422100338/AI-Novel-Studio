@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from ai_novel_studio.application.chapter_revision_service import (
+    ChapterRevisionService,
+)
 from ai_novel_studio.domain.audit import (
     AuditFindingStatus,
     AuditRunStatus,
@@ -44,12 +47,15 @@ class GenerationAcceptanceService:
         checkpoints: CheckpointRepository | None = None,
         chapters: ChapterRepository | None = None,
         audits: AuditRepository | None = None,
+        *,
+        revision_service: ChapterRevisionService | None = None,
     ) -> None:
         self.project = project
         self.runs = runs or GenerationRepository(project)
         self.checkpoints = checkpoints or CheckpointRepository(project, self.runs)
         self.chapters = chapters or ChapterRepository(project)
         self.audits = audits or AuditRepository(project)
+        self.revision_service = revision_service or ChapterRevisionService(project)
 
     def accept(
         self,
@@ -65,13 +71,14 @@ class GenerationAcceptanceService:
             raise GenerationAcceptanceError("generation run has no checkpoint to accept")
         draft = self.checkpoints.read(checkpoint.id)
         self._validate_strict_audit(run, checkpoint)
-        chapter = self.chapters.save_content(
+        submitted = self.revision_service.submit_revision(
             run.chapter_id,
             draft,
             source="ai_generation",
             reason=f"accepted generation run {run.id}",
             expected_revision=expected_chapter_revision,
         )
+        chapter = submitted.chapter
         accepted = self.runs.transition(
             run.id,
             run.status,

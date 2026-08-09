@@ -3,6 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from ai_novel_studio.application.chapter_revision_service import (
+    ChapterRevisionService,
+)
 from ai_novel_studio.infrastructure.storage.chapter_repository import (
     ChapterRepository,
     StaleChapterRevisionError,
@@ -64,6 +67,7 @@ class SaveChapterResult:
 class ProjectWorkspaceService:
     def __init__(self) -> None:
         self.project: ProjectRepository | None = None
+        self.revision_service: ChapterRevisionService | None = None
         self._lock: ProjectLock | None = None
 
     def create_project(self, root: Path, title: str) -> ProjectSummary:
@@ -83,6 +87,7 @@ class ProjectWorkspaceService:
             self._lock.release()
         self._lock = None
         self.project = None
+        self.revision_service = None
 
     def summary(self) -> ProjectSummary:
         project = self._project()
@@ -199,10 +204,9 @@ class ProjectWorkspaceService:
         requirement_locked: bool = False,
     ) -> SaveChapterResult:
         project = self._project()
-        chapters = ChapterRepository(project)
         requirements = ChapterRequirementRepository(project)
         try:
-            chapter = chapters.save_content(
+            submitted = self._revisions().submit_revision(
                 chapter_id,
                 content,
                 source="user_edit",
@@ -211,6 +215,7 @@ class ProjectWorkspaceService:
             )
         except StaleChapterRevisionError as exc:
             raise RuntimeError("chapter revision is stale") from exc
+        chapter = submitted.chapter
         requirement = requirements.get_or_create(chapter_id)
         if requirement_content is not None:
             if expected_requirement_revision is None:
@@ -230,12 +235,18 @@ class ProjectWorkspaceService:
         lock = ProjectLock(project.layout)
         lock.acquire()
         self.project = project
+        self.revision_service = ChapterRevisionService(project)
         self._lock = lock
 
     def _project(self) -> ProjectRepository:
         if self.project is None:
             raise WorkspaceNotOpenError("project workspace is not open")
         return self.project
+
+    def _revisions(self) -> ChapterRevisionService:
+        if self.revision_service is None:
+            raise WorkspaceNotOpenError("project workspace is not open")
+        return self.revision_service
 
 
 def _word_count(text: str) -> int:

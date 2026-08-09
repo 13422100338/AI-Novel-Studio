@@ -17,12 +17,16 @@ from ai_novel_studio.application.chapter_revision_service import (
     FormalRecoveryReport,
     RevisionImpact,
     RevisionSourceIdentity,
+    SubmittedRevision,
 )
 from ai_novel_studio.core.context.manuscript_chunking import (
     DEFAULT_MANUSCRIPT_CHUNK_POLICY,
 )
 from ai_novel_studio.domain.embedding import EmbeddingIndexIdentity
-from ai_novel_studio.infrastructure.storage.chapter_repository import ChapterRepository
+from ai_novel_studio.infrastructure.storage.chapter_repository import (
+    ChapterRepository,
+    StaleChapterRevisionError,
+)
 from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
 from ai_novel_studio.infrastructure.storage.search_repository import SearchRepository
 
@@ -108,6 +112,191 @@ def test_revision_contract_dtos_reject_invalid_or_leaky_states() -> None:
             cancelled=False,
             next_cursor=None,
         )
+
+
+def test_submit_revision_rejects_stale_cas_before_write_or_index(
+    tmp_path: Path,
+) -> None:
+    project, chapters, chapter_id = _project_with_chapter(
+        tmp_path,
+        content="old authoritative text",
+    )
+    service = ChapterRevisionService(project)
+
+    with pytest.raises(StaleChapterRevisionError):
+        service.submit_revision(
+            chapter_id,
+            "new text must not be written",
+            source="manual",
+            reason="stale test",
+            expected_revision=1,
+        )
+
+    chapter = chapters.get_chapter(chapter_id)
+    with project.database.connect() as connection:
+        formal_count = int(
+            connection.execute(
+                "SELECT COUNT(*) FROM memory_documents "
+                "WHERE document_type = 'FORMAL_MANUSCRIPT' AND chapter_id = ?",
+                (chapter_id,),
+            ).fetchone()[0]
+        )
+    assert chapter.revision == 0
+    assert chapters.read_content_exact(chapter_id) == "old authoritative text"
+    assert chapters.list_versions(chapter_id) == []
+    assert formal_count == 0
+
+
+def test_submit_revision_returns_impact_and_current_formal_without_vectors(
+    tmp_path: Path,
+) -> None:
+    project, chapters, chapter_id = _project_with_chapter(
+        tmp_path,
+        content="old authoritative text",
+    )
+
+    result = ChapterRevisionService(project).submit_revision(
+        chapter_id,
+        "new authoritative text",
+        source="manual",
+        reason="coordinated save",
+        expected_revision=0,
+        invalidate_memory=False,
+    )
+
+    stored = SearchRepository(project).read_formal_manuscript_chunks(
+        chapter_id,
+        expected_revision=1,
+        expected_source_hash=_source_hash("new authoritative text"),
+        chunk_policy_version=DEFAULT_MANUSCRIPT_CHUNK_POLICY.version,
+    )
+    with project.database.connect() as connection:
+        embedding_count = int(
+            connection.execute("SELECT COUNT(*) FROM memory_embeddings").fetchone()[0]
+        )
+
+    assert isinstance(result, SubmittedRevision)
+    assert result.chapter == chapters.get_chapter(chapter_id)
+    assert result.impact == RevisionImpact(
+        ChapterMutationKind.CONTENT,
+        chapter_id,
+        RevisionSourceIdentity(
+            0,
+            _source_hash("old authoritative text"),
+            is_deleted=False,
+        ),
+        RevisionSourceIdentity(
+            1,
+            _source_hash("new authoritative text"),
+            is_deleted=False,
+        ),
+        manuscript_committed=True,
+        semantic_memory_invalidated=False,
+    )
+    assert result.maintenance.status == FormalMaintenanceStatus.REPAIRED
+    assert result.maintenance.recovery_required is False
+    assert tuple(document.content for document in stored) == (
+        "new authoritative text",
+    )
+    assert embedding_count == 0
+
+
+def test_submit_revision_reports_superseded_maintenance_without_hiding_commit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project, chapters, chapter_id = _project_with_chapter(
+        tmp_path,
+        content="revision zero",
+    )
+    service = ChapterRevisionService(project)
+    real_maintain = service.maintain_current_revision
+
+    def race_then_maintain(
+        current_chapter_id: str,
+        *,
+        expected_revision: int,
+        expected_source_hash: str,
+    ) -> FormalMaintenanceResult:
+        chapters.save_content(
+            current_chapter_id,
+            "revision two",
+            source="concurrent",
+            reason="race",
+            expected_revision=expected_revision,
+        )
+        return real_maintain(
+            current_chapter_id,
+            expected_revision=expected_revision,
+            expected_source_hash=expected_source_hash,
+        )
+
+    monkeypatch.setattr(
+        service,
+        "maintain_current_revision",
+        race_then_maintain,
+    )
+
+    result = service.submit_revision(
+        chapter_id,
+        "revision one",
+        source="manual",
+        reason="first writer",
+        expected_revision=0,
+    )
+
+    assert result.chapter.revision == 1
+    assert result.impact.after.revision == 1
+    assert result.maintenance.status == FormalMaintenanceStatus.SUPERSEDED
+    assert result.maintenance.source.revision == 2
+    assert chapters.get_chapter(chapter_id).revision == 2
+    assert chapters.read_content_exact(chapter_id) == "revision two"
+
+
+def test_submit_revision_sanitizes_post_commit_maintenance_exception(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project, chapters, chapter_id = _project_with_chapter(
+        tmp_path,
+        content="old private text",
+    )
+    service = ChapterRevisionService(project)
+
+    def fail_maintenance(
+        _chapter_id: str,
+        *,
+        expected_revision: int,
+        expected_source_hash: str,
+    ) -> FormalMaintenanceResult:
+        raise RuntimeError(
+            f"raw failure: {project.layout.root}: new private text: "
+            f"{expected_revision}: {expected_source_hash}"
+        )
+
+    monkeypatch.setattr(
+        service,
+        "maintain_current_revision",
+        fail_maintenance,
+    )
+
+    result = service.submit_revision(
+        chapter_id,
+        "new private text",
+        source="manual",
+        reason="maintenance failure",
+        expected_revision=0,
+    )
+
+    assert result.chapter.revision == 1
+    assert chapters.read_content_exact(chapter_id) == "new private text"
+    assert result.maintenance.status == FormalMaintenanceStatus.PENDING
+    assert result.maintenance.recovery_required is True
+    assert result.maintenance.failure == FormalMaintenanceFailure(
+        FormalMaintenanceFailureCode.REPAIR_FAILED
+    )
+    assert "private" not in result.maintenance.failure.message
+    assert str(project.layout.root) not in result.maintenance.failure.message
 
 
 def test_maintain_missing_projection_builds_exact_crlf_chunks_without_vectors(

@@ -4,6 +4,9 @@ import hashlib
 from dataclasses import dataclass
 
 from ai_novel_studio.application.audit_workflow_service import AuditWorkflowService
+from ai_novel_studio.application.chapter_revision_service import (
+    ChapterRevisionService,
+)
 from ai_novel_studio.application.model_audit_service import (
     ModelAuditFindingInput,
     ModelAuditService,
@@ -73,7 +76,13 @@ class GeneratedDraftDeepAuditResults:
 class ProjectAuditService:
     """Runs project-aware audits and persists their evidence snapshot."""
 
-    def __init__(self, project: ProjectRepository) -> None:
+    def __init__(
+        self,
+        project: ProjectRepository,
+        *,
+        revision_service: ChapterRevisionService | None = None,
+    ) -> None:
+        self.revision_service = revision_service or ChapterRevisionService(project)
         self.repository = AuditRepository(project)
         self.chapters = ChapterRepository(project)
         self.characters = CharacterMemoryRepository(project)
@@ -85,7 +94,11 @@ class ProjectAuditService:
             character_memory=self.characters,
         )
         self.model_audits = ModelAuditService(self.repository)
-        self.repairs = RepairApplicationService(self.chapters, self.repository)
+        self.repairs = RepairApplicationService(
+            self.chapters,
+            self.repository,
+            revision_service=self.revision_service,
+        )
         self.briefs = ChapterBriefRepository(project)
         self.summaries = SummaryRepository(project)
 
