@@ -35,6 +35,10 @@
 All Wave 1 tasks were dispatched from `3382dd36c2a4aeb4acdab411e9211885b633e678`; their initial business-code baseline remains `e35b50d`.
 
 - Active implementations authorized by the user: none.
+- Active read-only audits authorized by the user: `Gate S0`, split across the existing A/B/C
+  backend tasks. A audits Formal Manuscript RAG/evidence/context trace, B audits
+  Occurrence/Participant Link/revision invalidation, and C audits sparse View/Reader
+  visibility/progressive Subject History. No implementation or schema ownership is implied.
 - Integrated increments:
   - `embedding-production` increment A1 (provider and gateway embedding contract), merged as `fdbfb088278c18a0efb3e062cd5f9e8a6ddd01f4`.
   - `embedding-production` increment A2 (Gateway-backed document/query embedding provider plus fail-open semantic recall), merged as `03b2263043262cdf371f1929a1255162decabfac`.
@@ -92,12 +96,16 @@ All Wave 1 tasks were dispatched from `3382dd36c2a4aeb4acdab411e9211885b633e678`
 | `generation-profile-audit-policy` | `gpt-5.6-terra` / `medium` | `019f87e8-696e-7f11-bcfe-1552f51cabc3` | `C:\Users\钟子诚\.codex\worktrees\4df4\AI-Novel-Studio` | `codex/generation-profile-audit-policy-b5` | branch | B1-B7 merged; B7 is `663f932`; lane paused pending explicit instruction |
 | `view-operations-ui` | `gpt-5.6-luna` / `medium` | `019f87e8-7a77-7902-b3d1-a38f32240136` | `C:\Users\钟子诚\.codex\worktrees\8802\AI-Novel-Studio` | `codex/view-operations-ui` | branch | C1-C10 merged; C10 is `bc41148`; lane paused pending explicit instruction |
 
-Current dispatch override: `style-engine` is paused after ST1; `generation-profile-audit-policy` is paused after B14 because no safe B15 rule exists without a new POV/visibility product contract; `view-operations-ui` is paused after C14; `fix-p0-logging` is paused after P0-1 and P0-2 requires a separate ticket decision.
+Current dispatch override: the existing A/B/C tasks are active only for the read-only `Gate S0`
+audit described above. Their previous implementation lanes remain paused: `style-engine` after
+ST1, `generation-profile-audit-policy` after B14, and `view-operations-ui` after C14.
+`fix-p0-logging` remains paused after P0-1; P0-2 requires a separate ticket decision.
 
 Supplemental planning status: shared Occurrence/View sparsification/Subject progressive history and
 Formal Manuscript exact-evidence retrieval are now planned in
-`2026-08-09-backend-refactor-supplemental-upgrade.md`. No implementation or schema owner is active;
-the first allowed action is the read-only `Gate S0` audit after a separate user authorization.
+`2026-08-09-backend-refactor-supplemental-upgrade.md`. No implementation or schema owner is active.
+The user authorized the read-only `Gate S0` audit on 2026-08-09; its A/B/C reports must be
+consolidated by the master before any R1-R4, O1-O2, H1, or V1 implementation ticket is proposed.
 
 Product decision: Manual Pins are immutable materialized snapshots. They never automatically re-resolve or refresh from their source; authors update them only by removing and re-pinning. Do not add a live-pointer, automatic stale gate, or refresh behavior without a new explicit decision.
 
