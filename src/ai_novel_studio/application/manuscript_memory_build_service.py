@@ -176,7 +176,7 @@ class ManuscriptMemoryBuildService:
                     else "formal manuscript projection requires recovery"
                 )
                 raise RuntimeError(message)
-            content = chapters.read_content(chapter.id)
+            content = exact_content
             processed += 1
             if content.strip():
                 search.index_chapter(chapter.id, chapter.title, content)
@@ -285,7 +285,17 @@ class ManuscriptMemoryBuildService:
         if self.analyzer is None:
             return None, None
         try:
-            return self.analyzer.extract_candidates(chapter_id, revision, content), None
+            bundle = self.analyzer.extract_candidates(chapter_id, revision, content)
+            if (
+                bundle.source_chapter_id != chapter_id
+                or bundle.source_revision != revision
+                or bundle.source_hash
+                != hashlib.sha256(content.encode("utf-8")).hexdigest()
+            ):
+                raise ValueError(
+                    "memory candidates do not match the current manuscript source"
+                )
+            return bundle, None
         except Exception as error:
             return None, error
 

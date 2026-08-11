@@ -1,4 +1,5 @@
 import hashlib
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -54,15 +55,17 @@ def _source_hash(content: str) -> str:
 class FakeMemoryAnalyzer:
     def __init__(self) -> None:
         self.calls: list[str] = []
+        self.inputs: list[tuple[str, int, str]] = []
 
     def extract_candidates(
         self, chapter_id: str, revision: int, text: str
     ) -> MemoryCandidateBundle:
         self.calls.append(chapter_id)
+        self.inputs.append((chapter_id, revision, text))
         return MemoryCandidateBundle(
             source_chapter_id=chapter_id,
             source_revision=revision,
-            source_hash="hash",
+            source_hash=_source_hash(text),
             summary=SummaryCandidate("林默收到匿名旧信，线索指向旧港与失踪兄长。"),
             character_states=(
                 CharacterStateCandidate(
@@ -80,6 +83,16 @@ class FakeMemoryAnalyzer:
             clues=(),
             knowledge=(),
             style=(),
+        )
+
+
+class MismatchedSourceMemoryAnalyzer(FakeMemoryAnalyzer):
+    def extract_candidates(
+        self, chapter_id: str, revision: int, text: str
+    ) -> MemoryCandidateBundle:
+        return replace(
+            super().extract_candidates(chapter_id, revision, text),
+            source_hash="0" * 64,
         )
 
 
@@ -581,6 +594,58 @@ def test_rerun_does_not_call_model_for_current_model_summary(tmp_path: Path) -> 
 
     assert len(analyzer.calls) == 1
     assert second.skipped_current_summaries == 1
+
+
+def test_build_all_passes_exact_shared_chapter_source_to_analyzer_once(
+    tmp_path: Path,
+) -> None:
+    content = "艾瑞克进入大厅。\r\n克莉丝汀随后抵达。\r\n国王举起🗝️。"
+    project = ProjectRepository.create(tmp_path / "novel", "Shared semantic import")
+    chapter = ChapterRepository(project).create_chapter(
+        project.list_volumes()[0].id,
+        "Shared scene",
+        "1",
+        content,
+    )
+    analyzer = FakeMemoryAnalyzer()
+
+    ManuscriptMemoryBuildService(analyzer).build_all(project)
+
+    assert analyzer.inputs == [(chapter.id, chapter.revision, content)]
+    with project.database.connect() as connection:
+        indexed = connection.execute(
+            "SELECT content FROM memory_documents "
+            "WHERE document_type = 'CHAPTER' AND chapter_id = ?",
+            (chapter.id,),
+        ).fetchone()
+    assert indexed is not None
+    assert indexed["content"] == content
+
+
+def test_build_all_rejects_model_bundle_for_a_different_source_snapshot(
+    tmp_path: Path,
+) -> None:
+    project = ProjectRepository.create(tmp_path / "novel", "Source identity guard")
+    chapter = ChapterRepository(project).create_chapter(
+        project.list_volumes()[0].id,
+        "Opening",
+        "1",
+        "林默打开旧信。",
+    )
+
+    report = ManuscriptMemoryBuildService(
+        MismatchedSourceMemoryAnalyzer()
+    ).build_all(project)
+
+    summaries = SummaryRepository(project).list_scope(SummaryLevel.CHAPTER, chapter.id)
+    assert len(report.failures) == 1
+    assert report.failures[0].message == (
+        "memory candidates do not match the current manuscript source"
+    )
+    assert report.created_character_states == 0
+    assert report.fallback_summaries == 1
+    assert len(summaries) == 1
+    assert summaries[0].model_profile_id == "local-import-baseline"
 
 
 def test_requested_retry_reprocesses_only_the_target_model_summary(tmp_path: Path) -> None:
