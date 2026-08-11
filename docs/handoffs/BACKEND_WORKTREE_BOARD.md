@@ -99,6 +99,7 @@ All Wave 1 tasks were dispatched from `3382dd36c2a4aeb4acdab411e9211885b633e678`
   - `manifest-eligibility-v2` increment R2c-L3 (chapter-deletion Formal-evidence invalidation/removal), merged as `7791c12`.
   - `manifest-eligibility-v2` increment R2c-L4 (delete-volume relocation revisions), merged as `57936fa`.
   - `manifest-eligibility-v2` increment R3a (bounded exact current-revision Formal Evidence hydration), merged as `37728e0`.
+  - `shared-semantic-import` increment I0 (exact-source guard for manuscript-centered import memory), merged as `fb1c045`.
   - `view-operations-ui` increment C15 (fail-closed Style workspace load feedback with stale-state clearing), merged as `5f848a3`.
 - Active schema owner: none.
 
@@ -135,9 +136,16 @@ Its candidate/neighbor/character limits are validated, injectable, non-persisted
 zero validated hits is NOT_FOUND, and INSUFFICIENT requires an explicit required-hit request. R3b-R4,
 O1-O2, H1, and V1 remain unauthorized.
 
+ADR 0023 freezes manuscript-centered shared semantic import before Subject projection. I0 is
+integrated: the existing one-pass-per-chapter analyzer now receives the exact canonical decoded text,
+and model candidate bundles must match its chapter ID, revision, and SHA-256 source hash before any
+derived writes. Scene/semantic-window DTOs, shared semantic result DTOs, Occurrence/Participant Link,
+full-coverage summary, Subject History, profile aggregation, lifecycle telemetry, and chapter-local
+semantic maintenance remain separate later tickets.
+
 Product decision: Manual Pins are immutable materialized snapshots. They never automatically re-resolve or refresh from their source; authors update them only by removing and re-pinning. Do not add a live-pointer, automatic stale gate, or refresh behavior without a new explicit decision.
 
-E1a, E1b-SR1, E1b-SS1, E1b-CR1, E1b-CS1, E1b-CE1, E1b-SM1, SE1, SE2a, SE2c-W1, SE3, ST1, S1, R1a, R1b, R2a-F, R2b-C, R2c-L1, R2c-L2a, R2c-L2b-I1, R2c-L3, R2c-L4, R3a, C6a, C6b, C7, C8, C9, C10, C11, C12, C13, C14, C15, B4, B5, B6, B7, B8, B9, B10, B11, B12, B13, B14, and P0-1 are integrated. Every later increment still requires a new user decision.
+E1a, E1b-SR1, E1b-SS1, E1b-CR1, E1b-CS1, E1b-CE1, E1b-SM1, SE1, SE2a, SE2c-W1, SE3, ST1, S1, R1a, R1b, R2a-F, R2b-C, R2c-L1, R2c-L2a, R2c-L2b-I1, R2c-L3, R2c-L4, R3a, I0, C6a, C6b, C7, C8, C9, C10, C11, C12, C13, C14, C15, B4, B5, B6, B7, B8, B9, B10, B11, B12, B13, B14, and P0-1 are integrated. Every later increment still requires a new user decision.
 
 ## Later Waves and Dependencies
 
