@@ -4,7 +4,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from ai_novel_studio.infrastructure.storage.chapter_repository import ChapterRepository
+from ai_novel_studio.application.chapter_revision_service import ChapterRevisionService
 from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
 
 _CHAPTER_RE = re.compile(
@@ -42,19 +42,19 @@ class ManuscriptImportService:
     def import_file(self, project: ProjectRepository, source: Path) -> ManuscriptImportReport:
         source = source.resolve()
         volumes = self.parse_file(source)
-        chapter_repository = ChapterRepository(project)
+        revision_service = ChapterRevisionService(project)
         first_chapter_id: str | None = None
         imported_chapters = 0
 
         for volume in volumes:
             created_volume = project.create_volume(volume.title)
             for chapter in volume.chapters:
-                created_chapter = chapter_repository.create_chapter(
+                created_chapter = revision_service.submit_creation(
                     created_volume.id,
                     chapter.title,
                     chapter.declared_number,
                     chapter.content,
-                )
+                ).chapter
                 first_chapter_id = first_chapter_id or created_chapter.id
                 imported_chapters += 1
 

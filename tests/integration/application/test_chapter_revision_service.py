@@ -22,6 +22,7 @@ from ai_novel_studio.application.chapter_revision_service import (
 )
 from ai_novel_studio.core.context.manuscript_chunking import (
     DEFAULT_MANUSCRIPT_CHUNK_POLICY,
+    project_formal_manuscript_chunks,
 )
 from ai_novel_studio.domain.embedding import EmbeddingIndexIdentity
 from ai_novel_studio.infrastructure.storage.chapter_repository import (
@@ -146,6 +147,149 @@ def test_submit_revision_rejects_stale_cas_before_write_or_index(
     assert chapters.read_content_exact(chapter_id) == "old authoritative text"
     assert chapters.list_versions(chapter_id) == []
     assert formal_count == 0
+
+
+def test_submit_creation_builds_revision_zero_formal_projection_without_vectors(
+    tmp_path: Path,
+) -> None:
+    content = "第一段😀\r\n\r\n第二段"
+    project = ProjectRepository.create(tmp_path / "novel", "Imported revision")
+    volume = project.list_volumes()[0]
+    service = ChapterRevisionService(project)
+
+    result = service.submit_creation(
+        volume.id,
+        "Imported chapter",
+        "第1章",
+        content,
+    )
+
+    chapters = ChapterRepository(project)
+    search = SearchRepository(project)
+    expected_chunks = project_formal_manuscript_chunks(
+        result.chapter.id,
+        0,
+        content,
+    )
+    stored = search.read_formal_manuscript_chunks(
+        result.chapter.id,
+        expected_revision=0,
+        expected_source_hash=_source_hash(content),
+        chunk_policy_version=DEFAULT_MANUSCRIPT_CHUNK_POLICY.version,
+    )
+    pending = search.pending_embedding_sources(_EMBEDDING_IDENTITY)
+    with project.database.connect() as connection:
+        embedding_count = int(
+            connection.execute("SELECT COUNT(*) FROM memory_embeddings").fetchone()[0]
+        )
+
+    assert result.impact == RevisionImpact(
+        ChapterMutationKind.CREATE,
+        result.chapter.id,
+        None,
+        RevisionSourceIdentity(0, _source_hash(content), is_deleted=False),
+        manuscript_committed=True,
+        semantic_memory_invalidated=False,
+    )
+    assert result.chapter.revision == 0
+    assert chapters.read_content_exact(result.chapter.id) == content
+    assert chapters.list_versions(result.chapter.id) == []
+    assert result.maintenance.status == FormalMaintenanceStatus.REPAIRED
+    assert tuple(document.source_id for document in stored) == tuple(
+        chunk.source_id for chunk in expected_chunks
+    )
+    assert all(document.title == "Imported chapter" for document in stored)
+    assert all(document.volume_id == volume.id for document in stored)
+    assert all(
+        document.content == content[document.source_start : document.source_end]
+        for document in stored
+        if document.source_start is not None and document.source_end is not None
+    )
+    assert {source.document_id for source in pending} == {
+        document.id for document in stored
+    }
+    assert embedding_count == 0
+
+
+def test_submit_creation_preserves_whitespace_as_a_successful_empty_projection(
+    tmp_path: Path,
+) -> None:
+    content = " \t\r\n"
+    project = ProjectRepository.create(tmp_path / "novel", "Empty import")
+    volume = project.list_volumes()[0]
+
+    result = ChapterRevisionService(project).submit_creation(
+        volume.id,
+        "Empty chapter",
+        content=content,
+    )
+
+    chapters = ChapterRepository(project)
+    stored = SearchRepository(project).read_formal_manuscript_chunks(
+        result.chapter.id,
+        expected_revision=0,
+        expected_source_hash=_source_hash(content),
+        chunk_policy_version=DEFAULT_MANUSCRIPT_CHUNK_POLICY.version,
+    )
+    assert chapters.read_content_exact(result.chapter.id) == content
+    assert result.impact.after == RevisionSourceIdentity(
+        0,
+        _source_hash(content),
+        is_deleted=False,
+    )
+    assert result.maintenance.status == FormalMaintenanceStatus.CURRENT
+    assert result.maintenance.chunk_count == 0
+    assert stored == ()
+    assert chapters.list_versions(result.chapter.id) == []
+
+
+def test_submit_creation_sanitizes_failure_and_bounded_recovery_repairs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    content = "private imported body"
+    project = ProjectRepository.create(tmp_path / "novel", "Recover import")
+    volume = project.list_volumes()[0]
+    service = ChapterRevisionService(project)
+
+    def fail_maintenance(
+        _chapter_id: str,
+        *,
+        expected_revision: int,
+        expected_source_hash: str,
+    ) -> FormalMaintenanceResult:
+        raise RuntimeError(
+            f"raw failure: {project.layout.root}: {content}: "
+            f"{expected_revision}: {expected_source_hash}"
+        )
+
+    monkeypatch.setattr(service, "maintain_current_revision", fail_maintenance)
+
+    result = service.submit_creation(
+        volume.id,
+        "Recoverable import",
+        content=content,
+    )
+
+    chapters = ChapterRepository(project)
+    assert chapters.read_content_exact(result.chapter.id) == content
+    assert result.maintenance.status == FormalMaintenanceStatus.PENDING
+    assert result.maintenance.recovery_required is True
+    assert result.maintenance.failure == FormalMaintenanceFailure(
+        FormalMaintenanceFailureCode.REPAIR_FAILED
+    )
+    assert content not in result.maintenance.failure.message
+    assert str(project.layout.root) not in result.maintenance.failure.message
+
+    recovery = ChapterRevisionService(project).recover_current_revisions(limit=100)
+    assert recovery.repaired_chapters == 1
+    assert recovery.failures == ()
+    assert SearchRepository(project).read_formal_manuscript_chunks(
+        result.chapter.id,
+        expected_revision=0,
+        expected_source_hash=_source_hash(content),
+        chunk_policy_version=DEFAULT_MANUSCRIPT_CHUNK_POLICY.version,
+    )
 
 
 def test_submit_revision_returns_impact_and_current_formal_without_vectors(

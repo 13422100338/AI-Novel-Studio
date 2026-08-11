@@ -296,6 +296,49 @@ class ChapterRevisionService:
         self.search = SearchRepository(project)
         self.chunk_policy = chunk_policy
 
+    def submit_creation(
+        self,
+        volume_id: str,
+        title: str,
+        declared_number: str = "",
+        content: str = "",
+        synopsis: str = "",
+    ) -> SubmittedRevision:
+        chapter = self.chapters.create_chapter(
+            volume_id,
+            title,
+            declared_number,
+            content,
+            synopsis,
+        )
+        after = RevisionSourceIdentity(
+            chapter.revision,
+            _source_hash(content),
+            is_deleted=False,
+        )
+        impact = RevisionImpact(
+            ChapterMutationKind.CREATE,
+            chapter.id,
+            None,
+            after,
+            manuscript_committed=True,
+            semantic_memory_invalidated=False,
+        )
+        try:
+            maintenance = self.maintain_current_revision(
+                chapter.id,
+                expected_revision=after.revision,
+                expected_source_hash=after.content_hash,
+            )
+        except Exception:
+            maintenance = self._failed_result(
+                chapter.id,
+                after,
+                FormalMaintenanceStatus.PENDING,
+                FormalMaintenanceFailureCode.REPAIR_FAILED,
+            )
+        return SubmittedRevision(chapter, impact, maintenance)
+
     def submit_revision(
         self,
         chapter_id: str,
