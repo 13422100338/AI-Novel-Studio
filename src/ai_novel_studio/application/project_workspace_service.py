@@ -161,7 +161,7 @@ class ProjectWorkspaceService:
         )
 
     def delete_chapter(self, chapter_id: str) -> None:
-        ChapterRepository(self._project()).delete_chapter(chapter_id)
+        self._revisions().submit_deletion(chapter_id)
 
     def delete_volume(self, volume_id: str) -> str:
         project = self._project()

@@ -6,6 +6,9 @@ import pytest
 from ai_novel_studio.application.chapter_revision_service import ChapterRevisionService
 from ai_novel_studio.domain.embedding import EmbeddingIndexIdentity
 from ai_novel_studio.infrastructure.storage.chapter_repository import ChapterRepository
+from ai_novel_studio.infrastructure.storage.memory_dependency_repository import (
+    MemoryDependencyRepository,
+)
 from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
 from ai_novel_studio.infrastructure.storage.search_repository import SearchRepository
 from ai_novel_studio.infrastructure.storage.view_assertion_repository import (
@@ -308,6 +311,177 @@ def test_delete_moves_chapter_to_trash_and_restore_recovers_it(tmp_path: Path) -
     restored = chapters.restore_chapter(chapter.id)
     assert restored.is_deleted is False
     assert chapters.read_content(chapter.id) == "body"
+
+
+def test_delete_stales_formal_projection_and_preserves_legacy_rows(
+    tmp_path: Path,
+) -> None:
+    project, chapters = _repositories(tmp_path)
+    content = "第一行😀\r\n第二行\r\n"
+    source_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    chapter = chapters.create_chapter(
+        project.list_volumes()[0].id,
+        "Opening",
+        "1",
+        content,
+    )
+    search = SearchRepository(project)
+    legacy = search.index_chapter(chapter.id, chapter.title, content)
+    maintained = ChapterRevisionService(project).maintain_current_revision(
+        chapter.id,
+        expected_revision=chapter.revision,
+        expected_source_hash=source_hash,
+    )
+    formal = search.read_formal_manuscript_chunks(
+        chapter.id,
+        expected_revision=chapter.revision,
+        expected_source_hash=source_hash,
+        chunk_policy_version=maintained.policy_version,
+    )[0]
+    identity = EmbeddingIndexIdentity("provider", "model", 1)
+    embedding_source = search.embedding_source(formal.id)
+    search.save_embedding(
+        formal.id,
+        identity,
+        (1.0, 0.0),
+        expected_content_hash=embedding_source.content_hash,
+    )
+    canonical = project.layout.root / chapter.content_path
+
+    chapters.delete_chapter(
+        chapter.id,
+        expected_revision=chapter.revision,
+        expected_source_hash=source_hash,
+    )
+
+    deleted = chapters.get_chapter(chapter.id)
+    with project.database.connect() as connection:
+        stored_hash = str(
+            connection.execute(
+                "SELECT content_hash FROM chapters WHERE id = ?",
+                (chapter.id,),
+            ).fetchone()["content_hash"]
+        )
+        statuses = tuple(
+            connection.execute(
+                """
+                SELECT d.status, dep.status, e.status
+                FROM memory_documents d
+                JOIN memory_dependencies dep
+                  ON dep.memory_type = 'SEARCH' AND dep.memory_id = d.id
+                JOIN memory_embeddings e ON e.document_id = d.id
+                WHERE d.id = ?
+                """,
+                (formal.id,),
+            ).fetchone()
+        )
+    assert deleted.is_deleted is True
+    assert deleted.revision == chapter.revision
+    assert stored_hash == source_hash
+    assert not canonical.exists()
+    assert statuses == ("STALE", "STALE", "STALE")
+    assert search.get(legacy.id).status.value == "CURRENT"
+
+
+@pytest.mark.parametrize(
+    ("expected_revision", "expected_source_hash"),
+    [(1, hashlib.sha256(b"body").hexdigest()), (0, "a" * 64)],
+)
+def test_delete_rejects_stale_expected_identity_before_moving_source(
+    tmp_path: Path,
+    expected_revision: int,
+    expected_source_hash: str,
+) -> None:
+    project, chapters = _repositories(tmp_path)
+    chapter = chapters.create_chapter(
+        project.list_volumes()[0].id,
+        "Opening",
+        "1",
+        "body",
+    )
+    canonical = project.layout.root / chapter.content_path
+
+    with pytest.raises(RuntimeError, match="changed"):
+        chapters.delete_chapter(
+            chapter.id,
+            expected_revision=expected_revision,
+            expected_source_hash=expected_source_hash,
+        )
+
+    assert chapters.get_chapter(chapter.id, include_deleted=False) == chapter
+    assert canonical.read_text(encoding="utf-8") == "body"
+    assert not project.layout.trash.exists() or not tuple(project.layout.trash.iterdir())
+
+
+def test_delete_invalidation_failure_rolls_back_file_database_and_statuses(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project, chapters = _repositories(tmp_path)
+    content = "rollback body"
+    source_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    chapter = chapters.create_chapter(
+        project.list_volumes()[0].id,
+        "Opening",
+        "1",
+        content,
+    )
+    search = SearchRepository(project)
+    maintained = ChapterRevisionService(project).maintain_current_revision(
+        chapter.id,
+        expected_revision=chapter.revision,
+        expected_source_hash=source_hash,
+    )
+    formal = search.read_formal_manuscript_chunks(
+        chapter.id,
+        expected_revision=chapter.revision,
+        expected_source_hash=source_hash,
+        chunk_policy_version=maintained.policy_version,
+    )[0]
+    identity = EmbeddingIndexIdentity("provider", "model", 1)
+    embedding_source = search.embedding_source(formal.id)
+    search.save_embedding(
+        formal.id,
+        identity,
+        (1.0, 0.0),
+        expected_content_hash=embedding_source.content_hash,
+    )
+    canonical = project.layout.root / chapter.content_path
+
+    def fail_invalidation(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("injected deletion invalidation failure")
+
+    monkeypatch.setattr(
+        MemoryDependencyRepository,
+        "invalidate_formal_manuscript_for_deleted_chapter_in_connection",
+        fail_invalidation,
+    )
+
+    with pytest.raises(RuntimeError, match="injected deletion invalidation failure"):
+        chapters.delete_chapter(
+            chapter.id,
+            expected_revision=chapter.revision,
+            expected_source_hash=source_hash,
+        )
+
+    with project.database.connect() as connection:
+        statuses = tuple(
+            connection.execute(
+                """
+                SELECT d.status, dep.status, e.status
+                FROM memory_documents d
+                JOIN memory_dependencies dep
+                  ON dep.memory_type = 'SEARCH' AND dep.memory_id = d.id
+                JOIN memory_embeddings e ON e.document_id = d.id
+                WHERE d.id = ?
+                """,
+                (formal.id,),
+            ).fetchone()
+        )
+    assert chapters.get_chapter(chapter.id, include_deleted=False) == chapter
+    assert canonical.read_text(encoding="utf-8") == content
+    assert statuses == ("CURRENT", "CURRENT", "CURRENT")
+    assert not project.layout.trash.exists() or not tuple(project.layout.trash.iterdir())
 
 
 def test_delete_volume_reassigns_chapters_and_removes_empty_volume(tmp_path: Path) -> None:

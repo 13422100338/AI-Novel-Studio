@@ -526,7 +526,7 @@ def test_formal_chunk_operations_fail_closed_for_stale_hash_deleted_or_changed_s
     tmp_path: Path,
 ) -> None:
     project, chapters, search, chapter = _repositories(tmp_path)
-    content = chapters.read_content(chapter.id)
+    content = chapters.read_content_exact(chapter.id)
     chunks = (_chunk(chapter.id, 0, 0, 0, len(content), content),)
     stored = search.replace_formal_manuscript_chunks(
         chapter.id,
@@ -563,7 +563,8 @@ def test_formal_chunk_operations_fail_closed_for_stale_hash_deleted_or_changed_s
         )
     assert search.get(stored[0].id).id == stored[0].id
 
-    manuscript_path.write_text(content, encoding="utf-8")
+    with manuscript_path.open("w", encoding="utf-8", newline="") as stream:
+        stream.write(content)
     chapters.delete_chapter(chapter.id)
     with pytest.raises(KeyError, match="deleted"):
         search.read_formal_manuscript_chunks(

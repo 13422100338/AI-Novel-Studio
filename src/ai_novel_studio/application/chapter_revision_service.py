@@ -205,6 +205,34 @@ class SubmittedRevision:
 
 
 @dataclass(frozen=True, slots=True)
+class SubmittedDeletion:
+    impact: RevisionImpact
+    maintenance: FormalMaintenanceResult
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.impact, RevisionImpact):
+            raise ValueError("submitted deletion impact is invalid")
+        if not isinstance(self.maintenance, FormalMaintenanceResult):
+            raise ValueError("submitted deletion maintenance is invalid")
+        before = self.impact.before
+        if (
+            self.impact.operation != ChapterMutationKind.DELETE
+            or before is None
+            or not self.impact.manuscript_committed
+            or self.impact.semantic_memory_invalidated
+            or before.is_deleted
+            or not self.impact.after.is_deleted
+            or before.revision != self.impact.after.revision
+            or before.content_hash != self.impact.after.content_hash
+            or self.maintenance.chapter_id != self.impact.chapter_id
+            or self.maintenance.source != self.impact.after
+            or self.maintenance.status
+            not in {FormalMaintenanceStatus.REMOVED, FormalMaintenanceStatus.PENDING}
+        ):
+            raise ValueError("submitted deletion contracts are inconsistent")
+
+
+@dataclass(frozen=True, slots=True)
 class SubmittedTitleRevision:
     chapter: Chapter
     revision: SubmittedRevision | None
@@ -457,6 +485,57 @@ class ChapterRevisionService:
             )
         submitted = SubmittedRevision(chapter, impact, maintenance)
         return SubmittedTitleRevision(chapter, revision=submitted)
+
+    def submit_deletion(self, chapter_id: str) -> SubmittedDeletion:
+        canonical_chapter_id = validate_id(chapter_id)
+        chapter = self.chapters.get_chapter(
+            canonical_chapter_id,
+            include_deleted=False,
+        )
+        content = self.chapters.read_content_exact(canonical_chapter_id)
+        source_hash = _source_hash(content)
+        before = RevisionSourceIdentity(
+            chapter.revision,
+            source_hash,
+            is_deleted=False,
+        )
+        self.chapters.delete_chapter(
+            canonical_chapter_id,
+            expected_revision=before.revision,
+            expected_source_hash=before.content_hash,
+        )
+        after = RevisionSourceIdentity(
+            before.revision,
+            before.content_hash,
+            is_deleted=True,
+        )
+        impact = RevisionImpact(
+            ChapterMutationKind.DELETE,
+            canonical_chapter_id,
+            before,
+            after,
+            manuscript_committed=True,
+            semantic_memory_invalidated=False,
+        )
+        try:
+            self.search.remove_orphaned_formal_manuscript_chunks(
+                canonical_chapter_id
+            )
+        except Exception:
+            maintenance = self._failed_result(
+                canonical_chapter_id,
+                after,
+                FormalMaintenanceStatus.PENDING,
+                FormalMaintenanceFailureCode.REPAIR_FAILED,
+            )
+        else:
+            maintenance = self._result(
+                canonical_chapter_id,
+                after,
+                FormalMaintenanceStatus.REMOVED,
+                0,
+            )
+        return SubmittedDeletion(impact, maintenance)
 
     def maintain_current_revision(
         self,

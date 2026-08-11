@@ -447,26 +447,72 @@ class ChapterRepository:
             for row in rows
         ]
 
-    def delete_chapter(self, chapter_id: str) -> None:
+    def delete_chapter(
+        self,
+        chapter_id: str,
+        *,
+        expected_revision: int | None = None,
+        expected_source_hash: str | None = None,
+    ) -> None:
         chapter = self.get_chapter(chapter_id, include_deleted=False)
+        content_hash = _hash(self.read_content_exact(chapter.id))
+        if expected_revision is not None and expected_revision != chapter.revision:
+            raise RuntimeError("chapter changed before deletion")
+        if expected_source_hash is not None and expected_source_hash != content_hash:
+            raise RuntimeError("chapter changed before deletion")
         canonical = self.project.layout.root / chapter.content_path
         trash_relative = (
             Path(".ai_pipeline") / "trash" / f"chapter_{chapter.id}_r{chapter.revision}.md"
         )
         trash = self.project.layout.root / trash_relative
         trash.parent.mkdir(parents=True, exist_ok=True)
-        os.replace(canonical, trash)
         connection = self.project.database.connect()
+        source_moved = False
         try:
-            with connection:
-                connection.execute(
-                    "UPDATE chapters SET is_deleted = 1, deleted_content_path = ?, updated_at = ? "
-                    "WHERE id = ?",
-                    (trash_relative.as_posix(), _now().isoformat(), chapter.id),
-                )
+            connection.execute("BEGIN IMMEDIATE")
+            current = connection.execute(
+                """
+                SELECT revision, content_hash, content_path FROM chapters
+                WHERE id = ? AND is_deleted = 0
+                """,
+                (chapter.id,),
+            ).fetchone()
+            if (
+                current is None
+                or int(current["revision"]) != chapter.revision
+                or str(current["content_hash"]) != content_hash
+                or str(current["content_path"]) != chapter.content_path
+            ):
+                raise RuntimeError("chapter changed before deletion")
+            os.replace(canonical, trash)
+            source_moved = True
+            cursor = connection.execute(
+                """
+                UPDATE chapters
+                SET is_deleted = 1, deleted_content_path = ?, updated_at = ?
+                WHERE id = ? AND revision = ? AND content_hash = ? AND is_deleted = 0
+                """,
+                (
+                    trash_relative.as_posix(),
+                    _now().isoformat(),
+                    chapter.id,
+                    chapter.revision,
+                    content_hash,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise RuntimeError("chapter changed before deletion")
+            invalidator = MemoryDependencyRepository
+            invalidator.invalidate_formal_manuscript_for_deleted_chapter_in_connection(
+                connection,
+                chapter.id,
+            )
+            connection.commit()
         except BaseException:
-            canonical.parent.mkdir(parents=True, exist_ok=True)
-            os.replace(trash, canonical)
+            connection.rollback()
+            if source_moved:
+                canonical.parent.mkdir(parents=True, exist_ok=True)
+                os.replace(trash, canonical)
             raise
         finally:
             connection.close()

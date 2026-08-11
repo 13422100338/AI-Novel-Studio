@@ -253,6 +253,53 @@ def test_workspace_rename_chapter_uses_shared_revision_coordinator_once(
     service.close_project()
 
 
+def test_workspace_delete_chapter_uses_shared_revision_coordinator_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = ProjectRepository.create(tmp_path / "novel", "My Novel")
+    chapters = ChapterRepository(project)
+    content = "deletion evidence"
+    chapter = chapters.create_chapter(
+        project.list_volumes()[0].id,
+        "Opening",
+        "1",
+        content,
+    )
+    service = ProjectWorkspaceService()
+    service.open_project(project.layout.root)
+    revisions = service.revision_service
+    assert isinstance(revisions, ChapterRevisionService)
+    revisions.maintain_current_revision(
+        chapter.id,
+        expected_revision=chapter.revision,
+        expected_source_hash=_source_hash(content),
+    )
+    formal_id = SearchRepository(project).read_formal_manuscript_chunks(
+        chapter.id,
+        expected_revision=chapter.revision,
+        expected_source_hash=_source_hash(content),
+        chunk_policy_version="paragraph-codepoint-v1",
+    )[0].id
+    calls: list[str] = []
+    original = revisions.submit_deletion
+
+    def track_submit(chapter_id: str):  # type: ignore[no-untyped-def]
+        calls.append(chapter_id)
+        return original(chapter_id)
+
+    monkeypatch.setattr(revisions, "submit_deletion", track_submit)
+
+    result = service.delete_chapter(chapter.id)
+
+    assert result is None
+    assert calls == [chapter.id]
+    assert chapters.get_chapter(chapter.id).is_deleted is True
+    with pytest.raises(KeyError):
+        SearchRepository(project).get(formal_id)
+    service.close_project()
+
+
 def test_deleting_volume_moves_its_chapters_to_previous_volume(tmp_path: Path) -> None:
     service = ProjectWorkspaceService()
     service.create_project(tmp_path / "novel", "My Novel")

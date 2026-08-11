@@ -17,6 +17,7 @@ from ai_novel_studio.application.chapter_revision_service import (
     FormalRecoveryReport,
     RevisionImpact,
     RevisionSourceIdentity,
+    SubmittedDeletion,
     SubmittedRevision,
     SubmittedTitleRevision,
 )
@@ -621,6 +622,207 @@ def test_submit_same_title_revision_skips_formal_maintenance(
 
     assert result == SubmittedTitleRevision(chapter, revision=None)
     assert chapters.list_versions(chapter.id) == []
+
+
+def test_submit_deletion_removes_formal_projection_and_reports_exact_impact(
+    tmp_path: Path,
+) -> None:
+    content = "Deleted evidence \U0001f600\r\nsecond line\r\n"
+    project, chapters, chapter_id = _project_with_chapter(tmp_path, content=content)
+    chapter = chapters.get_chapter(chapter_id)
+    service = ChapterRevisionService(project)
+    search = SearchRepository(project)
+    service.maintain_current_revision(
+        chapter.id,
+        expected_revision=chapter.revision,
+        expected_source_hash=_source_hash(content),
+    )
+    formal = search.read_formal_manuscript_chunks(
+        chapter.id,
+        expected_revision=chapter.revision,
+        expected_source_hash=_source_hash(content),
+        chunk_policy_version=DEFAULT_MANUSCRIPT_CHUNK_POLICY.version,
+    )[0]
+    embedding_source = search.embedding_source(formal.id)
+    search.save_embedding(
+        formal.id,
+        _EMBEDDING_IDENTITY,
+        (1.0, 0.0),
+        expected_content_hash=embedding_source.content_hash,
+    )
+
+    result = service.submit_deletion(chapter.id)
+
+    source = RevisionSourceIdentity(
+        chapter.revision,
+        _source_hash(content),
+        is_deleted=False,
+    )
+    assert isinstance(result, SubmittedDeletion)
+    assert result.impact == RevisionImpact(
+        ChapterMutationKind.DELETE,
+        chapter.id,
+        source,
+        RevisionSourceIdentity(
+            source.revision,
+            source.content_hash,
+            is_deleted=True,
+        ),
+        manuscript_committed=True,
+        semantic_memory_invalidated=False,
+    )
+    assert result.maintenance.status == FormalMaintenanceStatus.REMOVED
+    assert result.maintenance.chunk_count == 0
+    assert chapters.get_chapter(chapter.id).is_deleted is True
+    with pytest.raises(KeyError):
+        search.get(formal.id)
+    assert search.pending_embedding_sources(_EMBEDDING_IDENTITY) == ()
+    assert search.recall_embeddings(
+        _EMBEDDING_IDENTITY,
+        (1.0, 0.0),
+        limit=10,
+    ) == ()
+
+
+def test_submit_deletion_cleanup_failure_is_sanitized_and_recoverable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    content = "private deleted evidence"
+    project, chapters, chapter_id = _project_with_chapter(tmp_path, content=content)
+    chapter = chapters.get_chapter(chapter_id)
+    target = chapters.create_chapter(
+        project.list_volumes()[0].id,
+        "Later",
+        "2",
+        "target",
+    )
+    service = ChapterRevisionService(project)
+    search = SearchRepository(project)
+    service.maintain_current_revision(
+        chapter.id,
+        expected_revision=chapter.revision,
+        expected_source_hash=_source_hash(content),
+    )
+    formal = search.read_formal_manuscript_chunks(
+        chapter.id,
+        expected_revision=chapter.revision,
+        expected_source_hash=_source_hash(content),
+        chunk_policy_version=DEFAULT_MANUSCRIPT_CHUNK_POLICY.version,
+    )[0]
+    embedding_source = search.embedding_source(formal.id)
+    search.save_embedding(
+        formal.id,
+        _EMBEDDING_IDENTITY,
+        (1.0, 0.0),
+        expected_content_hash=embedding_source.content_hash,
+    )
+
+    cleanup_calls: list[str] = []
+
+    def fail_cleanup(current_chapter_id: str) -> int:
+        cleanup_calls.append(current_chapter_id)
+        raise RuntimeError(
+            f"raw cleanup: {project.layout.root}: {content}: secret-provider-payload"
+        )
+
+    monkeypatch.setattr(
+        service.search,
+        "remove_orphaned_formal_manuscript_chunks",
+        fail_cleanup,
+    )
+
+    result = service.submit_deletion(chapter.id)
+
+    assert result.impact.manuscript_committed is True
+    assert result.impact.after.is_deleted is True
+    assert cleanup_calls == [chapter.id]
+    assert result.maintenance.status == FormalMaintenanceStatus.PENDING
+    assert result.maintenance.failure == FormalMaintenanceFailure(
+        FormalMaintenanceFailureCode.REPAIR_FAILED
+    )
+    assert result.maintenance.recovery_required is True
+    assert content not in result.maintenance.failure.message
+    assert str(project.layout.root) not in result.maintenance.failure.message
+    with project.database.connect() as connection:
+        statuses = tuple(
+            connection.execute(
+                """
+                SELECT d.status, dep.status, e.status
+                FROM memory_documents d
+                JOIN memory_dependencies dep
+                  ON dep.memory_type = 'SEARCH' AND dep.memory_id = d.id
+                JOIN memory_embeddings e ON e.document_id = d.id
+                WHERE d.id = ?
+                """,
+                (formal.id,),
+            ).fetchone()
+        )
+    assert statuses == ("STALE", "STALE", "STALE")
+    assert search.pending_embedding_sources(_EMBEDDING_IDENTITY) == ()
+    assert search.recall_embeddings(
+        _EMBEDDING_IDENTITY,
+        (1.0, 0.0),
+        limit=10,
+    ) == ()
+    assert search.search_rows(content, target.id, limit=10) == ()
+
+    monkeypatch.undo()
+    report = service.recover_current_revisions(limit=100)
+
+    assert report.removed_chapters == 1
+    with pytest.raises(KeyError):
+        search.get(formal.id)
+
+
+def test_submit_deletion_rejects_a_newer_revision_before_cas(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    content = "old evidence"
+    project, chapters, chapter_id = _project_with_chapter(tmp_path, content=content)
+    service = ChapterRevisionService(project)
+    service.maintain_current_revision(
+        chapter_id,
+        expected_revision=0,
+        expected_source_hash=_source_hash(content),
+    )
+    formal_id = SearchRepository(project).read_formal_manuscript_chunks(
+        chapter_id,
+        expected_revision=0,
+        expected_source_hash=_source_hash(content),
+        chunk_policy_version=DEFAULT_MANUSCRIPT_CHUNK_POLICY.version,
+    )[0].id
+    original_delete = service.chapters.delete_chapter
+
+    def revise_then_delete(
+        current_chapter_id: str,
+        *,
+        expected_revision: int | None = None,
+        expected_source_hash: str | None = None,
+    ) -> None:
+        chapters.save_content(
+            current_chapter_id,
+            "newer evidence",
+            source="test",
+            reason="concurrent revision",
+            expected_revision=0,
+        )
+        original_delete(
+            current_chapter_id,
+            expected_revision=expected_revision,
+            expected_source_hash=expected_source_hash,
+        )
+
+    monkeypatch.setattr(service.chapters, "delete_chapter", revise_then_delete)
+
+    with pytest.raises(RuntimeError, match="changed"):
+        service.submit_deletion(chapter_id)
+
+    current = chapters.get_chapter(chapter_id, include_deleted=False)
+    assert current.revision == 1
+    assert chapters.read_content_exact(chapter_id) == "newer evidence"
+    assert SearchRepository(project).get(formal_id).status.value == "STALE"
 
 
 def test_submit_title_revision_does_not_reinstall_a_superseded_title(
