@@ -15,6 +15,9 @@ from ai_novel_studio.infrastructure.storage.view_assertion_repository import (
     ViewAssertionRepository,
 )
 
+_METADATA_CHANGE_SOURCE = "metadata_change"
+_CHAPTER_TITLE_CHANGE_REASON = "chapter title changed"
+
 
 class StaleChapterRevisionError(RuntimeError):
     pass
@@ -229,14 +232,104 @@ class ChapterRepository:
         normalized = title.strip()
         if not normalized:
             raise ValueError("chapter title cannot be empty")
-        with self.project.database.connect() as connection, connection:
-            cursor = connection.execute(
-                "UPDATE chapters SET title = ?, updated_at = ? "
+        if normalized == chapter.title:
+            return chapter
+        content = self.read_content_exact(chapter.id)
+        content_hash = _hash(content)
+        version_id = new_id()
+        snapshot_relative = (
+            Path(".ai_pipeline")
+            / "history"
+            / chapter.id
+            / f"revision_{chapter.revision}_{version_id}.md"
+        )
+        snapshot = self.project.layout.root / snapshot_relative
+        now = _now()
+        connection = self.project.database.connect()
+        snapshot_written = False
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            current = connection.execute(
+                "SELECT title, revision, content_hash FROM chapters "
                 "WHERE id = ? AND is_deleted = 0",
-                (normalized, _now().isoformat(), chapter.id),
+                (chapter.id,),
+            ).fetchone()
+            if current is None:
+                raise KeyError(f"unknown chapter: {chapter.id}")
+            if str(current["title"]) == normalized:
+                connection.rollback()
+                return self.get_chapter(chapter.id, include_deleted=False)
+            if (
+                int(current["revision"]) != chapter.revision
+                or str(current["title"]) != chapter.title
+            ):
+                raise RuntimeError("chapter changed concurrently")
+            if str(current["content_hash"]) != content_hash:
+                raise RuntimeError("chapter content does not match its stored hash")
+            atomic_write_text(snapshot, content)
+            snapshot_written = True
+            connection.execute(
+                """
+                INSERT INTO chapter_versions VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    version_id,
+                    chapter.id,
+                    chapter.revision,
+                    snapshot_relative.as_posix(),
+                    _METADATA_CHANGE_SOURCE,
+                    _CHAPTER_TITLE_CHANGE_REASON,
+                    now.isoformat(),
+                    content_hash,
+                ),
+            )
+            cursor = connection.execute(
+                """
+                UPDATE chapters
+                SET title = ?, revision = revision + 1, memory_status = 'stale',
+                    updated_at = ?
+                WHERE id = ? AND revision = ? AND title = ? AND content_hash = ?
+                  AND is_deleted = 0
+                """,
+                (
+                    normalized,
+                    now.isoformat(),
+                    chapter.id,
+                    chapter.revision,
+                    chapter.title,
+                    content_hash,
+                ),
             )
             if cursor.rowcount != 1:
-                raise KeyError(f"unknown chapter: {chapter.id}")
+                raise RuntimeError("chapter changed concurrently")
+            MemoryDependencyRepository.invalidate_formal_manuscript_in_connection(
+                connection,
+                chapter.id,
+                chapter.revision + 1,
+                content_hash,
+            )
+            MemoryDependencyRepository.invalidate_in_connection(
+                connection,
+                chapter.id,
+                chapter.revision + 1,
+                content_hash,
+            )
+            ViewAssertionRepository.invalidate_source_revision_in_connection(
+                connection,
+                source_id=chapter.id,
+                new_revision=chapter.revision + 1,
+                updated_at=now.isoformat(),
+            )
+            if self.read_content_exact(chapter.id) != content:
+                raise RuntimeError("chapter content changed during title update")
+            connection.commit()
+        except BaseException:
+            connection.rollback()
+            if snapshot_written:
+                snapshot.unlink(missing_ok=True)
+            raise
+        finally:
+            connection.close()
         return self.get_chapter(chapter.id, include_deleted=False)
 
     def save_content(

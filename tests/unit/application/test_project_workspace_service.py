@@ -210,6 +210,49 @@ def test_workspace_creates_and_renames_chapters_and_volumes(tmp_path: Path) -> N
     service.close_project()
 
 
+def test_workspace_rename_chapter_uses_shared_revision_coordinator_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = ProjectRepository.create(tmp_path / "novel", "My Novel")
+    chapters = ChapterRepository(project)
+    chapter = chapters.create_chapter(
+        project.list_volumes()[0].id,
+        "Opening",
+        "1",
+        "title-aware body",
+    )
+    service = ProjectWorkspaceService()
+    service.open_project(project.layout.root)
+    revisions = service.revision_service
+    assert isinstance(revisions, ChapterRevisionService)
+    calls: list[tuple[str, str]] = []
+    original = revisions.submit_title_revision
+
+    def track_submit(chapter_id: str, title: str):  # type: ignore[no-untyped-def]
+        calls.append((chapter_id, title))
+        return original(chapter_id, title)
+
+    monkeypatch.setattr(revisions, "submit_title_revision", track_submit)
+
+    renamed = service.rename_chapter(chapter.id, "Storm Front")
+
+    assert calls == [(chapter.id, "Storm Front")]
+    assert renamed.id == chapter.id
+    assert renamed.title == "Storm Front"
+    assert renamed.revision == 1
+    assert renamed.word_count == len("title-awarebody")
+    formal = SearchRepository(project).read_formal_manuscript_chunks(
+        chapter.id,
+        expected_revision=1,
+        expected_source_hash=_source_hash("title-aware body"),
+        chunk_policy_version="paragraph-codepoint-v1",
+    )
+    assert formal
+    assert all(document.title == "Storm Front" for document in formal)
+    service.close_project()
+
+
 def test_deleting_volume_moves_its_chapters_to_previous_volume(tmp_path: Path) -> None:
     service = ProjectWorkspaceService()
     service.create_project(tmp_path / "novel", "My Novel")

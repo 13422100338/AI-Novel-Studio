@@ -151,7 +151,7 @@ class ProjectWorkspaceService:
 
     def rename_chapter(self, chapter_id: str, title: str) -> ChapterTreeItem:
         project = self._project()
-        chapter = ChapterRepository(project).rename_chapter(chapter_id, title)
+        chapter = self._revisions().submit_title_revision(chapter_id, title).chapter
         return ChapterTreeItem(
             chapter.id,
             chapter.declared_number,

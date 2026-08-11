@@ -18,6 +18,7 @@ from ai_novel_studio.application.chapter_revision_service import (
     RevisionImpact,
     RevisionSourceIdentity,
     SubmittedRevision,
+    SubmittedTitleRevision,
 )
 from ai_novel_studio.core.context.manuscript_chunking import (
     DEFAULT_MANUSCRIPT_CHUNK_POLICY,
@@ -297,6 +298,245 @@ def test_submit_revision_sanitizes_post_commit_maintenance_exception(
     )
     assert "private" not in result.maintenance.failure.message
     assert str(project.layout.root) not in result.maintenance.failure.message
+
+
+def test_submit_title_revision_rebuilds_current_title_and_leaves_embedding_pending(
+    tmp_path: Path,
+) -> None:
+    content = "Title-aware body \U0001f600\r\n"
+    project, chapters, chapter_id = _project_with_chapter(
+        tmp_path,
+        content=content,
+    )
+    chapter = chapters.get_chapter(chapter_id)
+    service = ChapterRevisionService(project)
+    search = SearchRepository(project)
+    service.maintain_current_revision(
+        chapter.id,
+        expected_revision=chapter.revision,
+        expected_source_hash=_source_hash(content),
+    )
+    prior = search.read_formal_manuscript_chunks(
+        chapter.id,
+        expected_revision=chapter.revision,
+        expected_source_hash=_source_hash(content),
+        chunk_policy_version=DEFAULT_MANUSCRIPT_CHUNK_POLICY.version,
+    )[0]
+    embedding_source = search.embedding_source(prior.id)
+    search.save_embedding(
+        prior.id,
+        _EMBEDDING_IDENTITY,
+        (1.0, 0.0),
+        expected_content_hash=embedding_source.content_hash,
+    )
+
+    result = service.submit_title_revision(chapter.id, "Storm Front")
+
+    assert isinstance(result, SubmittedTitleRevision)
+    assert result.revision is not None
+    assert result.chapter.title == "Storm Front"
+    assert result.chapter.revision == chapter.revision + 1
+    assert result.revision.impact == RevisionImpact(
+        ChapterMutationKind.RENAME,
+        chapter.id,
+        RevisionSourceIdentity(0, _source_hash(content), is_deleted=False),
+        RevisionSourceIdentity(1, _source_hash(content), is_deleted=False),
+        manuscript_committed=True,
+        semantic_memory_invalidated=True,
+    )
+    assert result.revision.maintenance.status == FormalMaintenanceStatus.REPAIRED
+    current = search.read_formal_manuscript_chunks(
+        chapter.id,
+        expected_revision=1,
+        expected_source_hash=_source_hash(content),
+        chunk_policy_version=DEFAULT_MANUSCRIPT_CHUNK_POLICY.version,
+    )
+    pending = search.pending_embedding_sources(_EMBEDDING_IDENTITY, limit=10)
+    with project.database.connect() as connection:
+        prior_current_count = int(
+            connection.execute(
+                "SELECT COUNT(*) FROM memory_documents WHERE id = ? AND status = 'CURRENT'",
+                (prior.id,),
+            ).fetchone()[0]
+        )
+        embedding_count = int(
+            connection.execute("SELECT COUNT(*) FROM memory_embeddings").fetchone()[0]
+        )
+    assert current
+    assert all(document.title == "Storm Front" for document in current)
+    assert all(document.source_revision == 1 for document in current)
+    assert {source.document_id for source in pending} == {
+        document.id for document in current
+    }
+    assert prior_current_count == 0
+    assert embedding_count == 0
+
+
+def test_submit_title_revision_failure_commits_and_bounded_recovery_repairs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    content = "private title-aware body"
+    project, chapters, chapter_id = _project_with_chapter(
+        tmp_path,
+        content=content,
+    )
+    chapter = chapters.get_chapter(chapter_id)
+    service = ChapterRevisionService(project)
+    search = SearchRepository(project)
+    service.maintain_current_revision(
+        chapter.id,
+        expected_revision=chapter.revision,
+        expected_source_hash=_source_hash(content),
+    )
+    prior = search.read_formal_manuscript_chunks(
+        chapter.id,
+        expected_revision=chapter.revision,
+        expected_source_hash=_source_hash(content),
+        chunk_policy_version=DEFAULT_MANUSCRIPT_CHUNK_POLICY.version,
+    )[0]
+    embedding_source = search.embedding_source(prior.id)
+    search.save_embedding(
+        prior.id,
+        _EMBEDDING_IDENTITY,
+        (1.0, 0.0),
+        expected_content_hash=embedding_source.content_hash,
+    )
+
+    def fail_maintenance(
+        _chapter_id: str,
+        *,
+        expected_revision: int,
+        expected_source_hash: str,
+    ) -> FormalMaintenanceResult:
+        raise RuntimeError(
+            f"raw title maintenance failure: {project.layout.root}: {content}: "
+            f"{expected_revision}: {expected_source_hash}"
+        )
+
+    monkeypatch.setattr(service, "maintain_current_revision", fail_maintenance)
+
+    result = service.submit_title_revision(chapter.id, "Private New Title")
+
+    assert result.revision is not None
+    assert result.chapter.title == "Private New Title"
+    assert result.chapter.revision == 1
+    assert result.revision.maintenance.status == FormalMaintenanceStatus.PENDING
+    assert result.revision.maintenance.failure == FormalMaintenanceFailure(
+        FormalMaintenanceFailureCode.REPAIR_FAILED
+    )
+    assert content not in result.revision.maintenance.failure.message
+    assert str(project.layout.root) not in result.revision.maintenance.failure.message
+    with project.database.connect() as connection:
+        statuses = tuple(
+            connection.execute(
+                """
+                SELECT d.status, dep.status, e.status
+                FROM memory_documents d
+                JOIN memory_dependencies dep
+                  ON dep.memory_type = 'SEARCH' AND dep.memory_id = d.id
+                JOIN memory_embeddings e ON e.document_id = d.id
+                WHERE d.id = ?
+                """,
+                (prior.id,),
+            ).fetchone()
+        )
+    assert statuses == ("STALE", "STALE", "STALE")
+
+    monkeypatch.undo()
+    report = service.recover_current_revisions(limit=10)
+    repaired = search.read_formal_manuscript_chunks(
+        chapter.id,
+        expected_revision=1,
+        expected_source_hash=_source_hash(content),
+        chunk_policy_version=DEFAULT_MANUSCRIPT_CHUNK_POLICY.version,
+    )
+    assert report.repaired_chapters == 1
+    assert all(document.title == "Private New Title" for document in repaired)
+    assert chapters.get_chapter(chapter.id).revision == 1
+    assert len(chapters.list_versions(chapter.id)) == 1
+
+
+def test_submit_same_title_revision_skips_formal_maintenance(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project, chapters, chapter_id = _project_with_chapter(
+        tmp_path,
+        content="unchanged body",
+    )
+    chapter = chapters.get_chapter(chapter_id)
+    service = ChapterRevisionService(project)
+
+    def unexpected_maintenance(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("same-title request must not maintain Formal projection")
+
+    monkeypatch.setattr(service, "maintain_current_revision", unexpected_maintenance)
+
+    result = service.submit_title_revision(chapter.id, "  Opening  ")
+
+    assert result == SubmittedTitleRevision(chapter, revision=None)
+    assert chapters.list_versions(chapter.id) == []
+
+
+def test_submit_title_revision_does_not_reinstall_a_superseded_title(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    content = "stable body"
+    project, chapters, chapter_id = _project_with_chapter(
+        tmp_path,
+        content=content,
+    )
+    service = ChapterRevisionService(project)
+    service.maintain_current_revision(
+        chapter_id,
+        expected_revision=0,
+        expected_source_hash=_source_hash(content),
+    )
+    real_maintain = service.maintain_current_revision
+
+    def rename_again_then_maintain(
+        current_chapter_id: str,
+        *,
+        expected_revision: int,
+        expected_source_hash: str,
+    ) -> FormalMaintenanceResult:
+        chapters.rename_chapter(current_chapter_id, "Newest Title")
+        return real_maintain(
+            current_chapter_id,
+            expected_revision=expected_revision,
+            expected_source_hash=expected_source_hash,
+        )
+
+    monkeypatch.setattr(
+        service,
+        "maintain_current_revision",
+        rename_again_then_maintain,
+    )
+
+    result = service.submit_title_revision(chapter_id, "Intermediate Title")
+
+    assert result.revision is not None
+    assert result.chapter.title == "Intermediate Title"
+    assert result.chapter.revision == 1
+    assert result.revision.maintenance.status == FormalMaintenanceStatus.SUPERSEDED
+    assert result.revision.maintenance.source.revision == 2
+    latest = chapters.get_chapter(chapter_id)
+    assert latest.title == "Newest Title"
+    assert latest.revision == 2
+    with project.database.connect() as connection:
+        intermediate_current = int(
+            connection.execute(
+                """
+                SELECT COUNT(*) FROM memory_documents
+                WHERE document_type = 'FORMAL_MANUSCRIPT' AND chapter_id = ?
+                  AND source_revision = 1 AND status = 'CURRENT'
+                """,
+                (chapter_id,),
+            ).fetchone()[0]
+        )
+    assert intermediate_current == 0
 
 
 def test_maintain_missing_projection_builds_exact_crlf_chunks_without_vectors(
@@ -860,7 +1100,7 @@ def test_recovery_removes_orphaned_formal_rows_only(
     assert search.get(legacy.id).document_type == "CHAPTER"
 
 
-def test_same_revision_title_change_remains_pending_until_revision_routing(
+def test_title_revision_rebuilds_projection_under_new_deterministic_identity(
     tmp_path: Path,
 ) -> None:
     content = "Title-aware embedding input"
@@ -897,34 +1137,41 @@ def test_same_revision_title_change_remains_pending_until_revision_routing(
         expected_source_hash=_source_hash(content),
     )
 
-    assert result.status == FormalMaintenanceStatus.PENDING
-    assert result.failure == FormalMaintenanceFailure(
-        FormalMaintenanceFailureCode.REPAIR_FAILED
+    current = search.read_formal_manuscript_chunks(
+        renamed.id,
+        expected_revision=renamed.revision,
+        expected_source_hash=_source_hash(content),
+        chunk_policy_version=DEFAULT_MANUSCRIPT_CHUNK_POLICY.version,
     )
-    assert search.get(prior[0].id).title == chapter.title
+    assert renamed.revision == chapter.revision + 1
+    assert result.status == FormalMaintenanceStatus.REPAIRED
+    assert current
+    assert all(document.title == "Renamed" for document in current)
+    assert all(document.source_revision == renamed.revision for document in current)
+    assert all(document.id != prior[0].id for document in current)
     with project.database.connect() as connection:
-        document_status = str(
+        prior_document_count = int(
             connection.execute(
-                "SELECT status FROM memory_documents WHERE id = ?",
+                "SELECT COUNT(*) FROM memory_documents WHERE id = ?",
                 (prior[0].id,),
-            ).fetchone()["status"]
+            ).fetchone()[0]
         )
-        dependency_status = str(
+        prior_dependency_count = int(
             connection.execute(
-                "SELECT status FROM memory_dependencies "
+                "SELECT COUNT(*) FROM memory_dependencies "
                 "WHERE memory_type = 'SEARCH' AND memory_id = ?",
                 (prior[0].id,),
-            ).fetchone()["status"]
+            ).fetchone()[0]
         )
-        embedding_status = str(
+        prior_embedding_count = int(
             connection.execute(
-                "SELECT status FROM memory_embeddings WHERE document_id = ?",
+                "SELECT COUNT(*) FROM memory_embeddings WHERE document_id = ?",
                 (prior[0].id,),
-            ).fetchone()["status"]
+            ).fetchone()[0]
         )
-    assert document_status == "STALE"
-    assert dependency_status == "STALE"
-    assert embedding_status == "STALE"
+    assert prior_document_count == 0
+    assert prior_dependency_count == 0
+    assert prior_embedding_count == 0
 
 
 def test_source_race_during_pre_repair_invalidation_preserves_newer_projection(

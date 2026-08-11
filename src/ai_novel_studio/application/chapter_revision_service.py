@@ -205,6 +205,22 @@ class SubmittedRevision:
 
 
 @dataclass(frozen=True, slots=True)
+class SubmittedTitleRevision:
+    chapter: Chapter
+    revision: SubmittedRevision | None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.chapter, Chapter):
+            raise ValueError("submitted title chapter is invalid")
+        if self.revision is not None and (
+            not isinstance(self.revision, SubmittedRevision)
+            or self.revision.chapter != self.chapter
+            or self.revision.impact.operation != ChapterMutationKind.RENAME
+        ):
+            raise ValueError("submitted title revision is inconsistent")
+
+
+@dataclass(frozen=True, slots=True)
 class FormalRecoveryCursor:
     last_chapter_id: str
 
@@ -341,6 +357,63 @@ class ChapterRevisionService:
                 FormalMaintenanceFailureCode.REPAIR_FAILED,
             )
         return SubmittedRevision(chapter, impact, maintenance)
+
+    def submit_title_revision(
+        self,
+        chapter_id: str,
+        title: str,
+    ) -> SubmittedTitleRevision:
+        canonical_chapter_id = validate_id(chapter_id)
+        before_chapter = self.chapters.get_chapter(
+            canonical_chapter_id,
+            include_deleted=False,
+        )
+        normalized_title = title.strip()
+        if not normalized_title:
+            raise ValueError("chapter title cannot be empty")
+        if normalized_title == before_chapter.title:
+            return SubmittedTitleRevision(before_chapter, revision=None)
+        before_content = self.chapters.read_content_exact(canonical_chapter_id)
+        source_hash = _source_hash(before_content)
+        chapter = self.chapters.rename_chapter(
+            canonical_chapter_id,
+            normalized_title,
+        )
+        if chapter.revision == before_chapter.revision:
+            return SubmittedTitleRevision(chapter, revision=None)
+        before = RevisionSourceIdentity(
+            before_chapter.revision,
+            source_hash,
+            is_deleted=False,
+        )
+        after = RevisionSourceIdentity(
+            chapter.revision,
+            source_hash,
+            is_deleted=False,
+        )
+        impact = RevisionImpact(
+            ChapterMutationKind.RENAME,
+            canonical_chapter_id,
+            before,
+            after,
+            manuscript_committed=True,
+            semantic_memory_invalidated=True,
+        )
+        try:
+            maintenance = self.maintain_current_revision(
+                canonical_chapter_id,
+                expected_revision=after.revision,
+                expected_source_hash=after.content_hash,
+            )
+        except Exception:
+            maintenance = self._failed_result(
+                canonical_chapter_id,
+                after,
+                FormalMaintenanceStatus.PENDING,
+                FormalMaintenanceFailureCode.REPAIR_FAILED,
+            )
+        submitted = SubmittedRevision(chapter, impact, maintenance)
+        return SubmittedTitleRevision(chapter, revision=submitted)
 
     def maintain_current_revision(
         self,

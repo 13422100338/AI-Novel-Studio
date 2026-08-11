@@ -274,7 +274,7 @@ def test_same_deterministic_chunk_identity_rejects_a_changed_projection(
     tmp_path: Path,
     projection_change: str,
 ) -> None:
-    _project, chapters, search, chapter = _repositories(
+    project, chapters, search, chapter = _repositories(
         tmp_path,
         content="abcdefghij",
     )
@@ -318,7 +318,11 @@ def test_same_deterministic_chunk_identity_rejects_a_changed_projection(
     if projection_change == "range":
         replacement_chunks = (_chunk(chapter.id, 0, 0, 3, 6, "abcdefghij"),)
     else:
-        chapters.rename_chapter(chapter.id, "Renamed without a revision")
+        with project.database.connect() as connection, connection:
+            connection.execute(
+                "UPDATE chapters SET title = ? WHERE id = ?",
+                ("Renamed without a revision", chapter.id),
+            )
 
     with pytest.raises(RuntimeError, match="deterministic identity"):
         search.replace_formal_manuscript_chunks(
