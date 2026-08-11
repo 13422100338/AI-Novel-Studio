@@ -31,6 +31,9 @@ RetrievalRoute = Literal["EXACT_PHRASE", "KEYWORD", "EMBEDDING", "SUBJECT"]
 MAX_RECALL_CANDIDATES = 250
 MAX_SEARCH_QUERY_CHARS = 20_000
 MAX_FORMAL_CHUNKS_PER_CHAPTER = 10_000
+MAX_FORMAL_EVIDENCE_CANDIDATES = 50
+MAX_FORMAL_EVIDENCE_NEIGHBOR_RADIUS = 2
+MAX_FORMAL_EVIDENCE_HIT_CODEPOINTS = 8_000
 
 _SEARCH_TERM = re.compile(r"[a-z0-9_]{3,}|[\u3400-\u4dbf\u4e00-\u9fff]+")
 _MAX_KEYWORD_TERMS = 24
@@ -46,6 +49,10 @@ _ROUTE_ORDER: dict[RetrievalRoute, int] = {
     "EMBEDDING": 2,
     "SUBJECT": 3,
 }
+_FORMAL_STORAGE_REVIEW_STATUSES = frozenset({ReviewStatus.APPROVED})
+_FORMAL_EVIDENCE_REVIEW_STATUSES = frozenset(
+    {ReviewStatus.APPROVED, ReviewStatus.LOCKED}
+)
 
 
 def _now() -> datetime:
@@ -131,6 +138,21 @@ class SearchRow:
     excerpt: str
     chapter_distance: int | None
     retrieval_routes: tuple[RetrievalRoute, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class FormalManuscriptEvidenceProjection:
+    document_id: str
+    source_id: str
+    chapter_id: str
+    volume_id: str
+    source_revision: int
+    source_hash: str
+    title: str
+    source_start: int
+    source_end: int
+    text: str
+    expanded_document_ids: tuple[str, ...]
 
 
 class SearchRepository:
@@ -690,6 +712,147 @@ class SearchRepository:
             )
         return documents
 
+    def hydrate_formal_manuscript_candidates(
+        self,
+        target_chapter_id: str,
+        candidate_document_ids: tuple[str, ...],
+        *,
+        neighbor_radius: int,
+        max_codepoints_per_hit: int,
+    ) -> tuple[FormalManuscriptEvidenceProjection, ...]:
+        canonical_target_id = validate_id(target_chapter_id)
+        if (
+            not isinstance(candidate_document_ids, tuple)
+            or len(candidate_document_ids) > MAX_FORMAL_EVIDENCE_CANDIDATES
+        ):
+            raise ValueError("formal evidence candidate set is invalid")
+        canonical_document_ids = tuple(
+            validate_id(document_id) for document_id in candidate_document_ids
+        )
+        if (
+            isinstance(neighbor_radius, bool)
+            or not isinstance(neighbor_radius, int)
+            or not 0 <= neighbor_radius <= MAX_FORMAL_EVIDENCE_NEIGHBOR_RADIUS
+        ):
+            raise ValueError("formal evidence neighbor radius is invalid")
+        if (
+            isinstance(max_codepoints_per_hit, bool)
+            or not isinstance(max_codepoints_per_hit, int)
+            or not 1
+            <= max_codepoints_per_hit
+            <= MAX_FORMAL_EVIDENCE_HIT_CODEPOINTS
+        ):
+            raise ValueError("formal evidence per-hit limit is invalid")
+
+        hydrated: list[FormalManuscriptEvidenceProjection] = []
+        with self.project.database.connect() as connection:
+            connection.execute("BEGIN")
+            target = _active_chapter_order(connection, canonical_target_id)
+            if target is None:
+                raise KeyError("formal evidence target chapter is unavailable")
+            chapter_cache: dict[
+                str,
+                tuple[sqlite3.Row, str, tuple[SearchDocument, ...]],
+            ] = {}
+            for document_id in canonical_document_ids:
+                row = connection.execute(
+                    "SELECT * FROM memory_documents WHERE id = ?",
+                    (document_id,),
+                ).fetchone()
+                if row is None or not _eligible_formal_evidence_row(row):
+                    continue
+                chapter_id = str(row["chapter_id"])
+                source_chapter = _active_chapter_order(connection, chapter_id)
+                if source_chapter is None or _chapter_order_key(
+                    source_chapter
+                ) >= _chapter_order_key(target):
+                    continue
+                if int(row["source_revision"]) != int(source_chapter["revision"]):
+                    continue
+                if str(row["source_hash"]) != str(source_chapter["content_hash"]):
+                    raise RuntimeError("formal manuscript evidence source hash is invalid")
+                policy_version = _chunk_policy_version(
+                    str(row["chunk_policy_version"])
+                )
+                revision = int(source_chapter["revision"])
+                source_hash = _source_hash(str(source_chapter["content_hash"]))
+                cached = chapter_cache.get(chapter_id)
+                if cached is None:
+                    chapter, current_content = self._current_formal_source(
+                        connection,
+                        chapter_id,
+                        revision,
+                        source_hash,
+                    )
+                    rows = connection.execute(
+                        """
+                        SELECT * FROM memory_documents
+                        WHERE document_type = ? AND chapter_id = ?
+                        ORDER BY chunk_ordinal, id
+                        """,
+                        (FORMAL_MANUSCRIPT_DOCUMENT_TYPE, chapter_id),
+                    ).fetchall()
+                    documents = tuple(self._document(item) for item in rows)
+                    _validate_stored_formal_documents(
+                        connection,
+                        documents,
+                        chapter_title=str(chapter["title"]),
+                        chapter_volume_id=str(chapter["volume_id"]),
+                        chapter_id=chapter_id,
+                        revision=revision,
+                        source_hash=source_hash,
+                        policy_version=policy_version,
+                        current_content=current_content,
+                        allowed_review_statuses=_FORMAL_EVIDENCE_REVIEW_STATUSES,
+                    )
+                    chapter_cache[chapter_id] = (chapter, current_content, documents)
+                else:
+                    chapter, current_content, documents = cached
+                documents_by_id = {document.id: document for document in documents}
+                primary = documents_by_id.get(document_id)
+                if primary is None or primary.chunk_ordinal is None:
+                    raise RuntimeError("formal manuscript evidence candidate is invalid")
+                selected = _expanded_formal_evidence_documents(
+                    documents,
+                    primary.chunk_ordinal,
+                    neighbor_radius=neighbor_radius,
+                    max_codepoints=max_codepoints_per_hit,
+                )
+                source_start = min(
+                    _required_projection_integer(document.source_start) for document in selected
+                )
+                source_end = max(
+                    _required_projection_integer(document.source_end) for document in selected
+                )
+                text = current_content[source_start:source_end]
+                hydrated.append(
+                    FormalManuscriptEvidenceProjection(
+                        primary.id,
+                        primary.source_id,
+                        chapter_id,
+                        str(chapter["volume_id"]),
+                        revision,
+                        source_hash,
+                        str(chapter["title"]),
+                        source_start,
+                        source_end,
+                        text,
+                        tuple(document.id for document in selected),
+                    )
+                )
+            for chapter_id, (chapter, current_content, _documents) in chapter_cache.items():
+                _chapter_after, current_content_after = self._current_formal_source(
+                    connection,
+                    chapter_id,
+                    int(chapter["revision"]),
+                    _source_hash(str(chapter["content_hash"])),
+                )
+                if current_content_after != current_content:
+                    raise RuntimeError(
+                        "formal manuscript source changed during evidence hydrate"
+                    )
+        return tuple(hydrated)
+
     def _current_formal_source(
         self,
         connection: sqlite3.Connection,
@@ -1207,6 +1370,7 @@ def _validate_stored_formal_documents(
     source_hash: str,
     policy_version: str,
     current_content: str,
+    allowed_review_statuses: frozenset[ReviewStatus] = _FORMAL_STORAGE_REVIEW_STATUSES,
 ) -> None:
     dependency_rows = connection.execute(
         """
@@ -1268,7 +1432,7 @@ def _validate_stored_formal_documents(
             or document.title != chapter_title
             or document.participants
             or document.pinned_weight != 0
-            or document.review_status != ReviewStatus.APPROVED
+            or document.review_status not in allowed_review_statuses
             or document.status != MemoryStatus.CURRENT
             or stored_policy != policy_version
         ):
@@ -1313,6 +1477,83 @@ def _delete_formal_document_rows(
             "DELETE FROM memory_documents WHERE id = ?",
             (document_id,),
         )
+
+
+def _active_chapter_order(
+    connection: sqlite3.Connection,
+    chapter_id: str,
+) -> sqlite3.Row | None:
+    row: sqlite3.Row | None = connection.execute(
+        """
+        SELECT c.id, c.volume_id, c.title, c.revision, c.content_hash,
+               v.sort_index AS volume_sort_index,
+               c.sort_index AS chapter_sort_index
+        FROM chapters c
+        JOIN volumes v ON v.id = c.volume_id
+        WHERE c.id = ? AND c.is_deleted = 0
+        """,
+        (chapter_id,),
+    ).fetchone()
+    return row
+
+
+def _chapter_order_key(row: sqlite3.Row) -> tuple[int, int, str]:
+    return (
+        int(row["volume_sort_index"]),
+        int(row["chapter_sort_index"]),
+        str(row["id"]),
+    )
+
+
+def _eligible_formal_evidence_row(row: sqlite3.Row) -> bool:
+    return (
+        row["document_type"] == FORMAL_MANUSCRIPT_DOCUMENT_TYPE
+        and row["status"] == MemoryStatus.CURRENT.value
+        and row["review_status"]
+        in {ReviewStatus.APPROVED.value, ReviewStatus.LOCKED.value}
+        and row["chapter_id"] is not None
+    )
+
+
+def _expanded_formal_evidence_documents(
+    documents: tuple[SearchDocument, ...],
+    primary_ordinal: int,
+    *,
+    neighbor_radius: int,
+    max_codepoints: int,
+) -> tuple[SearchDocument, ...]:
+    if not 0 <= primary_ordinal < len(documents):
+        raise RuntimeError("formal manuscript evidence ordinal is invalid")
+    primary = documents[primary_ordinal]
+    source_start = _required_projection_integer(primary.source_start)
+    source_end = _required_projection_integer(primary.source_end)
+    if source_end - source_start > max_codepoints:
+        raise RuntimeError("formal manuscript evidence primary chunk exceeds limit")
+    selected: dict[int, SearchDocument] = {primary_ordinal: primary}
+    for distance in range(1, neighbor_radius + 1):
+        for ordinal in (primary_ordinal - distance, primary_ordinal + distance):
+            if not 0 <= ordinal < len(documents):
+                continue
+            neighbor = documents[ordinal]
+            expanded_start = min(
+                source_start,
+                _required_projection_integer(neighbor.source_start),
+            )
+            expanded_end = max(
+                source_end,
+                _required_projection_integer(neighbor.source_end),
+            )
+            if expanded_end - expanded_start <= max_codepoints:
+                selected[ordinal] = neighbor
+                source_start = expanded_start
+                source_end = expanded_end
+    return tuple(selected[ordinal] for ordinal in sorted(selected))
+
+
+def _required_projection_integer(value: int | None) -> int:
+    if value is None:
+        raise RuntimeError("formal manuscript evidence range is incomplete")
+    return value
 
 
 def _keyword_query(query: str) -> str:

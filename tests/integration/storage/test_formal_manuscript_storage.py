@@ -69,6 +69,110 @@ def _chunk(
     )
 
 
+def test_formal_evidence_hydrate_expands_locked_current_neighbors_exactly(
+    tmp_path: Path,
+) -> None:
+    content = "甲" * 1_800 + "😀" * 1_800
+    project, chapters, search, chapter = _repositories(tmp_path, content=content)
+    target = chapters.create_chapter(
+        chapter.volume_id,
+        "Target",
+        "2",
+        "target",
+    )
+    chunks = (
+        _chunk(chapter.id, 0, 0, 0, 1_600, content),
+        _chunk(chapter.id, 0, 1, 1_400, 3_000, content),
+        _chunk(chapter.id, 0, 2, 2_800, len(content), content),
+    )
+    stored = search.replace_formal_manuscript_chunks(
+        chapter.id,
+        expected_revision=0,
+        expected_source_hash=_source_hash(content),
+        chunk_policy_version=_POLICY,
+        chunks=chunks,
+    )
+    with project.database.connect() as connection, connection:
+        connection.execute(
+            "UPDATE memory_documents SET review_status = 'LOCKED' WHERE chapter_id = ?",
+            (chapter.id,),
+        )
+    with pytest.raises(RuntimeError, match="identity is invalid"):
+        search.read_formal_manuscript_chunks(
+            chapter.id,
+            expected_revision=0,
+            expected_source_hash=_source_hash(content),
+            chunk_policy_version=_POLICY,
+        )
+
+    hydrated = search.hydrate_formal_manuscript_candidates(
+        target.id,
+        (stored[1].id,),
+        neighbor_radius=1,
+        max_codepoints_per_hit=4_800,
+    )
+
+    assert len(hydrated) == 1
+    assert hydrated[0].document_id == stored[1].id
+    assert hydrated[0].expanded_document_ids == tuple(
+        document.id for document in stored
+    )
+    assert (
+        hydrated[0].source_start,
+        hydrated[0].source_end,
+        hydrated[0].text,
+    ) == (0, len(content), content)
+
+
+def test_formal_evidence_hydrate_skips_stale_but_rejects_current_fts_corruption(
+    tmp_path: Path,
+) -> None:
+    content = "current exact evidence"
+    project, chapters, search, chapter = _repositories(tmp_path, content=content)
+    target = chapters.create_chapter(
+        chapter.volume_id,
+        "Target",
+        "2",
+        "target",
+    )
+    stored = search.replace_formal_manuscript_chunks(
+        chapter.id,
+        expected_revision=0,
+        expected_source_hash=_source_hash(content),
+        chunk_policy_version=_POLICY,
+        chunks=(_chunk(chapter.id, 0, 0, 0, len(content), content),),
+    )
+    with project.database.connect() as connection, connection:
+        connection.execute(
+            "UPDATE memory_documents SET status = 'STALE' WHERE id = ?",
+            (stored[0].id,),
+        )
+
+    assert search.hydrate_formal_manuscript_candidates(
+        target.id,
+        (stored[0].id,),
+        neighbor_radius=1,
+        max_codepoints_per_hit=4_800,
+    ) == ()
+
+    with project.database.connect() as connection, connection:
+        connection.execute(
+            "UPDATE memory_documents SET status = 'CURRENT' WHERE id = ?",
+            (stored[0].id,),
+        )
+        connection.execute(
+            "DELETE FROM memory_fts WHERE document_id = ?",
+            (stored[0].id,),
+        )
+    with pytest.raises(RuntimeError, match="FTS projection"):
+        search.hydrate_formal_manuscript_candidates(
+            target.id,
+            (stored[0].id,),
+            neighbor_radius=1,
+            max_codepoints_per_hit=4_800,
+        )
+
+
 def test_formal_chunks_round_trip_exact_unicode_ranges_without_touching_legacy_rows(
     tmp_path: Path,
 ) -> None:
