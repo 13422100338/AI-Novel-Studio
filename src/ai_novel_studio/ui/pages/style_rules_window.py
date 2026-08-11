@@ -195,7 +195,12 @@ class StyleRulesWindow(QMainWindow):
             ):
                 button.setEnabled(False)
             return
-        snapshot = self._service.load()
+        try:
+            snapshot = self._service.load()
+        except Exception:
+            self._clear_after_load_failure()
+            self.status_label.setText("文风工作区加载失败；请关闭后重新打开。")
+            return
         self._rules = {item.id: item for item in snapshot.rules}
         self._samples = {item.id: item for item in snapshot.samples}
         self._refresh_rules()
@@ -212,6 +217,37 @@ class StyleRulesWindow(QMainWindow):
                 for item in candidates
             )
         )
+
+    def _clear_after_load_failure(self) -> None:
+        self._rules.clear()
+        self._samples.clear()
+        self.rules_table.setRowCount(0)
+        self.rules_table.clearSelection()
+        self.rules_table.setCurrentCell(-1, -1)
+        self.rule_scope_combo.setCurrentIndex(-1)
+        self.rule_scope_id.clear()
+        self.rule_type.clear()
+        self.rule_text.clear()
+
+        self.sample_selector.blockSignals(True)
+        self.sample_selector.clear()
+        self.sample_selector.blockSignals(False)
+        self.sample_scope_combo.setCurrentIndex(-1)
+        self.sample_scope_id.clear()
+        self.sample_title.clear()
+        self.human_sample.clear()
+        self.candidate_editor.clear()
+        self.human_sample.setReadOnly(True)
+        for button in (
+            self.new_rule_button,
+            self.save_rule_button,
+            self.delete_rule_button,
+            self.new_sample_button,
+            self.save_sample_button,
+            self.lock_sample_button,
+            self.delete_sample_button,
+        ):
+            button.setEnabled(False)
 
     def _refresh_rules(self) -> None:
         self.rules_table.setRowCount(0)
