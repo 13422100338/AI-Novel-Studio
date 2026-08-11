@@ -8,7 +8,7 @@
 - Superpowers: disabled for this project workflow.
 - Initial business-code baseline: `e35b50d` (the backend code state before the governance-only dispatch commit).
 - Wave 1 dispatched baseline: `3382dd36c2a4aeb4acdab411e9211885b633e678`.
-- Latest integrated business commit: `7791c12` (R2c-L3 chapter-deletion Formal-evidence invalidation/removal, including prior R1a-R2c-L2b-I1, C15, S1, P0-1, A1-A4, B1-B14, C1-C14, M1, E1a, E1b-SR1, E1b-SS1, E1b-CR1, E1b-CS1, E1b-CE1, E1b-SM1, SE1-SE3, and ST1 increments).
+- Latest integrated business commit: `57936fa` (R2c-L4 delete-volume relocation revisions, including prior R1a-R2c-L3, C15, S1, P0-1, A1-A4, B1-B14, C1-C14, M1, E1a, E1b-SR1, E1b-SS1, E1b-CR1, E1b-CS1, E1b-CE1, E1b-SM1, SE1-SE3, and ST1 increments).
 - Planning sources:
   - `docs/handoffs/2026-07-22-backend-refactor-handoff.md`
   - `docs/handoffs/2026-08-09-backend-refactor-supplemental-upgrade.md`
@@ -35,8 +35,8 @@
 
 All Wave 1 tasks were dispatched from `3382dd36c2a4aeb4acdab411e9211885b633e678`; their initial business-code baseline remains `e35b50d`.
 
-- Active implementations authorized by the user: A is authorized for R2c-L4 delete-volume
-  relocation revisions; B remains paused after B14; C remains paused after C15.
+- Active implementations authorized by the user: none. A is paused after R2c-L4; B remains paused
+  after B14; C remains paused after C15.
 - Completed read-only audit: `Gate S0` across A/B/C. Its reports froze the dependency direction
   `R1 -> R2 -> R3 -> R4`, require R1 and O1 schema ownership to be serialized, require O2 to
   consume R2 revision impact, and require H1 to reuse the R3 evidence facade.
@@ -97,17 +97,18 @@ All Wave 1 tasks were dispatched from `3382dd36c2a4aeb4acdab411e9211885b633e678`
   - `manifest-eligibility-v2` increment R2c-L2a (Markdown/TXT imported chapter CREATE coordination), merged as `870d40c`.
   - `manifest-eligibility-v2` increment R2c-L2b-I1 (LegacyProjectImporter CREATE coordination), merged as `e0ef4d4`.
   - `manifest-eligibility-v2` increment R2c-L3 (chapter-deletion Formal-evidence invalidation/removal), merged as `7791c12`.
+  - `manifest-eligibility-v2` increment R2c-L4 (delete-volume relocation revisions), merged as `57936fa`.
   - `view-operations-ui` increment C15 (fail-closed Style workspace load feedback with stale-state clearing), merged as `5f848a3`.
 - Active schema owner: none.
 
 | Task | Model / reasoning | Thread | Worktree | Assigned branch | HEAD state | Status |
 | --- | --- | --- | --- | --- | --- | --- |
 
-| `manifest-eligibility-v2` | `gpt-5.6-sol` / `xhigh` | `019f87e8-6d32-7141-b9b4-4f1142e4db4e` | `C:\Users\钟子诚\.codex\worktrees\93d7\AI-Novel-Studio` | `codex/manifest-eligibility-r2c-l4` | branch | R2c-L4 authorized: delete-volume relocation revisions; TDD implementation in progress |
+| `manifest-eligibility-v2` | `gpt-5.6-sol` / `xhigh` | `019f87e8-6d32-7141-b9b4-4f1142e4db4e` | `C:\Users\钟子诚\.codex\worktrees\93d7\AI-Novel-Studio` | `codex/manifest-eligibility-r2c-l4` | branch | R2c-L4 merged as `57936fa`; lane paused pending explicit instruction |
 | `generation-profile-audit-policy` | `gpt-5.6-terra` / `medium` | `019f87e8-696e-7f11-bcfe-1552f51cabc3` | `C:\Users\钟子诚\.codex\worktrees\4df4\AI-Novel-Studio` | `codex/generation-profile-audit-policy-b5` | branch | B1-B7 merged; B7 is `663f932`; lane paused pending explicit instruction |
 | `view-operations-ui` | `gpt-5.6-luna` / `max` | `019f87e8-7a77-7902-b3d1-a38f32240136` | `C:\Users\钟子诚\.codex\worktrees\8802\AI-Novel-Studio` | `codex/view-operations-ui-c15` | branch | C15 merged as `5f848a3`; lane paused pending explicit instruction |
 
-Current dispatch override: A is active on R2c-L4 only; B is paused after B14; C is paused after C15.
+Current dispatch override: A is paused after R2c-L4; B is paused after B14; C is paused after C15.
 Restore, manual workspace creation, the remaining R2c lifecycle paths, R3/O1, and every other later
 increment remain separately unauthorized.
 Product decision A is approved: title rename and chapter relocation advance Chapter.revision and
@@ -124,13 +125,13 @@ are complete. ADR 0022 freezes the Formal Manuscript range, chunk identity, and 
 embedding-cache contract. R1a/schema v19, the no-schema R1b manual-build projection, and R2a-F
 revision-local maintenance/recovery foundation, R2b-C production content-revision routing, and
 R2c-L1 chapter-title maintenance, R2c-L2a Markdown/TXT import creation, R2c-L2b-I1 Legacy import
-creation, and R2c-L3 delete-only Formal invalidation/removal are integrated. R2c-L4 delete-volume
-relocation revisions are active. Restore, manual workspace creation, the remaining R2c lifecycle
-paths, R3-R4, O1-O2, H1, and V1 remain unauthorized.
+creation, R2c-L3 delete-only Formal invalidation/removal, and R2c-L4 delete-volume relocation
+revisions are integrated. Restore, manual workspace creation, the remaining R2c lifecycle paths,
+R3-R4, O1-O2, H1, and V1 remain unauthorized.
 
 Product decision: Manual Pins are immutable materialized snapshots. They never automatically re-resolve or refresh from their source; authors update them only by removing and re-pinning. Do not add a live-pointer, automatic stale gate, or refresh behavior without a new explicit decision.
 
-E1a, E1b-SR1, E1b-SS1, E1b-CR1, E1b-CS1, E1b-CE1, E1b-SM1, SE1, SE2a, SE2c-W1, SE3, ST1, S1, R1a, R1b, R2a-F, R2b-C, R2c-L1, R2c-L2a, R2c-L2b-I1, R2c-L3, C6a, C6b, C7, C8, C9, C10, C11, C12, C13, C14, C15, B4, B5, B6, B7, B8, B9, B10, B11, B12, B13, B14, and P0-1 are integrated. Every later increment still requires a new user decision.
+E1a, E1b-SR1, E1b-SS1, E1b-CR1, E1b-CS1, E1b-CE1, E1b-SM1, SE1, SE2a, SE2c-W1, SE3, ST1, S1, R1a, R1b, R2a-F, R2b-C, R2c-L1, R2c-L2a, R2c-L2b-I1, R2c-L3, R2c-L4, C6a, C6b, C7, C8, C9, C10, C11, C12, C13, C14, C15, B4, B5, B6, B7, B8, B9, B10, B11, B12, B13, B14, and P0-1 are integrated. Every later increment still requires a new user decision.
 
 ## Later Waves and Dependencies
 
