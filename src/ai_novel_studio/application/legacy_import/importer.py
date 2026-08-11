@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from ai_novel_studio.application.chapter_revision_service import ChapterRevisionService
 from ai_novel_studio.application.legacy_import.docx_reader import (
     LegacyDocumentError,
     read_docx_text,
@@ -23,6 +24,7 @@ class LegacyProjectImporter:
     def import_project(self, preview: MigrationPreview, destination: Path) -> MigrationReport:
         project = ProjectRepository.create(destination, preview.title)
         chapters = ChapterRepository(project)
+        revision_service = ChapterRevisionService(project)
         default_volume = project.list_volumes()[0]
         issues = list(preview.issues)
         chapter_hashes: dict[str, str] = {}
@@ -57,13 +59,13 @@ class LegacyProjectImporter:
                         )
                     )
                     continue
-                imported = chapters.create_chapter(
+                imported = revision_service.submit_creation(
                     new_volume.id,
                     chapter.title,
                     chapter.declared_number,
                     content,
                     chapter.synopsis,
-                )
+                ).chapter
                 chapter_hashes[imported.id] = hashlib.sha256(content.encode("utf-8")).hexdigest()
                 if chapter.ai_synopsis:
                     memory_by_chapter[imported.id] = chapter.ai_synopsis
