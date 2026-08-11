@@ -16,14 +16,12 @@ from ai_novel_studio.application.legacy_import.models import (
     MigrationReport,
 )
 from ai_novel_studio.infrastructure.storage.atomic_file import atomic_write_text
-from ai_novel_studio.infrastructure.storage.chapter_repository import ChapterRepository
 from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
 
 
 class LegacyProjectImporter:
     def import_project(self, preview: MigrationPreview, destination: Path) -> MigrationReport:
         project = ProjectRepository.create(destination, preview.title)
-        chapters = ChapterRepository(project)
         revision_service = ChapterRevisionService(project)
         default_volume = project.list_volumes()[0]
         issues = list(preview.issues)
@@ -71,7 +69,10 @@ class LegacyProjectImporter:
                     memory_by_chapter[imported.id] = chapter.ai_synopsis
 
         if imported_volumes:
-            chapters.delete_volume(default_volume.id, imported_volumes[0])
+            revision_service.submit_volume_deletion(
+                default_volume.id,
+                imported_volumes[0],
+            )
 
         report = MigrationReport(
             project_id=project.project.id,

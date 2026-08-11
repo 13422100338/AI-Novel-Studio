@@ -300,18 +300,34 @@ def test_workspace_delete_chapter_uses_shared_revision_coordinator_once(
     service.close_project()
 
 
-def test_deleting_volume_moves_its_chapters_to_previous_volume(tmp_path: Path) -> None:
+def test_deleting_volume_moves_its_chapters_through_shared_revision_service(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     service = ProjectWorkspaceService()
     service.create_project(tmp_path / "novel", "My Novel")
     first_volume = service.volume_tree()[0]
     second_volume = service.create_volume("第二卷")
     chapter = service.create_chapter(second_volume.id, "不会丢失", "第 1 章")
 
+    revisions = service.revision_service
+    assert isinstance(revisions, ChapterRevisionService)
+    original = revisions.submit_volume_deletion
+    calls: list[tuple[str, str]] = []
+
+    def track_submit(source_volume_id: str, target_volume_id: str):  # type: ignore[no-untyped-def]
+        calls.append((source_volume_id, target_volume_id))
+        return original(source_volume_id, target_volume_id)
+
+    monkeypatch.setattr(revisions, "submit_volume_deletion", track_submit)
+
     target_volume_id = service.delete_volume(second_volume.id)
 
     tree = service.volume_tree()
     assert target_volume_id == first_volume.id
+    assert calls == [(second_volume.id, first_volume.id)]
     assert len(tree) == 1
     assert tree[0].chapters[0].id == chapter.id
+    assert tree[0].chapters[0].revision == chapter.revision + 1
     assert service.load_chapter(chapter.id).title == "不会丢失"
     service.close_project()

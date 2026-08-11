@@ -1,6 +1,7 @@
 import hashlib
 import os
 import sqlite3
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -17,10 +18,33 @@ from ai_novel_studio.infrastructure.storage.view_assertion_repository import (
 
 _METADATA_CHANGE_SOURCE = "metadata_change"
 _CHAPTER_TITLE_CHANGE_REASON = "chapter title changed"
+_CHAPTER_RELOCATION_REASON = "chapter relocated by volume deletion"
 
 
 class StaleChapterRevisionError(RuntimeError):
     pass
+
+
+@dataclass(frozen=True, slots=True)
+class ChapterRelocationExpectation:
+    chapter_id: str
+    revision: int
+    content_hash: str
+
+    def __post_init__(self) -> None:
+        validate_id(self.chapter_id)
+        if (
+            isinstance(self.revision, bool)
+            or not isinstance(self.revision, int)
+            or self.revision < 0
+        ):
+            raise ValueError("chapter relocation revision is invalid")
+        if (
+            not isinstance(self.content_hash, str)
+            or len(self.content_hash) != 64
+            or any(character not in "0123456789abcdef" for character in self.content_hash)
+        ):
+            raise ValueError("chapter relocation content hash is invalid")
 
 
 def _now() -> datetime:
@@ -211,14 +235,21 @@ class ChapterRepository:
 
     def read_content_exact(self, chapter_id: str) -> str:
         chapter = self.get_chapter(chapter_id, include_deleted=False)
+        return self._read_content_path_exact(chapter.content_path)
+
+    def _resolve_manuscript_path(self, content_path: str | Path) -> Path:
         manuscript_root = self.project.layout.manuscript.resolve()
-        source_path = (self.project.layout.root / chapter.content_path).resolve()
+        source_path = (self.project.layout.root / content_path).resolve()
         try:
             source_path.relative_to(manuscript_root)
         except ValueError as error:
             raise RuntimeError(
                 "chapter source path is outside manuscript directory"
             ) from error
+        return source_path
+
+    def _read_content_path_exact(self, content_path: str | Path) -> str:
+        source_path = self._resolve_manuscript_path(content_path)
         if not source_path.is_file():
             raise RuntimeError("chapter source file is missing")
         try:
@@ -547,60 +578,172 @@ class ChapterRepository:
             connection.close()
         return self.get_chapter(chapter.id)
 
-    def delete_volume(self, volume_id: str, target_volume_id: str) -> None:
+    def delete_volume(
+        self,
+        volume_id: str,
+        target_volume_id: str,
+        *,
+        expected_sources: tuple[ChapterRelocationExpectation, ...] | None = None,
+    ) -> tuple[Chapter, ...]:
         validate_id(volume_id)
         validate_id(target_volume_id)
         if volume_id == target_volume_id:
             raise ValueError("target volume must be different from deleted volume")
-        moving = self.list_chapters(volume_id)
+        if expected_sources is not None and (
+            not isinstance(expected_sources, tuple)
+            or any(
+                not isinstance(source, ChapterRelocationExpectation)
+                for source in expected_sources
+            )
+        ):
+            raise TypeError("chapter relocation expectations are invalid")
         moved_paths: list[tuple[Path, Path]] = []
+        snapshots: list[Path] = []
         connection = self.project.database.connect()
         try:
-            with connection:
-                target_exists = connection.execute(
-                    "SELECT 1 FROM volumes WHERE id = ?", (target_volume_id,)
-                ).fetchone()
-                source_exists = connection.execute(
-                    "SELECT 1 FROM volumes WHERE id = ?", (volume_id,)
-                ).fetchone()
-                if target_exists is None or source_exists is None:
-                    raise KeyError("source or target volume does not exist")
-                next_index = int(
-                    connection.execute(
-                        "SELECT COALESCE(MAX(sort_index), -1) + 1 FROM chapters "
-                        "WHERE volume_id = ? AND is_deleted = 0",
-                        (target_volume_id,),
-                    ).fetchone()[0]
+            connection.execute("BEGIN IMMEDIATE")
+            target_exists = connection.execute(
+                "SELECT 1 FROM volumes WHERE id = ?", (target_volume_id,)
+            ).fetchone()
+            source_exists = connection.execute(
+                "SELECT 1 FROM volumes WHERE id = ?", (volume_id,)
+            ).fetchone()
+            if target_exists is None or source_exists is None:
+                raise KeyError("source or target volume does not exist")
+            deleted_exists = connection.execute(
+                "SELECT 1 FROM chapters WHERE volume_id = ? AND is_deleted = 1 LIMIT 1",
+                (volume_id,),
+            ).fetchone()
+            if deleted_exists is not None:
+                raise RuntimeError("source volume contains deleted chapters")
+            moving_rows = connection.execute(
+                "SELECT * FROM chapters WHERE volume_id = ? AND is_deleted = 0 "
+                "ORDER BY sort_index, id",
+                (volume_id,),
+            ).fetchall()
+            moving = tuple(_chapter_from_row(row) for row in moving_rows)
+            actual_sources = tuple(
+                ChapterRelocationExpectation(
+                    chapter.id,
+                    chapter.revision,
+                    str(row["content_hash"]),
                 )
-                for offset, chapter in enumerate(moving):
-                    old_path = self.project.layout.root / chapter.content_path
-                    new_relative = (
-                        Path("manuscript")
-                        / f"volume_{target_volume_id}"
-                        / f"chapter_{chapter.id}.md"
-                    )
-                    new_path = self.project.layout.root / new_relative
-                    new_path.parent.mkdir(parents=True, exist_ok=True)
-                    os.replace(old_path, new_path)
-                    moved_paths.append((old_path, new_path))
-                    connection.execute(
-                        "UPDATE chapters SET volume_id = ?, content_path = ?, sort_index = ?, "
-                        "updated_at = ? "
-                        "WHERE id = ?",
-                        (
-                            target_volume_id,
-                            new_relative.as_posix(),
-                            next_index + offset,
-                            _now().isoformat(),
-                            chapter.id,
-                        ),
-                    )
-                connection.execute("DELETE FROM volumes WHERE id = ?", (volume_id,))
+                for chapter, row in zip(moving, moving_rows, strict=True)
+            )
+            if expected_sources is not None and expected_sources != actual_sources:
+                raise RuntimeError("source volume chapters changed before deletion")
+            prepared: list[tuple[Chapter, str, Path, Path, Path]] = []
+            for chapter, row in zip(moving, moving_rows, strict=True):
+                content = self._read_content_path_exact(chapter.content_path)
+                if _hash(content) != str(row["content_hash"]):
+                    raise RuntimeError("chapter content does not match its stored hash")
+                new_relative = (
+                    Path("manuscript")
+                    / f"volume_{target_volume_id}"
+                    / f"chapter_{chapter.id}.md"
+                )
+                old_path = self._resolve_manuscript_path(chapter.content_path)
+                new_path = self._resolve_manuscript_path(new_relative)
+                if new_path.exists() or new_path.is_symlink():
+                    raise RuntimeError("target chapter path already exists")
+                prepared.append((chapter, content, old_path, new_path, new_relative))
+            next_index = int(
+                connection.execute(
+                    "SELECT COALESCE(MAX(sort_index), -1) + 1 FROM chapters "
+                    "WHERE volume_id = ? AND is_deleted = 0",
+                    (target_volume_id,),
+                ).fetchone()[0]
+            )
+            now = _now()
+            for offset, (chapter, content, old_path, new_path, new_relative) in enumerate(
+                prepared
+            ):
+                content_hash = _hash(content)
+                version_id = new_id()
+                snapshot_relative = (
+                    Path(".ai_pipeline")
+                    / "history"
+                    / chapter.id
+                    / f"revision_{chapter.revision}_{version_id}.md"
+                )
+                snapshot = self.project.layout.root / snapshot_relative
+                atomic_write_text(snapshot, content)
+                snapshots.append(snapshot)
+                connection.execute(
+                    "INSERT INTO chapter_versions VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        version_id,
+                        chapter.id,
+                        chapter.revision,
+                        snapshot_relative.as_posix(),
+                        _METADATA_CHANGE_SOURCE,
+                        _CHAPTER_RELOCATION_REASON,
+                        now.isoformat(),
+                        content_hash,
+                    ),
+                )
+                new_path.parent.mkdir(parents=True, exist_ok=True)
+                os.replace(old_path, new_path)
+                moved_paths.append((old_path, new_path))
+                cursor = connection.execute(
+                    """
+                    UPDATE chapters
+                    SET volume_id = ?, content_path = ?, sort_index = ?,
+                        revision = revision + 1, memory_status = 'stale', updated_at = ?
+                    WHERE id = ? AND volume_id = ? AND content_path = ?
+                      AND revision = ? AND content_hash = ? AND is_deleted = 0
+                    """,
+                    (
+                        target_volume_id,
+                        new_relative.as_posix(),
+                        next_index + offset,
+                        now.isoformat(),
+                        chapter.id,
+                        volume_id,
+                        chapter.content_path,
+                        chapter.revision,
+                        content_hash,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise RuntimeError("chapter changed during volume deletion")
+                MemoryDependencyRepository.invalidate_formal_manuscript_in_connection(
+                    connection,
+                    chapter.id,
+                    chapter.revision + 1,
+                    content_hash,
+                )
+                MemoryDependencyRepository.invalidate_in_connection(
+                    connection,
+                    chapter.id,
+                    chapter.revision + 1,
+                    content_hash,
+                )
+                ViewAssertionRepository.invalidate_source_revision_in_connection(
+                    connection,
+                    source_id=chapter.id,
+                    new_revision=chapter.revision + 1,
+                    updated_at=now.isoformat(),
+                )
+                connection.execute(
+                    "UPDATE memory_documents SET volume_id = ? WHERE chapter_id = ?",
+                    (target_volume_id, chapter.id),
+                )
+                if self._read_content_path_exact(new_relative.as_posix()) != content:
+                    raise RuntimeError("chapter content changed during volume deletion")
+            cursor = connection.execute("DELETE FROM volumes WHERE id = ?", (volume_id,))
+            if cursor.rowcount != 1:
+                raise RuntimeError("source volume changed during deletion")
+            connection.commit()
         except BaseException:
+            connection.rollback()
             for old_path, new_path in reversed(moved_paths):
                 old_path.parent.mkdir(parents=True, exist_ok=True)
                 if new_path.exists():
                     os.replace(new_path, old_path)
+            for snapshot in snapshots:
+                snapshot.unlink(missing_ok=True)
             raise
         finally:
             connection.close()
+        return tuple(self.get_chapter(chapter.id, include_deleted=False) for chapter in moving)

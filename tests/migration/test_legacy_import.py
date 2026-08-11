@@ -109,11 +109,30 @@ def test_scan_previews_duplicate_names_and_reports_bad_documents(tmp_path: Path)
     assert all(not Path(issue.source).is_absolute() for issue in preview.issues)
 
 
-def test_import_is_read_only_and_writes_verified_markdown_report(tmp_path: Path) -> None:
+def test_import_is_read_only_and_writes_verified_markdown_report(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     source = _legacy_project(tmp_path / "legacy")
     before = _snapshot(source)
     preview = LegacyProjectScanner().scan(source)
     destination = tmp_path / "v3"
+    real_submit = ChapterRevisionService.submit_volume_deletion
+    relocation_calls: list[tuple[str, str]] = []
+
+    def track_relocation(
+        self: ChapterRevisionService,
+        source_volume_id: str,
+        target_volume_id: str,
+    ):  # type: ignore[no-untyped-def]
+        relocation_calls.append((source_volume_id, target_volume_id))
+        return real_submit(self, source_volume_id, target_volume_id)
+
+    monkeypatch.setattr(
+        ChapterRevisionService,
+        "submit_volume_deletion",
+        track_relocation,
+    )
 
     report = LegacyProjectImporter().import_project(preview, destination)
 
@@ -123,8 +142,10 @@ def test_import_is_read_only_and_writes_verified_markdown_report(tmp_path: Path)
     assert report.skipped_chapters == 2
     project = ProjectRepository.open(destination)
     assert [volume.title for volume in project.list_volumes()] == ["Same Volume", "Same Volume"]
+    assert len(relocation_calls) == 1
     chapters = ChapterRepository(project).list_chapters()
     assert len(chapters) == 1
+    assert chapters[0].revision == 0
     assert ChapterRepository(project).read_content(chapters[0].id) == "# 第一章\n正文内容"
     assert (
         report.chapter_hashes[chapters[0].id]

@@ -89,7 +89,8 @@ revision. The new revision produces new Formal chunk source IDs; old source IDs 
 and recreated under a changed title or volume.
 
 Chapter-title snapshots use the fixed source `metadata_change` and reason `chapter title changed`.
-Relocation remains a separate revision-maintenance ticket and must use its own explicit reason.
+Chapter relocation performed by volume deletion uses the same fixed source `metadata_change` and
+the distinct reason `chapter relocated by volume deletion`.
 
 Chapter deletion is a lifecycle operation rather than a metadata revision: current Formal rows are
 invalidated/removed and current reads fail closed. Restoring unchanged content rebuilds its Formal

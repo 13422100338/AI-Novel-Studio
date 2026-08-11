@@ -18,6 +18,7 @@ from ai_novel_studio.application.chapter_revision_service import (
     RevisionImpact,
     RevisionSourceIdentity,
     SubmittedDeletion,
+    SubmittedRelocation,
     SubmittedRevision,
     SubmittedTitleRevision,
 )
@@ -622,6 +623,219 @@ def test_submit_same_title_revision_skips_formal_maintenance(
 
     assert result == SubmittedTitleRevision(chapter, revision=None)
     assert chapters.list_versions(chapter.id) == []
+
+
+def test_submit_volume_deletion_relocates_and_maintains_each_current_revision(
+    tmp_path: Path,
+) -> None:
+    project = ProjectRepository.create(tmp_path / "novel", "Relocation")
+    target = project.list_volumes()[0]
+    source = project.create_volume("Part Two")
+    chapters = ChapterRepository(project)
+    contents = ("first \U0001f600\r\n", "second chapter")
+    created = tuple(
+        chapters.create_chapter(source.id, title, str(index), content)
+        for index, (title, content) in enumerate(
+            zip(("Opening", "Follow-up"), contents, strict=True),
+            start=1,
+        )
+    )
+    service = ChapterRevisionService(project)
+    search = SearchRepository(project)
+    prior_ids: list[str] = []
+    for chapter, content in zip(created, contents, strict=True):
+        service.maintain_current_revision(
+            chapter.id,
+            expected_revision=chapter.revision,
+            expected_source_hash=_source_hash(content),
+        )
+        prior = search.read_formal_manuscript_chunks(
+            chapter.id,
+            expected_revision=chapter.revision,
+            expected_source_hash=_source_hash(content),
+            chunk_policy_version=DEFAULT_MANUSCRIPT_CHUNK_POLICY.version,
+        )[0]
+        prior_ids.append(prior.id)
+        embedding_source = search.embedding_source(prior.id)
+        search.save_embedding(
+            prior.id,
+            _EMBEDDING_IDENTITY,
+            (1.0, 0.0),
+            expected_content_hash=embedding_source.content_hash,
+        )
+
+    result = service.submit_volume_deletion(source.id, target.id)
+
+    assert isinstance(result, SubmittedRelocation)
+    assert result.target_volume_id == target.id
+    assert [submitted.chapter.id for submitted in result.revisions] == [
+        chapter.id for chapter in created
+    ]
+    for submitted, original, content in zip(
+        result.revisions,
+        created,
+        contents,
+        strict=True,
+    ):
+        assert submitted.chapter.volume_id == target.id
+        assert submitted.impact == RevisionImpact(
+            ChapterMutationKind.RELOCATE,
+            original.id,
+            RevisionSourceIdentity(0, _source_hash(content), is_deleted=False),
+            RevisionSourceIdentity(1, _source_hash(content), is_deleted=False),
+            manuscript_committed=True,
+            semantic_memory_invalidated=True,
+        )
+        assert submitted.maintenance.status == FormalMaintenanceStatus.REPAIRED
+        current = search.read_formal_manuscript_chunks(
+            original.id,
+            expected_revision=1,
+            expected_source_hash=_source_hash(content),
+            chunk_policy_version=DEFAULT_MANUSCRIPT_CHUNK_POLICY.version,
+        )
+        assert current
+        assert all(document.volume_id == target.id for document in current)
+        assert all(document.source_revision == 1 for document in current)
+    pending = search.pending_embedding_sources(_EMBEDDING_IDENTITY, limit=10)
+    assert {source.document_id for source in pending} == {
+        document.id
+        for submitted, content in zip(result.revisions, contents, strict=True)
+        for document in search.read_formal_manuscript_chunks(
+            submitted.chapter.id,
+            expected_revision=1,
+            expected_source_hash=_source_hash(content),
+            chunk_policy_version=DEFAULT_MANUSCRIPT_CHUNK_POLICY.version,
+        )
+    }
+    with project.database.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM memory_embeddings").fetchone()[0] == 0
+        assert connection.execute(
+            "SELECT COUNT(*) FROM memory_documents WHERE id IN (?, ?)",
+            tuple(prior_ids),
+        ).fetchone()[0] == 0
+
+
+def test_submit_volume_deletion_isolates_sanitized_maintenance_failures(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = ProjectRepository.create(tmp_path / "novel", "Relocation recovery")
+    target = project.list_volumes()[0]
+    source = project.create_volume("Part Two")
+    chapters = ChapterRepository(project)
+    first_content = "private first body"
+    second_content = "second body"
+    first = chapters.create_chapter(source.id, "First", "1", first_content)
+    second = chapters.create_chapter(source.id, "Second", "2", second_content)
+    service = ChapterRevisionService(project)
+    search = SearchRepository(project)
+    for chapter, content in ((first, first_content), (second, second_content)):
+        service.maintain_current_revision(
+            chapter.id,
+            expected_revision=0,
+            expected_source_hash=_source_hash(content),
+        )
+    real_maintain = service.maintain_current_revision
+    calls: list[str] = []
+
+    def fail_first(
+        chapter_id: str,
+        *,
+        expected_revision: int,
+        expected_source_hash: str,
+    ) -> FormalMaintenanceResult:
+        calls.append(chapter_id)
+        if chapter_id == first.id:
+            raise RuntimeError(
+                f"raw relocation failure: {project.layout.root}: {first_content}"
+            )
+        return real_maintain(
+            chapter_id,
+            expected_revision=expected_revision,
+            expected_source_hash=expected_source_hash,
+        )
+
+    monkeypatch.setattr(service, "maintain_current_revision", fail_first)
+
+    result = service.submit_volume_deletion(source.id, target.id)
+
+    assert calls == [first.id, second.id]
+    assert result.revisions[0].maintenance.status == FormalMaintenanceStatus.PENDING
+    assert result.revisions[0].maintenance.failure == FormalMaintenanceFailure(
+        FormalMaintenanceFailureCode.REPAIR_FAILED
+    )
+    assert first_content not in result.revisions[0].maintenance.failure.message
+    assert str(project.layout.root) not in result.revisions[0].maintenance.failure.message
+    assert result.revisions[1].maintenance.status == FormalMaintenanceStatus.REPAIRED
+    assert all(chapters.get_chapter(chapter.id).revision == 1 for chapter in (first, second))
+    with project.database.connect() as connection:
+        assert connection.execute(
+            """
+            SELECT COUNT(*) FROM memory_documents
+            WHERE document_type = 'FORMAL_MANUSCRIPT' AND chapter_id = ?
+              AND status = 'CURRENT'
+            """,
+            (first.id,),
+        ).fetchone()[0] == 0
+
+    monkeypatch.undo()
+    recovery = service.recover_current_revisions(limit=100)
+    assert recovery.repaired_chapters == 1
+    repaired = search.read_formal_manuscript_chunks(
+        first.id,
+        expected_revision=1,
+        expected_source_hash=_source_hash(first_content),
+        chunk_policy_version=DEFAULT_MANUSCRIPT_CHUNK_POLICY.version,
+    )
+    assert repaired
+
+
+def test_submit_volume_deletion_rejects_a_changed_source_set_before_moves(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = ProjectRepository.create(tmp_path / "novel", "Relocation race")
+    target = project.list_volumes()[0]
+    source = project.create_volume("Part Two")
+    chapters = ChapterRepository(project)
+    first = chapters.create_chapter(source.id, "First", "1", "first")
+    service = ChapterRevisionService(project)
+    real_delete = service.chapters.delete_volume
+
+    def add_chapter_then_delete(
+        source_volume_id: str,
+        target_volume_id: str,
+        **kwargs: object,
+    ):  # type: ignore[no-untyped-def]
+        chapters.create_chapter(source.id, "Concurrent", "2", "concurrent")
+        return real_delete(source_volume_id, target_volume_id, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(service.chapters, "delete_volume", add_chapter_then_delete)
+
+    with pytest.raises(RuntimeError, match="chapters changed"):
+        service.submit_volume_deletion(source.id, target.id)
+
+    current = chapters.list_chapters(source.id)
+    assert [chapter.id for chapter in current][0] == first.id
+    assert all(chapter.revision == 0 for chapter in current)
+    assert not chapters.list_chapters(target.id)
+    assert source.id in {volume.id for volume in project.list_volumes()}
+
+
+def test_submit_volume_deletion_removes_an_empty_volume_without_revisions(
+    tmp_path: Path,
+) -> None:
+    project = ProjectRepository.create(tmp_path / "novel", "Empty relocation")
+    target = project.list_volumes()[0]
+    source = project.create_volume("Empty")
+
+    result = ChapterRevisionService(project).submit_volume_deletion(
+        source.id,
+        target.id,
+    )
+
+    assert result == SubmittedRelocation(target.id, ())
+    assert [volume.id for volume in project.list_volumes()] == [target.id]
 
 
 def test_submit_deletion_removes_formal_projection_and_reports_exact_impact(

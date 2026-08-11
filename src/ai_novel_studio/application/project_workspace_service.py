@@ -173,8 +173,8 @@ class ProjectWorkspaceService:
         except StopIteration as error:
             raise KeyError(f"unknown volume: {volume_id}") from error
         target = volumes[index - 1] if index > 0 else volumes[1]
-        ChapterRepository(project).delete_volume(volume_id, target.id)
-        return target.id
+        submitted = self._revisions().submit_volume_deletion(volume_id, target.id)
+        return submitted.target_volume_id
 
     def load_chapter(self, chapter_id: str) -> ChapterWorkspace:
         project = self._project()

@@ -5,7 +5,10 @@ import pytest
 
 from ai_novel_studio.application.chapter_revision_service import ChapterRevisionService
 from ai_novel_studio.domain.embedding import EmbeddingIndexIdentity
-from ai_novel_studio.infrastructure.storage.chapter_repository import ChapterRepository
+from ai_novel_studio.infrastructure.storage.chapter_repository import (
+    ChapterRelocationExpectation,
+    ChapterRepository,
+)
 from ai_novel_studio.infrastructure.storage.memory_dependency_repository import (
     MemoryDependencyRepository,
 )
@@ -488,16 +491,198 @@ def test_delete_volume_reassigns_chapters_and_removes_empty_volume(tmp_path: Pat
     project, chapters = _repositories(tmp_path)
     target = project.list_volumes()[0]
     source = project.create_volume("Part Two")
-    chapter = chapters.create_chapter(source.id, "Opening", "1", "body")
+    first_content = "first line\r\nemoji \U0001f600\r\n"
+    second_content = "second chapter"
+    first = chapters.create_chapter(source.id, "Opening", "1", first_content)
+    second = chapters.create_chapter(source.id, "Follow-up", "2", second_content)
+    search = SearchRepository(project)
+    legacy = search.index_chapter(first.id, first.title, first_content)
+    maintained = ChapterRevisionService(project).maintain_current_revision(
+        first.id,
+        expected_revision=first.revision,
+        expected_source_hash=hashlib.sha256(first_content.encode("utf-8")).hexdigest(),
+    )
+    formal = search.read_formal_manuscript_chunks(
+        first.id,
+        expected_revision=first.revision,
+        expected_source_hash=hashlib.sha256(first_content.encode("utf-8")).hexdigest(),
+        chunk_policy_version=maintained.policy_version,
+    )[0]
+    identity = EmbeddingIndexIdentity("provider", "model", 1)
+    embedding_source = search.embedding_source(formal.id)
+    search.save_embedding(
+        formal.id,
+        identity,
+        (1.0, 0.0),
+        expected_content_hash=embedding_source.content_hash,
+    )
+    original_bytes = {
+        chapter.id: (project.layout.root / chapter.content_path).read_bytes()
+        for chapter in (first, second)
+    }
 
-    chapters.delete_volume(source.id, target.id)
+    relocated = chapters.delete_volume(source.id, target.id)
 
     assert [volume.id for volume in project.list_volumes()] == [target.id]
-    moved = chapters.list_chapters(target.id)[0]
-    assert moved.id == chapter.id
-    assert moved.volume_id == target.id
-    assert chapters.read_content(moved.id) == "body"
-    assert f"volume_{target.id}" in moved.content_path
+    assert [chapter.id for chapter in relocated] == [first.id, second.id]
+    for original, moved in zip((first, second), relocated, strict=True):
+        assert moved.volume_id == target.id
+        assert moved.revision == original.revision + 1
+        assert moved.memory_status == "stale"
+        assert f"volume_{target.id}" in moved.content_path
+        assert (project.layout.root / moved.content_path).read_bytes() == original_bytes[moved.id]
+        version = chapters.list_versions(moved.id)
+        assert len(version) == 1
+        assert version[0].revision == original.revision
+        assert version[0].source == "metadata_change"
+        assert version[0].reason == "chapter relocated by volume deletion"
+        assert (
+            project.layout.root / version[0].content_snapshot_path
+        ).read_bytes() == original_bytes[moved.id]
+    with project.database.connect() as connection:
+        formal_statuses = tuple(
+            connection.execute(
+                """
+                SELECT d.status, dep.status, e.status
+                FROM memory_documents d
+                JOIN memory_dependencies dep
+                  ON dep.memory_type = 'SEARCH' AND dep.memory_id = d.id
+                JOIN memory_embeddings e ON e.document_id = d.id
+                WHERE d.id = ?
+                """,
+                (formal.id,),
+            ).fetchone()
+        )
+    assert formal_statuses == ("STALE", "STALE", "STALE")
+    assert search.get(legacy.id).status.value == "STALE"
+
+
+def test_delete_volume_rolls_back_all_chapters_when_later_invalidation_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project, chapters = _repositories(tmp_path)
+    target = project.list_volumes()[0]
+    source = project.create_volume("Part Two")
+    first = chapters.create_chapter(source.id, "Opening", "1", "first")
+    second = chapters.create_chapter(source.id, "Follow-up", "2", "second")
+    search = SearchRepository(project)
+    identity = EmbeddingIndexIdentity("provider", "model", 1)
+    formal_ids: list[str] = []
+    for chapter, content in ((first, "first"), (second, "second")):
+        maintained = ChapterRevisionService(project).maintain_current_revision(
+            chapter.id,
+            expected_revision=chapter.revision,
+            expected_source_hash=hashlib.sha256(content.encode("utf-8")).hexdigest(),
+        )
+        formal = search.read_formal_manuscript_chunks(
+            chapter.id,
+            expected_revision=chapter.revision,
+            expected_source_hash=hashlib.sha256(content.encode("utf-8")).hexdigest(),
+            chunk_policy_version=maintained.policy_version,
+        )[0]
+        formal_ids.append(formal.id)
+        embedding_source = search.embedding_source(formal.id)
+        search.save_embedding(
+            formal.id,
+            identity,
+            (1.0, 0.0),
+            expected_content_hash=embedding_source.content_hash,
+        )
+    original_paths = {
+        chapter.id: project.layout.root / chapter.content_path
+        for chapter in (first, second)
+    }
+    real_invalidate = ViewAssertionRepository.invalidate_source_revision_in_connection
+    calls = 0
+
+    def fail_second(*args: object, **kwargs: object):  # type: ignore[no-untyped-def]
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise RuntimeError("injected relocation invalidation failure")
+        return real_invalidate(*args, **kwargs)
+
+    monkeypatch.setattr(
+        ViewAssertionRepository,
+        "invalidate_source_revision_in_connection",
+        fail_second,
+    )
+
+    with pytest.raises(RuntimeError, match="injected relocation invalidation failure"):
+        chapters.delete_volume(source.id, target.id)
+
+    assert [volume.id for volume in project.list_volumes()] == [target.id, source.id]
+    for original in (first, second):
+        assert chapters.get_chapter(original.id) == original
+        assert original_paths[original.id].read_text(encoding="utf-8") in {"first", "second"}
+        assert chapters.list_versions(original.id) == []
+    with project.database.connect() as connection:
+        statuses = connection.execute(
+            """
+            SELECT d.status, dep.status, e.status
+            FROM memory_documents d
+            JOIN memory_dependencies dep
+              ON dep.memory_type = 'SEARCH' AND dep.memory_id = d.id
+            JOIN memory_embeddings e ON e.document_id = d.id
+            WHERE d.id IN (?, ?)
+            ORDER BY d.id
+            """,
+            tuple(formal_ids),
+        ).fetchall()
+    assert [tuple(row) for row in statuses] == [
+        ("CURRENT", "CURRENT", "CURRENT"),
+        ("CURRENT", "CURRENT", "CURRENT"),
+    ]
+    target_directory = project.layout.manuscript / f"volume_{target.id}"
+    assert not any(target_directory.glob(f"chapter_{first.id}.md"))
+    assert not any(target_directory.glob(f"chapter_{second.id}.md"))
+
+
+def test_delete_volume_rejects_deleted_source_chapters_before_moving(
+    tmp_path: Path,
+) -> None:
+    project, chapters = _repositories(tmp_path)
+    target = project.list_volumes()[0]
+    source = project.create_volume("Part Two")
+    active = chapters.create_chapter(source.id, "Opening", "1", "active")
+    deleted = chapters.create_chapter(source.id, "Deleted", "2", "deleted")
+    chapters.delete_chapter(deleted.id)
+    active_path = project.layout.root / active.content_path
+
+    with pytest.raises(RuntimeError, match="deleted chapters"):
+        chapters.delete_volume(source.id, target.id)
+
+    assert chapters.get_chapter(active.id) == active
+    assert active_path.read_text(encoding="utf-8") == "active"
+    assert [volume.id for volume in project.list_volumes()] == [target.id, source.id]
+
+
+def test_delete_volume_rejects_a_stale_expected_source_identity(
+    tmp_path: Path,
+) -> None:
+    project, chapters = _repositories(tmp_path)
+    target = project.list_volumes()[0]
+    source = project.create_volume("Part Two")
+    chapter = chapters.create_chapter(source.id, "Opening", "1", "body")
+    canonical = project.layout.root / chapter.content_path
+
+    with pytest.raises(RuntimeError, match="chapters changed"):
+        chapters.delete_volume(
+            source.id,
+            target.id,
+            expected_sources=(
+                ChapterRelocationExpectation(
+                    chapter.id,
+                    chapter.revision + 1,
+                    hashlib.sha256(b"body").hexdigest(),
+                ),
+            ),
+        )
+
+    assert chapters.get_chapter(chapter.id) == chapter
+    assert canonical.read_text(encoding="utf-8") == "body"
+    assert [volume.id for volume in project.list_volumes()] == [target.id, source.id]
 
 
 def test_volume_cannot_be_deleted_into_itself(tmp_path: Path) -> None:

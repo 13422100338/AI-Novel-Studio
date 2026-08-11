@@ -15,6 +15,7 @@ from ai_novel_studio.core.context.manuscript_chunking import (
 from ai_novel_studio.domain.chapter import Chapter
 from ai_novel_studio.domain.identifiers import validate_id
 from ai_novel_studio.infrastructure.storage.chapter_repository import (
+    ChapterRelocationExpectation,
     ChapterRepository,
     StaleChapterRevisionError,
 )
@@ -246,6 +247,36 @@ class SubmittedTitleRevision:
             or self.revision.impact.operation != ChapterMutationKind.RENAME
         ):
             raise ValueError("submitted title revision is inconsistent")
+
+
+@dataclass(frozen=True, slots=True)
+class SubmittedRelocation:
+    target_volume_id: str
+    revisions: tuple[SubmittedRevision, ...]
+
+    def __post_init__(self) -> None:
+        validate_id(self.target_volume_id)
+        if not isinstance(self.revisions, tuple) or any(
+            not isinstance(revision, SubmittedRevision) for revision in self.revisions
+        ):
+            raise ValueError("submitted relocation revisions are invalid")
+        chapter_ids = tuple(revision.chapter.id for revision in self.revisions)
+        if len(chapter_ids) != len(set(chapter_ids)):
+            raise ValueError("submitted relocation chapters must be unique")
+        for revision in self.revisions:
+            before = revision.impact.before
+            after = revision.impact.after
+            if (
+                revision.impact.operation != ChapterMutationKind.RELOCATE
+                or before is None
+                or revision.chapter.volume_id != self.target_volume_id
+                or before.is_deleted
+                or after.is_deleted
+                or after.revision != before.revision + 1
+                or after.content_hash != before.content_hash
+                or not revision.impact.semantic_memory_invalidated
+            ):
+                raise ValueError("submitted relocation contracts are inconsistent")
 
 
 @dataclass(frozen=True, slots=True)
@@ -536,6 +567,65 @@ class ChapterRevisionService:
                 0,
             )
         return SubmittedDeletion(impact, maintenance)
+
+    def submit_volume_deletion(
+        self,
+        source_volume_id: str,
+        target_volume_id: str,
+    ) -> SubmittedRelocation:
+        validate_id(source_volume_id)
+        validate_id(target_volume_id)
+        if source_volume_id == target_volume_id:
+            raise ValueError("target volume must be different from deleted volume")
+        before_chapters = tuple(self.chapters.list_chapters(source_volume_id))
+        expectations = tuple(
+            ChapterRelocationExpectation(
+                chapter.id,
+                chapter.revision,
+                _source_hash(self.chapters.read_content_exact(chapter.id)),
+            )
+            for chapter in before_chapters
+        )
+        relocated = self.chapters.delete_volume(
+            source_volume_id,
+            target_volume_id,
+            expected_sources=expectations,
+        )
+        submitted: list[SubmittedRevision] = []
+        for chapter, prior in zip(relocated, expectations, strict=True):
+            before = RevisionSourceIdentity(
+                prior.revision,
+                prior.content_hash,
+                is_deleted=False,
+            )
+            after = RevisionSourceIdentity(
+                chapter.revision,
+                prior.content_hash,
+                is_deleted=False,
+            )
+            impact = RevisionImpact(
+                ChapterMutationKind.RELOCATE,
+                chapter.id,
+                before,
+                after,
+                manuscript_committed=True,
+                semantic_memory_invalidated=True,
+            )
+            try:
+                maintenance = self.maintain_current_revision(
+                    chapter.id,
+                    expected_revision=after.revision,
+                    expected_source_hash=after.content_hash,
+                )
+            except Exception:
+                maintenance = self._failed_result(
+                    chapter.id,
+                    after,
+                    FormalMaintenanceStatus.PENDING,
+                    FormalMaintenanceFailureCode.REPAIR_FAILED,
+                )
+            submitted.append(SubmittedRevision(chapter, impact, maintenance))
+        return SubmittedRelocation(target_volume_id, tuple(submitted))
 
     def maintain_current_revision(
         self,
