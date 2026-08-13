@@ -188,7 +188,7 @@ def test_schema_v18_adds_physical_state_columns_and_preserves_v17_rows(
         )
 
     assert version == 18
-    assert LATEST_SCHEMA_VERSION == 19
+    assert LATEST_SCHEMA_VERSION == 20
     assert {"location", "injury_status"} <= columns
     assert tuple(row) == ("Find the truth", "", "")
     assert migration_count == 1

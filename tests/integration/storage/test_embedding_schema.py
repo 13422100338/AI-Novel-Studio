@@ -142,7 +142,7 @@ def test_schema_v19_uses_structured_embedding_identity(tmp_path: Path) -> None:
             ).fetchone()[0]
         )
 
-    assert version == migration_module.LATEST_SCHEMA_VERSION == 19
+    assert version == migration_module.LATEST_SCHEMA_VERSION == 20
     assert columns == {
         "document_id",
         "provider_id",

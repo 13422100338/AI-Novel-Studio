@@ -8,6 +8,7 @@ from ai_novel_studio.infrastructure.storage.schema_migrations_v16 import MIGRATI
 from ai_novel_studio.infrastructure.storage.schema_migrations_v17 import MIGRATIONS_V17
 from ai_novel_studio.infrastructure.storage.schema_migrations_v18 import MIGRATIONS_V18
 from ai_novel_studio.infrastructure.storage.schema_migrations_v19 import MIGRATIONS_V19
+from ai_novel_studio.infrastructure.storage.schema_migrations_v20 import MIGRATIONS_V20
 
 
 def _compose_migrations(
@@ -36,6 +37,7 @@ MIGRATIONS = _compose_migrations(
     MIGRATIONS_V17,
     MIGRATIONS_V18,
     MIGRATIONS_V19,
+    MIGRATIONS_V20,
 )
 LATEST_SCHEMA_VERSION = max(MIGRATIONS)
 
