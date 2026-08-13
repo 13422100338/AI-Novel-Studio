@@ -98,6 +98,40 @@ Occurrence, Participant Link, Subject History, and their schema remain separatel
 This ADR does not authorize those tables or overload existing Character State, Knowledge, Clue,
 View, SearchDocument participant hints, or chapter briefs as shared event truth.
 
+### Occurrence foundation contract
+
+The O1 readiness audit freezes the following conservative first persisted contract:
+
+- Formal Manuscript remains the only content authority. Occurrence and SubjectOccurrenceLink records
+  contain bounded derived metadata and normalized exact source coordinates, never manuscript bodies.
+- Occurrence is not a Subject and must not be represented as `SubjectType.EVENT`. O1 initially links
+  only existing active `CHARACTER` Subjects.
+- Occurrence type codes use the version `occurrence-type-v1` with
+  `ACTION`, `CONVERSATION`, `CONFLICT`, `DISCOVERY`, `DECISION`, `REVELATION`, `TRANSITION`,
+  `RELATIONSHIP_CHANGE`, and `OTHER`. The database stores bounded code and vocabulary version
+  without freezing the vocabulary in a schema `CHECK`; the application rejects unknown model labels
+  or deliberately maps them to `OTHER`.
+- A Subject link may be produced only when a canonical name or confirmed alias resolves to exactly
+  one active existing Character. Missing or ambiguous references remain unresolved candidates.
+  Model output never creates a Subject.
+- Deterministic window-scoped candidate IDs provide exact-replay idempotency only. Semantically
+  similar candidates from overlapping windows or different chapters may coexist as separate REVIEW
+  candidates until an explicit human review or merge decision; they are not automatically merged.
+- Source ranges are normalized one-to-many records. Initial model binding accepts ranges from one
+  SemanticWindow envelope only. A later source revision creates new REVIEW candidates; O2 marks old
+  revision-bound rows stale/source-changed rather than appending to or rewriting a current record.
+- The initial persistence boundary accepts only `MODEL_EXTRACTED` + `REVIEW` candidates. It exposes
+  neither model-driven approval/locking nor a generic manual-authority create path.
+- `role` is bounded REVIEW metadata. `importance` and `confidence` are omitted until their ownership
+  and semantics are separately frozen; neither may later grant authority merely by carrying a score.
+
+The first implementation increment is an additive, empty-data schema/domain foundation only. It
+owns schema version 20 exclusively and introduces Occurrence, normalized Occurrence source ranges,
+SubjectOccurrenceLink, and normalized link source ranges. It performs no semantic-result binding,
+model call, eager backfill, Subject expansion, review workflow, invalidation, Context injection, or
+user-data rewrite. Repository persistence, application binding, and O2 revision invalidation remain
+separate reviewed increments.
+
 ### Narrative order and story time remain separate
 
 Narrative coordinates describe when the reader encounters a source unit. Story time describes when

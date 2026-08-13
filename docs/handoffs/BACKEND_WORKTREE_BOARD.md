@@ -35,8 +35,9 @@
 
 All Wave 1 tasks were dispatched from `3382dd36c2a4aeb4acdab411e9211885b633e678`; their initial business-code baseline remains `e35b50d`.
 
-- Active work authorized by the user: A may perform only the O1 read-only readiness/schema decision
-  audit after I3c; B remains paused after B14; C remains paused after C15.
+- Active implementations authorized by the user: A is active only on O1a-S schema v20 and immutable
+  Occurrence/SubjectOccurrenceLink domain foundation; B remains paused after B14; C remains paused
+  after C15.
 - Completed read-only audit: `Gate S0` across A/B/C. Its reports froze the dependency direction
   `R1 -> R2 -> R3 -> R4`, require R1 and O1 schema ownership to be serialized, require O2 to
   consume R2 revision impact, and require H1 to reuse the R3 evidence facade.
@@ -105,19 +106,20 @@ All Wave 1 tasks were dispatched from `3382dd36c2a4aeb4acdab411e9211885b633e678`
   - `shared-semantic-import` increment I3b (single-window untrusted JSON/model adapter into validated shared semantic results), merged as `670b56a`.
   - `shared-semantic-import` increment I3c (ephemeral canonical chapter/window orchestration), merged as `17e8e6f`.
   - `view-operations-ui` increment C15 (fail-closed Style workspace load feedback with stale-state clearing), merged as `5f848a3`.
-- Active schema owner: none.
+- Active schema owner: `shared-semantic-occurrence-o1a-s`, exclusively assigned schema v20.
 
 | Task | Model / reasoning | Thread | Worktree | Assigned branch | HEAD state | Status |
 | --- | --- | --- | --- | --- | --- | --- |
 
-| `manifest-eligibility-v2` | `gpt-5.6-sol` / `high` | `019ff954-98c5-7970-93a6-2a8f4543729a` | `<worktree-93d7>` | `codex/shared-semantic-occurrence-o1-readiness` | branch | O1 read-only readiness/schema decision audit authorized; no implementation |
+| `manifest-eligibility-v2` | `gpt-5.6-sol` / `xhigh` | `019ff954-98c5-7970-93a6-2a8f4543729a` | `<worktree-93d7>` | `codex/shared-semantic-occurrence-o1a-s` | branch | O1a-S schema v20 and immutable domain foundation authorized |
 | `generation-profile-audit-policy` | `gpt-5.6-terra` / `medium` | `019f87e8-696e-7f11-bcfe-1552f51cabc3` | `<worktree-4df4>` | `codex/generation-profile-audit-policy-b5` | branch | B1-B7 merged; B7 is `663f932`; lane paused pending explicit instruction |
 | `view-operations-ui` | `gpt-5.6-luna` / `max` | `019f87e8-7a77-7902-b3d1-a38f32240136` | `<worktree-8802>` | `codex/view-operations-ui-c15` | branch | C15 merged as `5f848a3`; lane paused pending explicit instruction |
 
-Current dispatch override: A is active only on the O1 read-only readiness/schema decision audit; B is
-paused after B14; C is paused after C15. Restore, manual workspace creation, the remaining R2c
-lifecycle paths, R3b-R3c, I3d, O1 implementation/schema/migration, and every other later increment
-remain separately unauthorized.
+Current dispatch override: A is active only on O1a-S; B is paused after B14; C is paused after C15.
+O1a-S owns schema v20 exclusively and may add only the additive empty-data schema plus immutable
+Occurrence/SubjectOccurrenceLink domain contract and direct schema/domain tests. O1 repository
+persistence, I3 binding, O2 invalidation, restore, manual workspace creation, the remaining R2c
+lifecycle paths, R3b-R3c, I3d, and every other later increment remain separately unauthorized.
 Product decision A is approved: title rename and chapter relocation advance Chapter.revision and
 create an unchanged-content ChapterVersion snapshot. R2c-L4 freezes relocation snapshots to source
 `metadata_change` and reason `chapter relocated by volume deletion`; only delete-volume relocation is
@@ -162,6 +164,17 @@ orchestration with exact pre/post source validation, all-or-nothing per-chapter 
 sanitized ordinary-analysis failures, and cooperative cancellation between windows. It performs no
 Subject resolution/creation, persistence, runtime composition, schema, evidence retrieval,
 Context/Manifest, Agent, or UI work.
+
+O1 decisions D1-D7 are frozen conservatively. O1 uses versioned `occurrence-type-v1` application
+codes (`ACTION`, `CONVERSATION`, `CONFLICT`, `DISCOVERY`, `DECISION`, `REVELATION`, `TRANSITION`,
+`RELATIONSHIP_CHANGE`, `OTHER`) without a closed database vocabulary check. Occurrence is never a
+Subject; O1 links only uniquely resolved active existing CHARACTER Subjects and never auto-creates
+one. Exact candidate replay is idempotent, while overlapping-window or cross-chapter semantic
+duplicates may coexist as separate REVIEW candidates pending explicit human merge. Normalized
+one-to-many ranges retain exact source identity; later revisions create new REVIEW candidates and
+O2 invalidates old rows. Initial persistence accepts only MODEL_EXTRACTED/REVIEW candidates, stores
+bounded role metadata, and omits importance/confidence. O1a-S alone is authorized to establish this
+empty schema/domain foundation; repository writes, binding, review/merge, and O2 remain separate.
 
 Product decision: Manual Pins are immutable materialized snapshots. They never automatically re-resolve or refresh from their source; authors update them only by removing and re-pinning. Do not add a live-pointer, automatic stale gate, or refresh behavior without a new explicit decision.
 
