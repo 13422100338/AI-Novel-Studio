@@ -35,7 +35,7 @@
 
 All Wave 1 tasks were dispatched from `3382dd36c2a4aeb4acdab411e9211885b633e678`; their initial business-code baseline remains `e35b50d`.
 
-- Active implementations authorized by the user: none. A is paused after R3a; B remains paused
+- Active implementations authorized by the user: A is active only on I2; B remains paused
   after B14; C remains paused after C15.
 - Completed read-only audit: `Gate S0` across A/B/C. Its reports froze the dependency direction
   `R1 -> R2 -> R3 -> R4`, require R1 and O1 schema ownership to be serialized, require O2 to
@@ -106,11 +106,11 @@ All Wave 1 tasks were dispatched from `3382dd36c2a4aeb4acdab411e9211885b633e678`
 | Task | Model / reasoning | Thread | Worktree | Assigned branch | HEAD state | Status |
 | --- | --- | --- | --- | --- | --- | --- |
 
-| `manifest-eligibility-v2` | `gpt-5.6-sol` / `high` | `019f87e8-6d32-7141-b9b4-4f1142e4db4e` | `C:\Users\钟子诚\.codex\worktrees\93d7\AI-Novel-Studio` | `codex/manifest-eligibility-r3a` | branch | R3a merged as `37728e0`; lane paused before R3b pending explicit instruction |
+| `manifest-eligibility-v2` | `gpt-5.6-sol` / `high` | `019f87e8-6d32-7141-b9b4-4f1142e4db4e` | `C:\Users\钟子诚\.codex\worktrees\93d7\AI-Novel-Studio` | `codex/shared-semantic-import-i2` | branch | I2 deterministic Scene/Semantic Window DTO and exact source-span projection authorized |
 | `generation-profile-audit-policy` | `gpt-5.6-terra` / `medium` | `019f87e8-696e-7f11-bcfe-1552f51cabc3` | `C:\Users\钟子诚\.codex\worktrees\4df4\AI-Novel-Studio` | `codex/generation-profile-audit-policy-b5` | branch | B1-B7 merged; B7 is `663f932`; lane paused pending explicit instruction |
 | `view-operations-ui` | `gpt-5.6-luna` / `max` | `019f87e8-7a77-7902-b3d1-a38f32240136` | `C:\Users\钟子诚\.codex\worktrees\8802\AI-Novel-Studio` | `codex/view-operations-ui-c15` | branch | C15 merged as `5f848a3`; lane paused pending explicit instruction |
 
-Current dispatch override: A is paused after R3a; B is paused after B14; C is paused after C15.
+Current dispatch override: A is active only on I2; B is paused after B14; C is paused after C15.
 Restore, manual workspace creation, the remaining R2c lifecycle paths, R3b-R3c, O1, and every other
 later increment remain separately unauthorized.
 Product decision A is approved: title rename and chapter relocation advance Chapter.revision and
@@ -142,6 +142,14 @@ and model candidate bundles must match its chapter ID, revision, and SHA-256 sou
 derived writes. Scene/semantic-window DTOs, shared semantic result DTOs, Occurrence/Participant Link,
 full-coverage summary, Subject History, profile aggregation, lifecycle telemetry, and chapter-local
 semantic maintenance remain separate later tickets.
+
+I2 is authorized as a pure, no-schema foundation only: add a dedicated semantic-window module and
+focused unit tests. It must accept exact decoded chapter text plus explicit current source identity
+and canonical narrative sequence, prefer explicit scene separators, then paragraph boundaries, and
+use a bounded overlapping hard-window fallback. Every output is an immutable validated DTO with an
+exact half-open source span, exact source slice, stable zero-based ordinal, and explicit boundary
+kind. Retrieval chunk IDs/policies are not semantic-window identities. I2 must not edit import/model
+services, repositories, schema, Formal storage, Context/Manifest, Occurrence/View/State, Agent, or UI.
 
 Product decision: Manual Pins are immutable materialized snapshots. They never automatically re-resolve or refresh from their source; authors update them only by removing and re-pinning. Do not add a live-pointer, automatic stale gate, or refresh behavior without a new explicit decision.
 
