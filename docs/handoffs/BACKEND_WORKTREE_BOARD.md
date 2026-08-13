@@ -8,7 +8,7 @@
 - Superpowers: disabled for this project workflow.
 - Initial business-code baseline: `e35b50d` (the backend code state before the governance-only dispatch commit).
 - Wave 1 dispatched baseline: `3382dd36c2a4aeb4acdab411e9211885b633e678`.
-- Latest integrated business commit: `57936fa` (R2c-L4 delete-volume relocation revisions, including prior R1a-R2c-L3, C15, S1, P0-1, A1-A4, B1-B14, C1-C14, M1, E1a, E1b-SR1, E1b-SS1, E1b-CR1, E1b-CS1, E1b-CE1, E1b-SM1, SE1-SE3, and ST1 increments).
+- Latest integrated business commit: `670b56a` (I3b validated shared-semantic model adapter, including prior I3a, I2, I0, R1a-R3a, R2c-L4, C15, S1, P0-1, A1-A4, B1-B14, C1-C14, M1, E1a, E1b-SR1, E1b-SS1, E1b-CR1, E1b-CS1, E1b-CE1, E1b-SM1, SE1-SE3, and ST1 increments).
 - Planning sources:
   - `docs/handoffs/2026-07-22-backend-refactor-handoff.md`
   - `docs/handoffs/2026-08-09-backend-refactor-supplemental-upgrade.md`
@@ -102,17 +102,18 @@ All Wave 1 tasks were dispatched from `3382dd36c2a4aeb4acdab411e9211885b633e678`
   - `shared-semantic-import` increment I0 (exact-source guard for manuscript-centered import memory), merged as `fb1c045`.
   - `shared-semantic-import` increment I2 (deterministic Scene/Semantic Window DTO and exact source spans), merged as `e465400`.
   - `shared-semantic-import` increment I3a (pure validated Shared Semantic Result DTO/validator), merged as `948d25f`.
+  - `shared-semantic-import` increment I3b (single-window untrusted JSON/model adapter into validated shared semantic results), merged as `670b56a`.
   - `view-operations-ui` increment C15 (fail-closed Style workspace load feedback with stale-state clearing), merged as `5f848a3`.
 - Active schema owner: none.
 
 | Task | Model / reasoning | Thread | Worktree | Assigned branch | HEAD state | Status |
 | --- | --- | --- | --- | --- | --- | --- |
 
-| `manifest-eligibility-v2` | `gpt-5.6-sol` / `high` | `019ff954-98c5-7970-93a6-2a8f4543729a` | `<worktree-93d7>` | `codex/shared-semantic-import-i3b` | branch | I3b single-window untrusted JSON/model adapter authorized |
+| `manifest-eligibility-v2` | `gpt-5.6-sol` / `high` | `019ff954-98c5-7970-93a6-2a8f4543729a` | `<worktree-93d7>` | `codex/shared-semantic-import-i3c` | branch | I3c ephemeral canonical chapter/window orchestration authorized |
 | `generation-profile-audit-policy` | `gpt-5.6-terra` / `medium` | `019f87e8-696e-7f11-bcfe-1552f51cabc3` | `<worktree-4df4>` | `codex/generation-profile-audit-policy-b5` | branch | B1-B7 merged; B7 is `663f932`; lane paused pending explicit instruction |
 | `view-operations-ui` | `gpt-5.6-luna` / `max` | `019f87e8-7a77-7902-b3d1-a38f32240136` | `<worktree-8802>` | `codex/view-operations-ui-c15` | branch | C15 merged as `5f848a3`; lane paused pending explicit instruction |
 
-Current dispatch override: A is active only on I3b; B is paused after B14; C is paused after C15.
+Current dispatch override: A is active only on I3c; B is paused after B14; C is paused after C15.
 Restore, manual workspace creation, the remaining R2c lifecycle paths, R3b-R3c, O1, and every other
 later increment remain separately unauthorized.
 Product decision A is approved: title rename and chapter relocation advance Chapter.revision and
@@ -146,21 +147,22 @@ half-open source spans, explicit scene/paragraph/hard boundaries, and bounded ov
 reusing Formal retrieval chunk identities. Shared semantic result DTOs, Occurrence/Participant Link,
 full-coverage summary, Subject History, profile aggregation, lifecycle telemetry, and chapter-local
 semantic maintenance remain separate later tickets. I3 and every later increment remain
-unauthorized except the integrated I3a. I3a now provides a pure, no-schema validated envelope bound
+unauthorized except the integrated I3a and I3b plus the active I3c. I3a now provides a pure,
+no-schema validated envelope bound
 to exactly one I2 SemanticWindow, with application-owned source identity/authority/review/resolved
 Subject references, unresolved mention/alias candidates, exact spans, deterministic IDs, strict
 one-way occurrence references, XOR identity routes, and bounded candidate/text amplification. I3b
-JSON/model adaptation, Subject resolution, persistence, runtime orchestration, evidence retrieval,
-and prompt work remain separately unauthorized except I3b. I3b may add only a single-window
-application adapter and focused unit tests: it reuses `MEMORY_EXTRACTION` and `LLMContractRunner`,
-strictly rejects undeclared JSON fields, maps only model-owned local text/spans/ordinal references
-into I3a, and keeps candidate IDs, source identity, authority/review, and resolved Subject references
-application-owned. I3b performs no Subject resolution/creation, persistence, chapter orchestration,
-runtime composition, schema, evidence retrieval, Context/Manifest, Agent, or UI work.
+is integrated: its single-window application adapter reuses `MEMORY_EXTRACTION` and
+`LLMContractRunner`, strictly rejects undeclared JSON fields, maps only model-owned local
+text/spans/ordinal references into I3a, and keeps candidate IDs, source identity, authority/review,
+and resolved Subject references application-owned. I3c may now add only ephemeral canonical
+chapter/window orchestration with exact pre/post source validation, all-or-nothing per-chapter
+results, and cooperative cancellation between windows. I3c performs no Subject resolution/creation,
+persistence, runtime composition, schema, evidence retrieval, Context/Manifest, Agent, or UI work.
 
 Product decision: Manual Pins are immutable materialized snapshots. They never automatically re-resolve or refresh from their source; authors update them only by removing and re-pinning. Do not add a live-pointer, automatic stale gate, or refresh behavior without a new explicit decision.
 
-E1a, E1b-SR1, E1b-SS1, E1b-CR1, E1b-CS1, E1b-CE1, E1b-SM1, SE1, SE2a, SE2c-W1, SE3, ST1, S1, R1a, R1b, R2a-F, R2b-C, R2c-L1, R2c-L2a, R2c-L2b-I1, R2c-L3, R2c-L4, R3a, I0, I2, I3a, C6a, C6b, C7, C8, C9, C10, C11, C12, C13, C14, C15, B4, B5, B6, B7, B8, B9, B10, B11, B12, B13, B14, and P0-1 are integrated. Every later increment still requires a new user decision.
+E1a, E1b-SR1, E1b-SS1, E1b-CR1, E1b-CS1, E1b-CE1, E1b-SM1, SE1, SE2a, SE2c-W1, SE3, ST1, S1, R1a, R1b, R2a-F, R2b-C, R2c-L1, R2c-L2a, R2c-L2b-I1, R2c-L3, R2c-L4, R3a, I0, I2, I3a, I3b, C6a, C6b, C7, C8, C9, C10, C11, C12, C13, C14, C15, B4, B5, B6, B7, B8, B9, B10, B11, B12, B13, B14, and P0-1 are integrated. Every later increment still requires a new user decision.
 
 ## Later Waves and Dependencies
 
