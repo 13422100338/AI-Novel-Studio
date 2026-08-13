@@ -13,7 +13,7 @@
   - `docs/handoffs/2026-07-22-backend-refactor-handoff.md`
   - `docs/handoffs/2026-08-09-backend-refactor-supplemental-upgrade.md`
   - `docs/architecture/0022-formal-manuscript-evidence-index.md`
-  - `C:\Users\钟子诚\Downloads\AI_Novel_Studio_后端改进方案_Subject_View_Time_Context_Compiler_修订版.md`
+  - `<external-backend-plan>`
 
 ## Worktree Startup Rules
 
@@ -108,9 +108,9 @@ All Wave 1 tasks were dispatched from `3382dd36c2a4aeb4acdab411e9211885b633e678`
 | Task | Model / reasoning | Thread | Worktree | Assigned branch | HEAD state | Status |
 | --- | --- | --- | --- | --- | --- | --- |
 
-| `manifest-eligibility-v2` | `gpt-5.6-sol` / `high` | `019ff954-98c5-7970-93a6-2a8f4543729a` | `C:\Users\钟子诚\.codex\worktrees\93d7\AI-Novel-Studio` | `codex/shared-semantic-import-i3b` | branch | I3b single-window untrusted JSON/model adapter authorized |
-| `generation-profile-audit-policy` | `gpt-5.6-terra` / `medium` | `019f87e8-696e-7f11-bcfe-1552f51cabc3` | `C:\Users\钟子诚\.codex\worktrees\4df4\AI-Novel-Studio` | `codex/generation-profile-audit-policy-b5` | branch | B1-B7 merged; B7 is `663f932`; lane paused pending explicit instruction |
-| `view-operations-ui` | `gpt-5.6-luna` / `max` | `019f87e8-7a77-7902-b3d1-a38f32240136` | `C:\Users\钟子诚\.codex\worktrees\8802\AI-Novel-Studio` | `codex/view-operations-ui-c15` | branch | C15 merged as `5f848a3`; lane paused pending explicit instruction |
+| `manifest-eligibility-v2` | `gpt-5.6-sol` / `high` | `019ff954-98c5-7970-93a6-2a8f4543729a` | `<worktree-93d7>` | `codex/shared-semantic-import-i3b` | branch | I3b single-window untrusted JSON/model adapter authorized |
+| `generation-profile-audit-policy` | `gpt-5.6-terra` / `medium` | `019f87e8-696e-7f11-bcfe-1552f51cabc3` | `<worktree-4df4>` | `codex/generation-profile-audit-policy-b5` | branch | B1-B7 merged; B7 is `663f932`; lane paused pending explicit instruction |
+| `view-operations-ui` | `gpt-5.6-luna` / `max` | `019f87e8-7a77-7902-b3d1-a38f32240136` | `<worktree-8802>` | `codex/view-operations-ui-c15` | branch | C15 merged as `5f848a3`; lane paused pending explicit instruction |
 
 Current dispatch override: A is active only on I3b; B is paused after B14; C is paused after C15.
 Restore, manual workspace creation, the remaining R2c lifecycle paths, R3b-R3c, O1, and every other

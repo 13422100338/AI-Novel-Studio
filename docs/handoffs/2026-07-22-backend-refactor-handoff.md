@@ -8,8 +8,8 @@
 > `docs/handoffs/2026-08-09-backend-refactor-supplemental-upgrade.md`。
 
 > 状态快照：2026-07-22<br>
-> 项目目录：`C:\Users\钟子诚\Desktop\AI-Novel-Studio`<br>
-> 后端方案：`C:\Users\钟子诚\Downloads\AI_Novel_Studio_后端改进方案_Subject_View_Time_Context_Compiler_修订版.md`
+> 项目目录：`<repo-root>`<br>
+> 后端方案：`<external-backend-plan>`
 
 ## 1. 当前 Git 状态
 

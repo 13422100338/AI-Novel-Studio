@@ -198,6 +198,8 @@ def test_read_content_exact_fails_closed_for_unknown_deleted_or_outside_source(
     assert "private manuscript bytes" not in str(captured.value)
     assert str(manuscript_path) not in str(captured.value)
 
+    with manuscript_path.open("w", encoding="utf-8", newline="") as stream:
+        stream.write("正文")
     chapters.delete_chapter(chapter.id)
 
     with pytest.raises(KeyError, match="unknown"):
