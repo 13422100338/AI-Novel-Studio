@@ -8,7 +8,7 @@
 - Superpowers: disabled for this project workflow.
 - Initial business-code baseline: `e35b50d` (the backend code state before the governance-only dispatch commit).
 - Wave 1 dispatched baseline: `3382dd36c2a4aeb4acdab411e9211885b633e678`.
-- Latest integrated business commit: `0111c68` (O1a-S schema v20 and immutable Occurrence/SubjectOccurrenceLink domain foundation, including prior I3c, I3b, I3a, I2, I0, R1a-R3a, R2c-L4, C15, S1, P0-1, A1-A4, B1-B14, C1-C14, M1, E1a, E1b-SR1, E1b-SS1, E1b-CR1, E1b-CS1, E1b-CE1, E1b-SM1, SE1-SE3, and ST1 increments).
+- Latest integrated business commit: `69749ee` (O1b-P1 exact Occurrence REVIEW-candidate persistence transaction, including prior O1a-S, I3c, I3b, I3a, I2, I0, R1a-R3a, R2c-L4, C15, S1, P0-1, A1-A4, B1-B14, C1-C14, M1, E1a, E1b-SR1, E1b-SS1, E1b-CR1, E1b-CS1, E1b-CE1, E1b-SM1, SE1-SE3, and ST1 increments).
 - Planning sources:
   - `docs/handoffs/2026-07-22-backend-refactor-handoff.md`
   - `docs/handoffs/2026-08-09-backend-refactor-supplemental-upgrade.md`
@@ -35,8 +35,8 @@
 
 All Wave 1 tasks were dispatched from `3382dd36c2a4aeb4acdab411e9211885b633e678`; their initial business-code baseline remains `e35b50d`.
 
-- Active implementations authorized by the user: A is active only on O1b-P1 exact REVIEW-candidate
-  persistence transaction; B remains paused after B14; C remains paused after C15.
+- Active implementations authorized by the user: none. A is paused after O1b-P1; B remains paused
+  after B14; C remains paused after C15.
 - Completed read-only audit: `Gate S0` across A/B/C. Its reports froze the dependency direction
   `R1 -> R2 -> R3 -> R4`, require R1 and O1 schema ownership to be serialized, require O2 to
   consume R2 revision impact, and require H1 to reuse the R3 evidence facade.
@@ -105,23 +105,21 @@ All Wave 1 tasks were dispatched from `3382dd36c2a4aeb4acdab411e9211885b633e678`
   - `shared-semantic-import` increment I3b (single-window untrusted JSON/model adapter into validated shared semantic results), merged as `670b56a`.
   - `shared-semantic-import` increment I3c (ephemeral canonical chapter/window orchestration), merged as `17e8e6f`.
   - `shared-semantic-import` increment O1a-S (schema v20 and immutable Occurrence/SubjectOccurrenceLink domain foundation), merged as `0111c68`.
+  - `shared-semantic-import` increment O1b-P1 (exact MODEL_EXTRACTED/REVIEW Occurrence candidate persistence transaction), merged as `69749ee`.
   - `view-operations-ui` increment C15 (fail-closed Style workspace load feedback with stale-state clearing), merged as `5f848a3`.
 - Active schema owner: none; schema v20 was integrated by O1a-S and its exclusive ownership is released.
 
 | Task | Model / reasoning | Thread | Worktree | Assigned branch | HEAD state | Status |
 | --- | --- | --- | --- | --- | --- | --- |
 
-| `manifest-eligibility-v2` | `gpt-5.6-sol` / `xhigh` | `019ff954-98c5-7970-93a6-2a8f4543729a` | `<worktree-93d7>` | `codex/shared-semantic-occurrence-o1b-p1` | branch | O1b-P1 exact REVIEW-candidate persistence transaction authorized |
+| `manifest-eligibility-v2` | `gpt-5.6-sol` / `xhigh` | `019ff954-98c5-7970-93a6-2a8f4543729a` | `<worktree-93d7>` | `codex/shared-semantic-occurrence-o1b-p1` | branch | O1b-P1 merged as `69749ee`; lane paused pending explicit instruction |
 | `generation-profile-audit-policy` | `gpt-5.6-terra` / `medium` | `019f87e8-696e-7f11-bcfe-1552f51cabc3` | `<worktree-4df4>` | `codex/generation-profile-audit-policy-b5` | branch | B1-B7 merged; B7 is `663f932`; lane paused pending explicit instruction |
 | `view-operations-ui` | `gpt-5.6-luna` / `max` | `019f87e8-7a77-7902-b3d1-a38f32240136` | `<worktree-8802>` | `codex/view-operations-ui-c15` | branch | C15 merged as `5f848a3`; lane paused pending explicit instruction |
 
-Current dispatch override: A is active only on O1b-P1; B is paused after B14; C is paused after C15.
-O1b-P1 may add one OccurrenceRepository transaction plus direct integration tests. It accepts only
-already-resolved immutable O1a-S records, validates one current exact source envelope, active
-existing CHARACTER Subjects, canonical narrative sequence, REVIEW-only creation, exact replay, and
-body-free dependency rows atomically. O1 read/list/review APIs, Subject/alias resolution, I3 binding,
-O2 invalidation, restore, manual workspace creation, the remaining R2c lifecycle paths, R3b-R3c,
-I3d, and every other later increment remain separately unauthorized.
+Current dispatch override: A is paused after O1b-P1; B is paused after B14; C is paused after C15.
+O1 read/list/review APIs, Subject/alias resolution, I3 binding, O2 invalidation, restore, manual
+workspace creation, the remaining R2c lifecycle paths, R3b-R3c, I3d, and every other later increment
+remain separately unauthorized.
 Product decision A is approved: title rename and chapter relocation advance Chapter.revision and
 create an unchanged-content ChapterVersion snapshot. R2c-L4 freezes relocation snapshots to source
 `metadata_change` and reason `chapter relocated by volume deletion`; only delete-volume relocation is
@@ -177,12 +175,19 @@ one-to-many ranges retain exact source identity; later revisions create new REVI
 O2 invalidates old rows. Initial persistence accepts only MODEL_EXTRACTED/REVIEW candidates, stores
 bounded role metadata, and omits importance/confidence. O1a-S is integrated as the empty additive
 schema/domain foundation; its persisted contract permits the later explicit review lifecycle while
-O1b creation must still accept only initial REVIEW candidates. Repository writes, binding,
-review/merge, and O2 remain separate.
+O1b creation accepts only initial REVIEW candidates. Further read/list/review APIs, application
+binding, review/merge, and O2 remain separate.
+
+O1b-P1 is integrated: its single `BEGIN IMMEDIATE` accepts only already-resolved fresh
+MODEL_EXTRACTED/REVIEW records, revalidates exact current chapter identity and source before and
+after writes, requires active existing CHARACTER Subjects, persists normalized Occurrence/Link
+ranges plus existing dependency-graph rows atomically, and provides corruption-sensitive exact
+replay without updating storage-owned timestamps. It adds no read/list/review API, Subject
+resolution/creation, I3 binding, or invalidation behavior.
 
 Product decision: Manual Pins are immutable materialized snapshots. They never automatically re-resolve or refresh from their source; authors update them only by removing and re-pinning. Do not add a live-pointer, automatic stale gate, or refresh behavior without a new explicit decision.
 
-E1a, E1b-SR1, E1b-SS1, E1b-CR1, E1b-CS1, E1b-CE1, E1b-SM1, SE1, SE2a, SE2c-W1, SE3, ST1, S1, R1a, R1b, R2a-F, R2b-C, R2c-L1, R2c-L2a, R2c-L2b-I1, R2c-L3, R2c-L4, R3a, I0, I2, I3a, I3b, I3c, O1a-S, C6a, C6b, C7, C8, C9, C10, C11, C12, C13, C14, C15, B4, B5, B6, B7, B8, B9, B10, B11, B12, B13, B14, and P0-1 are integrated. Every later increment still requires a new user decision.
+E1a, E1b-SR1, E1b-SS1, E1b-CR1, E1b-CS1, E1b-CE1, E1b-SM1, SE1, SE2a, SE2c-W1, SE3, ST1, S1, R1a, R1b, R2a-F, R2b-C, R2c-L1, R2c-L2a, R2c-L2b-I1, R2c-L3, R2c-L4, R3a, I0, I2, I3a, I3b, I3c, O1a-S, O1b-P1, C6a, C6b, C7, C8, C9, C10, C11, C12, C13, C14, C15, B4, B5, B6, B7, B8, B9, B10, B11, B12, B13, B14, and P0-1 are integrated. Every later increment still requires a new user decision.
 
 CI note: the first full Windows CI attempt for `0111c68` had one isolated UI timing failure in
 `test_standard_generation_can_run_independent_deep_audit` after 1,143 passing tests. The unchanged
