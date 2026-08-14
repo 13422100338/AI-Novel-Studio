@@ -35,8 +35,8 @@
 
 All Wave 1 tasks were dispatched from `3382dd36c2a4aeb4acdab411e9211885b633e678`; their initial business-code baseline remains `e35b50d`.
 
-- Active implementations authorized by the user: none. A is paused after O1a-S; B remains paused
-  after B14; C remains paused after C15.
+- Active implementations authorized by the user: A is active only on O1b-P1 exact REVIEW-candidate
+  persistence transaction; B remains paused after B14; C remains paused after C15.
 - Completed read-only audit: `Gate S0` across A/B/C. Its reports froze the dependency direction
   `R1 -> R2 -> R3 -> R4`, require R1 and O1 schema ownership to be serialized, require O2 to
   consume R2 revision impact, and require H1 to reuse the R3 evidence facade.
@@ -111,14 +111,17 @@ All Wave 1 tasks were dispatched from `3382dd36c2a4aeb4acdab411e9211885b633e678`
 | Task | Model / reasoning | Thread | Worktree | Assigned branch | HEAD state | Status |
 | --- | --- | --- | --- | --- | --- | --- |
 
-| `manifest-eligibility-v2` | `gpt-5.6-sol` / `xhigh` | `019ff954-98c5-7970-93a6-2a8f4543729a` | `<worktree-93d7>` | `codex/shared-semantic-occurrence-o1a-s` | branch | O1a-S merged as `0111c68`; lane paused pending explicit instruction |
+| `manifest-eligibility-v2` | `gpt-5.6-sol` / `xhigh` | `019ff954-98c5-7970-93a6-2a8f4543729a` | `<worktree-93d7>` | `codex/shared-semantic-occurrence-o1b-p1` | branch | O1b-P1 exact REVIEW-candidate persistence transaction authorized |
 | `generation-profile-audit-policy` | `gpt-5.6-terra` / `medium` | `019f87e8-696e-7f11-bcfe-1552f51cabc3` | `<worktree-4df4>` | `codex/generation-profile-audit-policy-b5` | branch | B1-B7 merged; B7 is `663f932`; lane paused pending explicit instruction |
 | `view-operations-ui` | `gpt-5.6-luna` / `max` | `019f87e8-7a77-7902-b3d1-a38f32240136` | `<worktree-8802>` | `codex/view-operations-ui-c15` | branch | C15 merged as `5f848a3`; lane paused pending explicit instruction |
 
-Current dispatch override: A is paused after O1a-S; B is paused after B14; C is paused after C15.
-O1 repository persistence, I3 binding, O2 invalidation, restore, manual workspace creation, the
-remaining R2c lifecycle paths, R3b-R3c, I3d, and every other later increment remain separately
-unauthorized.
+Current dispatch override: A is active only on O1b-P1; B is paused after B14; C is paused after C15.
+O1b-P1 may add one OccurrenceRepository transaction plus direct integration tests. It accepts only
+already-resolved immutable O1a-S records, validates one current exact source envelope, active
+existing CHARACTER Subjects, canonical narrative sequence, REVIEW-only creation, exact replay, and
+body-free dependency rows atomically. O1 read/list/review APIs, Subject/alias resolution, I3 binding,
+O2 invalidation, restore, manual workspace creation, the remaining R2c lifecycle paths, R3b-R3c,
+I3d, and every other later increment remain separately unauthorized.
 Product decision A is approved: title rename and chapter relocation advance Chapter.revision and
 create an unchanged-content ChapterVersion snapshot. R2c-L4 freezes relocation snapshots to source
 `metadata_change` and reason `chapter relocated by volume deletion`; only delete-volume relocation is
