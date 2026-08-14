@@ -39,8 +39,8 @@
 All Wave 1 tasks were dispatched from `3382dd36c2a4aeb4acdab411e9211885b633e678`; their initial business-code baseline remains `e35b50d`.
 
 - Active implementations authorized by the user: none. A is paused after O1b-P1; B remains paused
-  after B14; C remains paused after C15. One read-only Agent Harness H0 public-contract audit is
-  authorized below; it grants no implementation or schema authority.
+  after B14; C remains paused after C15. The read-only Agent Harness H0 public-contract audit is
+  complete and accepted below; it grants no implementation or schema authority.
 - Completed read-only audit: `Gate S0` across A/B/C. Its reports froze the dependency direction
   `R1 -> R2 -> R3 -> R4`, require R1 and O1 schema ownership to be serialized, require O2 to
   consume R2 revision impact, and require H1 to reuse the R3 evidence facade.
@@ -120,18 +120,19 @@ All Wave 1 tasks were dispatched from `3382dd36c2a4aeb4acdab411e9211885b633e678`
 | `generation-profile-audit-policy` | `gpt-5.6-terra` / `medium` | `019f87e8-696e-7f11-bcfe-1552f51cabc3` | `<worktree-4df4>` | `codex/generation-profile-audit-policy-b5` | branch | B1-B7 merged; B7 is `663f932`; lane paused pending explicit instruction |
 | `view-operations-ui` | `gpt-5.6-luna` / `max` | `019f87e8-7a77-7902-b3d1-a38f32240136` | `<worktree-8802>` | `codex/view-operations-ui-c15` | branch | C15 merged as `5f848a3`; lane paused pending explicit instruction |
 
-Agent Harness H0 contract audit is assigned read-only to task
-`019ffe41-6aa6-7d31-a17b-373d15465be9` against backend baseline `a2e1b639` and Harness
-branch `agent/ai-agent-v1` at `354aabe`. It must map every requested facade and shared DTO to the
-existing backend authority, classify each item as `REUSE`, `ADAPT`, `MISSING`, or `CONFLICT`,
-identify canonical DTO ownership and stable error boundaries, compare ProjectConstitution with
-ProjectGuidance, compare the requested Subject merge with the existing merge/reverse transaction,
-and submit a DesignChangeProposal plus a smallest-ticket dependency sequence. It may read the main
-and Harness Git objects but must not edit files, create a migration, reserve a schema number, stage,
-commit, merge, push, or implement any facade. Schema v21 remains owned by the unintegrated Harness
-branch; a backend schema version may be assigned only after the integration order is separately
-approved. The likely first implementation candidate is an R3b Formal-current evidence query facade,
-but it remains unauthorized until H0 review.
+Agent Harness H0 contract audit was completed read-only by task
+`019ffe41-6aa6-7d31-a17b-373d15465be9` against backend baseline `b954385` and Harness
+branch `agent/ai-agent-v1` at `354aabe`. The accepted freeze rejects a single shared DTO file and a
+single 15-facade implementation ticket. Each later capability owns only its bounded public DTOs and
+must reuse or adapt the existing Context Manifest, Formal Evidence, RevisionImpact, Audit,
+ProjectGuidance, Subject, Character Identity, Style, and Context Pin authorities rather than create
+near-duplicates. ProjectConstitution, Subject merge evolution, ChangeSet/approval, state-extraction
+model ownership, Plan semantics, and public Context compilation require separate design decisions
+before implementation. Schema v21 remains owned by the unintegrated Harness branch; H0 assigns no
+backend schema version, and a later v22 may be assigned only after Harness integration ordering is
+approved. The recommended first implementation candidate is R3b-Q1, a bounded Formal-current
+evidence query facade over existing HistoryRetriever/Subject resolution and R3a exact hydration.
+R3b-Q1 and every later facade remain unauthorized pending a new user decision.
 
 Current dispatch override: A is paused after O1b-P1; B is paused after B14; C is paused after C15.
 O1 read/list/review APIs, Subject/alias resolution, I3 binding, O2 invalidation, restore, manual
