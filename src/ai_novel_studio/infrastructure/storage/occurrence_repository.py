@@ -14,11 +14,26 @@ from ai_novel_studio.domain.occurrence import (
     SubjectOccurrenceLink,
     SubjectOccurrenceLinkSourceRange,
 )
+from ai_novel_studio.infrastructure.storage.occurrence_read_projection import (
+    _LINK_COLUMNS,
+    _OCCURRENCE_COLUMNS,
+    _OccurrenceReadIntegrityError,
+)
+from ai_novel_studio.infrastructure.storage.occurrence_read_projection import (
+    _hydrate_records as _hydrate_read_records,
+)
+from ai_novel_studio.infrastructure.storage.occurrence_read_projection import (
+    _select_link_rows_by_ids as _select_link_read_rows,
+)
+from ai_novel_studio.infrastructure.storage.occurrence_read_projection import (
+    _select_occurrence_rows_by_ids as _select_occurrence_read_rows,
+)
 from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
 
 _MAX_OCCURRENCES = 100
 _MAX_LINKS = 500
 _MAX_RECORDS = 600
+_MAX_READ_LIMIT = 500
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 _OCCURRENCE_MEMORY_TYPE = "OCCURRENCE"
 _LINK_MEMORY_TYPE = "SUBJECT_OCCURRENCE_LINK"
@@ -32,6 +47,20 @@ class OccurrenceRepositoryError(RuntimeError):
 class _CurrentSource:
     content: str
     narrative_sequence: int
+
+
+@dataclass(frozen=True, slots=True)
+class SubjectOccurrenceRecord:
+    occurrence: Occurrence
+    link: SubjectOccurrenceLink
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.occurrence, Occurrence)
+            or not isinstance(self.link, SubjectOccurrenceLink)
+            or self.link.occurrence_id != self.occurrence.id
+        ):
+            raise ValueError("subject occurrence record is invalid")
 
 
 class OccurrenceRepository:
@@ -96,6 +125,213 @@ class OccurrenceRepository:
         except (OSError, UnicodeError, sqlite3.Error):
             raise OccurrenceRepositoryError(
                 "occurrence candidate batch could not be saved"
+            ) from None
+
+    def get_occurrence(self, occurrence_id: str) -> Occurrence:
+        normalized_id = _occurrence_record_id(occurrence_id)
+        try:
+            with self.project.database.connect() as connection:
+                connection.execute("BEGIN")
+                rows = connection.execute(
+                    f"SELECT {_OCCURRENCE_COLUMNS} FROM occurrences WHERE id = ?",
+                    (normalized_id,),
+                ).fetchall()
+                if not rows:
+                    raise KeyError("unknown occurrence")
+                occurrences, _links = _hydrate_read_records(connection, rows, ())
+                try:
+                    return occurrences[normalized_id]
+                except KeyError:
+                    raise OccurrenceRepositoryError(
+                        "stored occurrence is invalid"
+                    ) from None
+        except _OccurrenceReadIntegrityError as error:
+            raise OccurrenceRepositoryError(str(error)) from None
+        except (KeyError, OccurrenceRepositoryError):
+            raise
+        except sqlite3.Error:
+            raise OccurrenceRepositoryError(
+                "occurrence records could not be read"
+            ) from None
+
+    def list_links_for_occurrence(
+        self,
+        occurrence_id: str,
+        *,
+        review_statuses: tuple[ReviewStatus, ...] | None = None,
+        include_stale: bool = True,
+        include_source_changed: bool = True,
+        limit: int = 100,
+    ) -> tuple[SubjectOccurrenceLink, ...]:
+        normalized_id = _occurrence_record_id(occurrence_id)
+        normalized_statuses = _review_statuses(review_statuses)
+        _include_flag(include_stale)
+        _include_flag(include_source_changed)
+        normalized_limit = _read_limit(limit)
+        clauses = ["occurrence_id = ?"]
+        parameters: list[object] = [normalized_id]
+        _append_lifecycle_filters(
+            clauses,
+            parameters,
+            alias="subject_occurrence_links",
+            review_statuses=normalized_statuses,
+            include_stale=include_stale,
+            include_source_changed=include_source_changed,
+        )
+        try:
+            with self.project.database.connect() as connection:
+                connection.execute("BEGIN")
+                occurrence_rows = connection.execute(
+                    f"SELECT {_OCCURRENCE_COLUMNS} FROM occurrences WHERE id = ?",
+                    (normalized_id,),
+                ).fetchall()
+                if not occurrence_rows:
+                    raise KeyError("unknown occurrence")
+                link_rows = connection.execute(
+                    f"""
+                    SELECT {_LINK_COLUMNS}
+                    FROM subject_occurrence_links
+                    WHERE {" AND ".join(clauses)}
+                    ORDER BY candidate_source_id, id
+                    LIMIT ?
+                    """,
+                    (*parameters, normalized_limit),
+                ).fetchall()
+                _occurrences, links = _hydrate_read_records(
+                    connection,
+                    occurrence_rows,
+                    link_rows,
+                )
+                try:
+                    return tuple(links[str(row["id"])] for row in link_rows)
+                except KeyError:
+                    raise OccurrenceRepositoryError(
+                        "stored occurrence link is invalid"
+                    ) from None
+        except _OccurrenceReadIntegrityError as error:
+            raise OccurrenceRepositoryError(str(error)) from None
+        except (KeyError, OccurrenceRepositoryError):
+            raise
+        except sqlite3.Error:
+            raise OccurrenceRepositoryError(
+                "occurrence records could not be read"
+            ) from None
+
+    def list_subject_occurrences(
+        self,
+        subject_id: str,
+        *,
+        occurrence_review_statuses: tuple[ReviewStatus, ...] | None = None,
+        link_review_statuses: tuple[ReviewStatus, ...] | None = None,
+        include_stale: bool = True,
+        include_source_changed: bool = True,
+        limit: int = 100,
+    ) -> tuple[SubjectOccurrenceRecord, ...]:
+        normalized_subject_id = _subject_record_id(subject_id)
+        occurrence_statuses = _review_statuses(occurrence_review_statuses)
+        link_statuses = _review_statuses(link_review_statuses)
+        _include_flag(include_stale)
+        _include_flag(include_source_changed)
+        normalized_limit = _read_limit(limit)
+        clauses = ["link.subject_id = ?"]
+        parameters: list[object] = [normalized_subject_id]
+        _append_lifecycle_filters(
+            clauses,
+            parameters,
+            alias="occurrence",
+            review_statuses=occurrence_statuses,
+            include_stale=include_stale,
+            include_source_changed=include_source_changed,
+        )
+        _append_lifecycle_filters(
+            clauses,
+            parameters,
+            alias="link",
+            review_statuses=link_statuses,
+            include_stale=include_stale,
+            include_source_changed=include_source_changed,
+        )
+        try:
+            with self.project.database.connect() as connection:
+                connection.execute("BEGIN")
+                subject = connection.execute(
+                    """
+                    SELECT subject.type,
+                           EXISTS (
+                               SELECT 1
+                               FROM subject_occurrence_links dangling_link
+                               LEFT JOIN occurrences dangling_occurrence
+                                 ON dangling_occurrence.id = dangling_link.occurrence_id
+                               WHERE dangling_link.subject_id = subject.id
+                                 AND dangling_occurrence.id IS NULL
+                           ) AS has_dangling_occurrence
+                    FROM subjects subject
+                    WHERE subject.id = ?
+                    """,
+                    (normalized_subject_id,),
+                ).fetchone()
+                if subject is None:
+                    raise KeyError("unknown subject")
+                if (
+                    not isinstance(subject["type"], str)
+                    or subject["type"] != "CHARACTER"
+                ):
+                    raise OccurrenceRepositoryError(
+                        "stored occurrence link is invalid"
+                    )
+                if bool(subject["has_dangling_occurrence"]):
+                    raise OccurrenceRepositoryError(
+                        "stored occurrence link is invalid"
+                    )
+                pair_rows = connection.execute(
+                    f"""
+                    SELECT occurrence.id AS occurrence_id, link.id AS link_id
+                    FROM subject_occurrence_links link
+                    JOIN occurrences occurrence ON occurrence.id = link.occurrence_id
+                    WHERE {" AND ".join(clauses)}
+                    ORDER BY occurrence.narrative_sequence,
+                             occurrence.candidate_source_id,
+                             occurrence.id,
+                             link.candidate_source_id,
+                             link.id
+                    LIMIT ?
+                    """,
+                    (*parameters, normalized_limit),
+                ).fetchall()
+                if not pair_rows:
+                    return ()
+                occurrence_ids = tuple(
+                    dict.fromkeys(str(row["occurrence_id"]) for row in pair_rows)
+                )
+                link_ids = tuple(str(row["link_id"]) for row in pair_rows)
+                occurrence_rows = _select_occurrence_read_rows(
+                    connection, occurrence_ids
+                )
+                link_rows = _select_link_read_rows(connection, link_ids)
+                occurrences, links = _hydrate_read_records(
+                    connection,
+                    occurrence_rows,
+                    link_rows,
+                )
+                try:
+                    return tuple(
+                        SubjectOccurrenceRecord(
+                            occurrences[str(row["occurrence_id"])],
+                            links[str(row["link_id"])],
+                        )
+                        for row in pair_rows
+                    )
+                except (KeyError, ValueError):
+                    raise OccurrenceRepositoryError(
+                        "occurrence records could not be read"
+                    ) from None
+        except _OccurrenceReadIntegrityError as error:
+            raise OccurrenceRepositoryError(str(error)) from None
+        except (KeyError, OccurrenceRepositoryError):
+            raise
+        except sqlite3.Error:
+            raise OccurrenceRepositoryError(
+                "occurrence records could not be read"
             ) from None
 
     def _current_source(
@@ -474,6 +710,73 @@ class OccurrenceRepository:
             )
 
 
+def _occurrence_record_id(value: object) -> str:
+    if not isinstance(value, str):
+        raise ValueError("occurrence record ID is invalid")
+    try:
+        return validate_id(value)
+    except ValueError:
+        raise ValueError("occurrence record ID is invalid") from None
+
+
+def _subject_record_id(value: object) -> str:
+    if not isinstance(value, str):
+        raise ValueError("occurrence subject ID is invalid")
+    try:
+        return validate_id(value)
+    except ValueError:
+        raise ValueError("occurrence subject ID is invalid") from None
+
+
+def _review_statuses(
+    value: object,
+) -> tuple[ReviewStatus, ...] | None:
+    if value is None:
+        return None
+    if (
+        not isinstance(value, tuple)
+        or not value
+        or any(not isinstance(item, ReviewStatus) for item in value)
+        or len(set(value)) != len(value)
+    ):
+        raise ValueError("occurrence review status filter is invalid")
+    return value
+
+
+def _include_flag(value: object) -> None:
+    if not isinstance(value, bool):
+        raise ValueError("occurrence lifecycle filter is invalid")
+
+
+def _read_limit(value: object) -> int:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or not 1 <= value <= _MAX_READ_LIMIT
+    ):
+        raise ValueError("occurrence read limit is invalid")
+    return value
+
+
+def _append_lifecycle_filters(
+    clauses: list[str],
+    parameters: list[object],
+    *,
+    alias: str,
+    review_statuses: tuple[ReviewStatus, ...] | None,
+    include_stale: bool,
+    include_source_changed: bool,
+) -> None:
+    if review_statuses is not None:
+        placeholders = ", ".join("?" for _value in review_statuses)
+        clauses.append(f"{alias}.review_status IN ({placeholders})")
+        parameters.extend(item.value for item in review_statuses)
+    if not include_stale:
+        clauses.append(f"{alias}.stale = 0")
+    if not include_source_changed:
+        clauses.append(f"{alias}.source_changed = 0")
+
+
 def _candidate_batch(
     occurrences: object,
     links: object,
@@ -688,4 +991,5 @@ def _hash(content: str) -> str:
 __all__ = [
     "OccurrenceRepository",
     "OccurrenceRepositoryError",
+    "SubjectOccurrenceRecord",
 ]
