@@ -80,11 +80,19 @@ class AuditRepository:
             )
         return self.get_run(run_id)
 
-    def get_run(self, run_id: str) -> AuditRun:
-        with self.project.database.connect() as connection:
-            row = connection.execute(
-                "SELECT * FROM audit_runs WHERE id = ?", (run_id,)
-            ).fetchone()
+    def get_run(
+        self,
+        run_id: str,
+        *,
+        connection: sqlite3.Connection | None = None,
+    ) -> AuditRun:
+        if connection is None:
+            with self.project.database.connect() as owned:
+                return self.get_run(run_id, connection=owned)
+        row = connection.execute(
+            "SELECT * FROM audit_runs WHERE id = ?",
+            (run_id,),
+        ).fetchone()
         if row is None:
             raise KeyError(f"unknown audit run: {run_id}")
         return self._run_from_row(row)
@@ -158,11 +166,18 @@ class AuditRepository:
             )
         return self.get_finding(finding_id)
 
-    def get_finding(self, finding_id: str) -> AuditFinding:
-        with self.project.database.connect() as connection:
-            row = connection.execute(
-                "SELECT * FROM audit_findings WHERE id = ?", (finding_id,)
-            ).fetchone()
+    def get_finding(
+        self,
+        finding_id: str,
+        *,
+        connection: sqlite3.Connection | None = None,
+    ) -> AuditFinding:
+        if connection is None:
+            with self.project.database.connect() as owned:
+                return self.get_finding(finding_id, connection=owned)
+        row = connection.execute(
+            "SELECT * FROM audit_findings WHERE id = ?", (finding_id,)
+        ).fetchone()
         if row is None:
             raise KeyError(f"unknown audit finding: {finding_id}")
         return self._finding_from_row(row)
@@ -176,15 +191,27 @@ class AuditRepository:
         return tuple(self._finding_from_row(row) for row in rows)
 
     def update_finding_status(
-        self, finding_id: str, status: AuditFindingStatus
+        self,
+        finding_id: str,
+        status: AuditFindingStatus,
+        *,
+        connection: sqlite3.Connection | None = None,
     ) -> AuditFinding:
+        if connection is None:
+            with self.project.database.connect() as owned, owned:
+                return self.update_finding_status(
+                    finding_id,
+                    status,
+                    connection=owned,
+                )
         now = _now().isoformat()
-        with self.project.database.connect() as connection, connection:
-            connection.execute(
-                "UPDATE audit_findings SET status = ?, updated_at = ? WHERE id = ?",
-                (status.value, now, finding_id),
-            )
-        return self.get_finding(finding_id)
+        cursor = connection.execute(
+            "UPDATE audit_findings SET status = ?, updated_at = ? WHERE id = ?",
+            (status.value, now, finding_id),
+        )
+        if cursor.rowcount != 1:
+            raise KeyError(f"unknown audit finding: {finding_id}")
+        return self.get_finding(finding_id, connection=connection)
 
     def add_repair_proposal(
         self,
@@ -228,25 +255,44 @@ class AuditRepository:
             )
         return self.get_repair_proposal(proposal_id)
 
-    def get_repair_proposal(self, proposal_id: str) -> RepairProposal:
-        with self.project.database.connect() as connection:
-            row = connection.execute(
-                "SELECT * FROM repair_proposals WHERE id = ?", (proposal_id,)
-            ).fetchone()
+    def get_repair_proposal(
+        self,
+        proposal_id: str,
+        *,
+        connection: sqlite3.Connection | None = None,
+    ) -> RepairProposal:
+        if connection is None:
+            with self.project.database.connect() as owned:
+                return self.get_repair_proposal(proposal_id, connection=owned)
+        row = connection.execute(
+            "SELECT * FROM repair_proposals WHERE id = ?", (proposal_id,)
+        ).fetchone()
         if row is None:
             raise KeyError(f"unknown repair proposal: {proposal_id}")
         return self._proposal_from_row(row)
 
     def update_repair_status(
-        self, proposal_id: str, status: RepairProposalStatus
+        self,
+        proposal_id: str,
+        status: RepairProposalStatus,
+        *,
+        connection: sqlite3.Connection | None = None,
     ) -> RepairProposal:
+        if connection is None:
+            with self.project.database.connect() as owned, owned:
+                return self.update_repair_status(
+                    proposal_id,
+                    status,
+                    connection=owned,
+                )
         applied_at = _now().isoformat() if status == RepairProposalStatus.APPLIED else None
-        with self.project.database.connect() as connection, connection:
-            connection.execute(
-                "UPDATE repair_proposals SET status = ?, applied_at = ? WHERE id = ?",
-                (status.value, applied_at, proposal_id),
-            )
-        return self.get_repair_proposal(proposal_id)
+        cursor = connection.execute(
+            "UPDATE repair_proposals SET status = ?, applied_at = ? WHERE id = ?",
+            (status.value, applied_at, proposal_id),
+        )
+        if cursor.rowcount != 1:
+            raise KeyError(f"unknown repair proposal: {proposal_id}")
+        return self.get_repair_proposal(proposal_id, connection=connection)
 
     def add_provenance_event(
         self,
@@ -259,38 +305,58 @@ class AuditRepository:
         source_finding_id: str | None,
         source_repair_id: str | None,
         summary: str,
+        connection: sqlite3.Connection | None = None,
     ) -> ProvenanceEvent:
+        if connection is None:
+            with self.project.database.connect() as owned, owned:
+                return self.add_provenance_event(
+                    chapter_id=chapter_id,
+                    chapter_revision_before=chapter_revision_before,
+                    chapter_revision_after=chapter_revision_after,
+                    event_type=event_type,
+                    source_audit_run_id=source_audit_run_id,
+                    source_finding_id=source_finding_id,
+                    source_repair_id=source_repair_id,
+                    summary=summary,
+                    connection=owned,
+                )
         event_id = new_id()
         now = _now().isoformat()
-        with self.project.database.connect() as connection, connection:
-            connection.execute(
-                """
-                INSERT INTO provenance_events(
-                    id, chapter_id, chapter_revision_before, chapter_revision_after,
-                    event_type, source_audit_run_id, source_finding_id, source_repair_id,
-                    summary, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    event_id,
-                    chapter_id,
-                    chapter_revision_before,
-                    chapter_revision_after,
-                    event_type.value,
-                    source_audit_run_id,
-                    source_finding_id,
-                    source_repair_id,
-                    summary,
-                    now,
-                ),
-            )
-        return self.get_provenance_event(event_id)
+        connection.execute(
+            """
+            INSERT INTO provenance_events(
+                id, chapter_id, chapter_revision_before, chapter_revision_after,
+                event_type, source_audit_run_id, source_finding_id, source_repair_id,
+                summary, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                event_id,
+                chapter_id,
+                chapter_revision_before,
+                chapter_revision_after,
+                event_type.value,
+                source_audit_run_id,
+                source_finding_id,
+                source_repair_id,
+                summary,
+                now,
+            ),
+        )
+        return self.get_provenance_event(event_id, connection=connection)
 
-    def get_provenance_event(self, event_id: str) -> ProvenanceEvent:
-        with self.project.database.connect() as connection:
-            row = connection.execute(
-                "SELECT * FROM provenance_events WHERE id = ?", (event_id,)
-            ).fetchone()
+    def get_provenance_event(
+        self,
+        event_id: str,
+        *,
+        connection: sqlite3.Connection | None = None,
+    ) -> ProvenanceEvent:
+        if connection is None:
+            with self.project.database.connect() as owned:
+                return self.get_provenance_event(event_id, connection=owned)
+        row = connection.execute(
+            "SELECT * FROM provenance_events WHERE id = ?", (event_id,)
+        ).fetchone()
         if row is None:
             raise KeyError(f"unknown provenance event: {event_id}")
         return self._event_from_row(row)

@@ -1,0 +1,27 @@
+{
+  "name": "ai-novel-studio-editor",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Restricted novel Markdown editor built on ProseMirror/Tiptap (Phase 1).",
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node scripts/bundle.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@tiptap/core": "^3.29.2",
+    "@tiptap/pm": "^3.29.2",
+    "prosemirror-markdown": "^1.13.5"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.1",
+    "jsdom": "^30.0.1",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  },
+  "allowScripts": {
+    "esbuild@0.28.1": true
+  }
+}

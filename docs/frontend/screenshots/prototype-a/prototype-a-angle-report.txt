@@ -1,0 +1,5 @@
+prototype A · PathRectangle + PathInterpolator angle report
+samples: 401 over one lap
+max angle jump between samples: 8.588 deg
+at progress 0.500
+corners covered by 0.0025 progress steps -> continuous transition

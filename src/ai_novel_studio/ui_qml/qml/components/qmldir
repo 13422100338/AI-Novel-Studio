@@ -1,0 +1,16 @@
+AppButton 1.0 AppButton.qml
+AppComboBox 1.0 AppComboBox.qml
+AppTextField 1.0 AppTextField.qml
+WriterTaskCard 1.0 WriterTaskCard.qml
+AgentCard 1.0 AgentCard.qml
+GlassScrollbar 1.0 GlassScrollbar.qml
+IconButton 1.0 IconButton.qml
+NavigationRail 1.0 NavigationRail.qml
+ContextSidebar 1.0 ContextSidebar.qml
+ScrollbarTemplate 1.0 ScrollbarTemplate.qml
+StatusChip 1.0 StatusChip.qml
+SlidingDrawer 1.0 SlidingDrawer.qml
+SearchField 1.0 SearchField.qml
+EmptyState 1.0 EmptyState.qml
+OverviewPlaceholderPage 1.0 OverviewPlaceholderPage.qml
+NewProjectDialog 1.0 NewProjectDialog.qml

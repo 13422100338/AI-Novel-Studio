@@ -465,7 +465,7 @@ Widgets should not import repository classes directly. UI panels receive plain v
 .\.venv\Scripts\python.exe -m pytest -q -p no:cacheprovider --basetemp C:\CodexPytest\phase8full
 .\.venv\Scripts\python.exe -m ruff check src tests
 .\.venv\Scripts\python.exe -m mypy src/ai_novel_studio
-rg -n "s[k]-proj|s[k]-[A-Za-z0-9]{8,}|C:\\\\Users\\\\" README.md docs src tests pyproject.toml
+rg -n "s[k]-proj|s[k]-[A-Za-z0-9]{8,}|<local-workspace>" README.md docs src tests pyproject.toml
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify_release.ps1
 ```
 

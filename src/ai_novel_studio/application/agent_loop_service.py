@@ -13,6 +13,7 @@ from ai_novel_studio.domain.agent import (
     AgentRunStatus,
     AgentSourceRef,
     AgentToolCallStatus,
+    AgentToolName,
     AgentTurnRole,
 )
 from ai_novel_studio.infrastructure.llm import LLMMessage
@@ -41,6 +42,7 @@ class AgentLoopRequest:
     max_tool_result_chars: int = 4_000
     output_token_limit: int = 2_000
     require_tool_before_final: bool = False
+    required_tool_names: tuple[AgentToolName, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,6 +86,9 @@ class AgentLoopService:
             )
 
         used_tool_calls = 0
+        used_tool_names: set[AgentToolName] = set()
+        executed_call_keys: set[str] = set()
+        last_response_invalid = False
         for _ in range(request.max_iterations):
             self._repository.increment_usage(run.id, used_iterations_delta=1)
             self._repository.update_run_status(run.id, AgentRunStatus.WAITING_FOR_MODEL)
@@ -93,16 +98,42 @@ class AgentLoopService:
                     output_token_limit=request.output_token_limit,
                 )
                 action = self._required_string(response, "action")
-            except (TypeError, ValueError) as exc:
-                return self._fail(run.id, "INVALID_JSON", str(exc))
+            except (TypeError, ValueError):
+                reminder = (
+                    "上一次响应不是有效 JSON。请严格按已给出的 JSON 合同重试，"
+                    "不要输出 Markdown 代码块、控制字符或合同外字段。"
+                )
+                messages.append(LLMMessage("system", reminder))
+                self._repository.add_turn(run.id, AgentTurnRole.SYSTEM, reminder)
+                last_response_invalid = True
+                continue
+            last_response_invalid = False
 
             if action == "final":
-                if request.require_tool_before_final and used_tool_calls == 0:
-                    reminder = (
-                        "工具检索已开启；在最终回答前必须先调用至少一个只读工具。"
-                        "请根据用户问题选择 SEARCH_MEMORY、GET_CHARACTER_STATE、"
-                        "GET_ACTIVE_CLUES 或其他合适工具，不要直接要求用户重复提供项目背景。"
-                    )
+                missing_required_tools = tuple(
+                    tool_name
+                    for tool_name in request.required_tool_names
+                    if tool_name not in used_tool_names
+                )
+                if (
+                    request.require_tool_before_final
+                    and used_tool_calls == 0
+                ) or missing_required_tools:
+                    if missing_required_tools:
+                        required = "、".join(
+                            tool_name.value for tool_name in missing_required_tools
+                        )
+                        reminder = (
+                            "当前问题需要跨章节证据；在最终回答前必须调用这些只读工具："
+                            f"{required}。先获取章节目录，再用真实 chapter_id 读取正文，"
+                            "不要声称没有读取权限。"
+                        )
+                    else:
+                        reminder = (
+                            "工具检索已开启；在最终回答前必须先调用至少一个只读工具。"
+                            "请根据用户问题选择 SEARCH_MEMORY、GET_CHARACTER_STATE、"
+                            "GET_ACTIVE_CLUES 或其他合适工具，不要直接要求用户重复提供项目背景。"
+                        )
                     messages.append(LLMMessage("system", reminder))
                     self._repository.add_turn(run.id, AgentTurnRole.SYSTEM, reminder)
                     continue
@@ -124,12 +155,6 @@ class AgentLoopService:
             self._repository.update_run_status(run.id, AgentRunStatus.WAITING_FOR_TOOL)
 
             for raw_call in calls:
-                if used_tool_calls >= request.max_tool_calls:
-                    return self._fail(
-                        run.id,
-                        "MAX_TOOL_CALLS",
-                        "agent exceeded tool call budget",
-                    )
                 if not isinstance(raw_call, dict):
                     return self._fail(
                         run.id,
@@ -143,6 +168,29 @@ class AgentLoopService:
                         run.id,
                         "INVALID_ARGUMENTS",
                         "arguments must be an object",
+                    )
+                call_key = (
+                    f"{tool_name}:"
+                    + json.dumps(arguments, ensure_ascii=False, sort_keys=True)
+                )
+                if call_key in executed_call_keys:
+                    reminder = (
+                        f"不要重复调用相同的 {tool_name} 参数；该结果已在上下文中。"
+                        "如果已经获得章节目录，下一步应使用真实 chapter_id 调用 "
+                        "READ_CHAPTERS_BATCH。"
+                    )
+                    messages.append(LLMMessage("system", reminder))
+                    self._repository.add_turn(
+                        run.id,
+                        AgentTurnRole.SYSTEM,
+                        reminder,
+                    )
+                    continue
+                if used_tool_calls >= request.max_tool_calls:
+                    return self._fail(
+                        run.id,
+                        "MAX_TOOL_CALLS",
+                        "agent exceeded tool call budget",
                     )
                 call = self._repository.add_tool_call(
                     run.id,
@@ -167,8 +215,39 @@ class AgentLoopService:
                         failure_code="TOOL_REJECTED",
                         failure_message=str(exc),
                     )
-                    return self._fail(run.id, "TOOL_REJECTED", str(exc))
+                    # RC-B: rejected call is not fatal — surface to model.
+                    messages.append(LLMMessage(
+                        "user",
+                        f"工具 {tool_name} 被拒绝：{exc}。请修正参数后重试，"
+                        "或改用其他工具。",
+                    ))
+                    used_tool_calls += 1
+                    self._repository.increment_usage(
+                        run.id, used_tool_calls_delta=1
+                    )
+                    continue
+                except Exception:
+                    self._repository.complete_tool_call(
+                        call.id,
+                        AgentToolCallStatus.FAILED,
+                        "{}",
+                        0,
+                        "[]",
+                        failure_code="TOOL_FAILED",
+                        failure_message="agent tool execution failed",
+                    )
+                    messages.append(LLMMessage(
+                        "user",
+                        f"工具 {tool_name} 执行失败。请尝试其他工具或直接回答。",
+                    ))
+                    used_tool_calls += 1
+                    self._repository.increment_usage(
+                        run.id, used_tool_calls_delta=1
+                    )
+                    continue
                 used_tool_calls += 1
+                used_tool_names.add(result.tool_name)
+                executed_call_keys.add(call_key)
                 self._repository.increment_usage(run.id, used_tool_calls_delta=1)
                 source_refs_json = json.dumps(
                     [self._source_ref_to_json(ref) for ref in result.source_refs],
@@ -196,7 +275,25 @@ class AgentLoopService:
                         + tool_content,
                     )
                 )
+                if result.tool_name is AgentToolName.LIST_CHAPTERS:
+                    directory_reminder = (
+                        "章节目录已经返回。不要重复调用相同的 LIST_CHAPTERS；"
+                        "请从目录选择相关 chapter_id，并调用 READ_CHAPTERS_BATCH "
+                        "读取正文后再回答。"
+                    )
+                    messages.append(LLMMessage("system", directory_reminder))
+                    self._repository.add_turn(
+                        run.id,
+                        AgentTurnRole.SYSTEM,
+                        directory_reminder,
+                    )
 
+        if last_response_invalid:
+            return self._fail(
+                run.id,
+                "INVALID_JSON",
+                "agent could not produce valid structured output",
+            )
         return self._fail(run.id, "MAX_ITERATIONS", "agent exceeded iteration budget")
 
     def _fail(

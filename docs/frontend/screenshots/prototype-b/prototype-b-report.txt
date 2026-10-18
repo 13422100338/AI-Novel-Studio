@@ -1,0 +1,23 @@
+prototype B - ShaderEffect + qsb neon rounded border
+window devicePixelRatio: 2.0
+fragmentShader: neon_rounded_border.qsb (merged vert+frag, batchable)
+phase: UniformAnimator 0->1 on uPhase, render thread
+shaderReady (log-based): True
+deliverables:
+  prototype-b-full-lap.gif        72 frames, one orbit (thinking)
+  prototype-b-corner-0_25x.gif    dense samples, 0.25x corner view
+  prototype-b-success-single.gif  one sweep then stop
+  prototype-b-error-single.gif    one sweep then stop
+  prototype-b-reducemotion-static.png
+  prototype-b-safe-static.png
+  prototype-b-idle.png
+  prototype-b-resize-760x520.png / 1080x620.png
+                               shader tracks card at both window
+                               sizes (border bbox stays 320x160
+                               logical, re-centered by layout)
+corner continuity: single continuous perimeter coordinate function
+in the fragment shader; no item rotation, no per-segment QML items.
+resize verification: border bbox measured from screenshots matches
+the card geometry (640x320 device px at DPR 2) at both window
+sizes; the shader renders in logical coordinates so DPI
+100/125/150%% only scales the same output.

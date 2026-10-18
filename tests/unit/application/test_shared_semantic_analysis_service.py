@@ -12,6 +12,7 @@ from ai_novel_studio.application.shared_semantic_analysis_service import (
 from ai_novel_studio.core.context.semantic_windowing import project_semantic_windows
 from ai_novel_studio.core.context.shared_semantic_result import (
     SemanticCandidateKind,
+    ViewDifferenceKind,
     candidate_source_id,
 )
 from ai_novel_studio.domain.memory import Authority, ReviewStatus
@@ -114,17 +115,19 @@ def _valid_payload() -> dict[str, object]:
         "view_differences": [
             {
                 "view_type": "CHARACTER_VIEW",
+                "difference_kind": "FALSE_BELIEF",
                 "observer_mention_ordinal": 0,
                 "target_mention_ordinal": 1,
-                "epistemic_status": "KNOWS",
-                "content": "林岚知道钥匙存在",
+                "epistemic_status": "MISBELIEVES",
+                "content": "林岚误信钥匙已毁",
                 "spans": [_span("发现钥匙🙂")],
                 "occurrence_ordinal": 0,
             },
             {
                 "view_type": "READER_VIEW",
+                "difference_kind": "PARTIAL_DISCLOSURE",
                 "target_mention_ordinal": 0,
-                "content": "读者产生误会",
+                "content": "读者只知部分真相",
                 "spans": [_span("读者误会")],
             },
         ],
@@ -175,12 +178,14 @@ def test_maps_exact_spans_ordinals_views_and_review_metadata() -> None:
     )
     character_view, reader_view = result.view_differences
     assert character_view.view_type is ViewType.CHARACTER_VIEW
-    assert character_view.epistemic_status is EpistemicStatus.KNOWS
+    assert character_view.epistemic_status is EpistemicStatus.MISBELIEVES
+    assert character_view.difference_kind is ViewDifferenceKind.FALSE_BELIEF
     assert (
         character_view.observer_mention_candidate_id
         == result.subject_mentions[0].candidate_id
     )
     assert reader_view.view_type is ViewType.READER_VIEW
+    assert reader_view.difference_kind is ViewDifferenceKind.PARTIAL_DISCLOSURE
     assert reader_view.observer_mention_candidate_id is None
     assert reader_view.epistemic_status is None
     purpose, messages, limit, temperature, json_mode = gateway.calls[0]
@@ -330,6 +335,7 @@ def test_aggregate_candidate_limit_includes_summary() -> None:
     invalid["view_differences"] = [
         {
             "view_type": "READER_VIEW",
+            "difference_kind": "FALSE_BELIEF",
             "target_mention_ordinal": 0,
             "content": "读者认知",
             "spans": [_span("林岚")],
@@ -373,6 +379,7 @@ def test_prompt_freezes_exact_schema_and_single_window_scope() -> None:
         "occurrence_ordinal",
         "observer_mention_ordinal",
         "epistemic_status",
+        "difference_kind",
         "summary",
         "candidate",
         "subject",
@@ -381,6 +388,15 @@ def test_prompt_freezes_exact_schema_and_single_window_scope() -> None:
         assert field in prompt
     assert "CHARACTER_VIEW" in prompt
     assert "READER_VIEW" in prompt
+    for kind in (
+        "SECRET",
+        "DECEPTION",
+        "SUSPICION",
+        "PARTIAL_DISCLOSURE",
+        "HIDDEN_FACT",
+        "FALSE_BELIEF",
+    ):
+        assert kind in prompt
     assert messages[1].content.count("<window_text>") == 1
 
 
@@ -395,3 +411,62 @@ def test_invalid_window_and_output_limit_reject_before_model_call() -> None:
                 LLMContractRunner(gateway),
                 output_token_limit=value,  # type: ignore[arg-type]
             )
+
+
+def _view_mutation(view_index: int, mutation) -> dict[str, object]:
+    payload = _valid_payload()
+    views = payload["view_differences"]
+    assert isinstance(views, list)
+    view = views[view_index]
+    assert isinstance(view, dict)
+    mutation(view)
+    return payload
+
+
+def test_missing_difference_kind_fails_in_correction_loop() -> None:
+    invalid = _view_mutation(0, lambda item: item.pop("difference_kind"))
+    service, gateway = _service([invalid, _valid_payload()])
+
+    result = service.extract(_window())
+
+    assert len(result.view_differences) == 2
+    assert len(gateway.calls) == 2
+
+
+@pytest.mark.parametrize(
+    ("view_index", "mutation"),
+    [
+        (0, lambda item: item.update({"difference_kind": "NOT_A_KIND"})),
+        (1, lambda item: item.update({"difference_kind": "SECRET"})),
+        (1, lambda item: item.update({"difference_kind": "SUSPICION"})),
+        (
+            0,
+            lambda item: item.update({"epistemic_status": "KNOWS"}),
+        ),
+    ],
+)
+def test_invalid_view_kind_combos_fail_closed(
+    view_index: int,
+    mutation,
+) -> None:
+    invalid = _view_mutation(view_index, mutation)
+    service, _ = _service([invalid, invalid])
+
+    with pytest.raises(ContractValidationError):
+        service.extract(_window())
+
+
+def test_all_character_kinds_map_into_result() -> None:
+    window = _window()
+    for kind in ViewDifferenceKind:
+        payload = _view_mutation(
+            0,
+            lambda item, kind=kind: item.update(
+                {"difference_kind": kind.value}
+            ),
+        )
+        service, _ = _service([payload])
+
+        result = service.extract(window)
+
+        assert result.view_differences[0].difference_kind is kind

@@ -128,12 +128,12 @@ class ProjectWorkspaceService:
         title: str,
         declared_number: str = "",
     ) -> ChapterTreeItem:
-        project = self._project()
-        chapter = ChapterRepository(project).create_chapter(
+        submitted = self._revisions().submit_creation(
             volume_id,
             title,
             declared_number,
         )
+        chapter = submitted.chapter
         return ChapterTreeItem(
             chapter.id,
             chapter.declared_number,

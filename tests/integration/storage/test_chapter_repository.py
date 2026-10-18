@@ -6,6 +6,7 @@ import pytest
 from ai_novel_studio.application.chapter_revision_service import ChapterRevisionService
 from ai_novel_studio.domain.embedding import EmbeddingIndexIdentity
 from ai_novel_studio.infrastructure.storage.chapter_repository import (
+    ChapterFileTransaction,
     ChapterRelocationExpectation,
     ChapterRepository,
 )
@@ -210,6 +211,48 @@ def test_view_invalidation_failure_restores_chapter_file_and_database(
     restored = chapters.get_chapter(chapter.id)
     assert restored.revision == 0
     assert chapters.read_content(chapter.id) == "old"
+    assert chapters.list_versions(chapter.id) == []
+    history = project.layout.history / chapter.id
+    assert not history.exists() or not tuple(history.iterdir())
+
+
+def test_caller_transaction_rollback_restores_content_title_and_history(
+    tmp_path: Path,
+) -> None:
+    project, chapters = _repositories(tmp_path)
+    chapter = chapters.create_chapter(
+        project.list_volumes()[0].id,
+        "Opening",
+        "1",
+        "old",
+    )
+    files = ChapterFileTransaction()
+
+    with project.database.connect() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        chapters.save_content(
+            chapter.id,
+            "new",
+            source="changeset",
+            reason="tentative",
+            expected_revision=chapter.revision,
+            connection=connection,
+            file_transaction=files,
+        )
+        chapters.rename_chapter(
+            chapter.id,
+            "Tentative",
+            expected_revision=chapter.revision + 1,
+            connection=connection,
+            file_transaction=files,
+        )
+        connection.rollback()
+        files.rollback()
+
+    restored = chapters.get_chapter(chapter.id)
+    assert restored.title == chapter.title
+    assert restored.revision == chapter.revision
+    assert chapters.read_content_exact(chapter.id) == "old"
     assert chapters.list_versions(chapter.id) == []
     history = project.layout.history / chapter.id
     assert not history.exists() or not tuple(history.iterdir())
@@ -590,8 +633,7 @@ def test_delete_volume_rolls_back_all_chapters_when_later_invalidation_fails(
             expected_content_hash=embedding_source.content_hash,
         )
     original_paths = {
-        chapter.id: project.layout.root / chapter.content_path
-        for chapter in (first, second)
+        chapter.id: project.layout.root / chapter.content_path for chapter in (first, second)
     }
     real_invalidate = ViewAssertionRepository.invalidate_source_revision_in_connection
     calls = 0
@@ -691,3 +733,302 @@ def test_volume_cannot_be_deleted_into_itself(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="different"):
         chapters.delete_volume(volume.id, volume.id)
+
+
+def test_failed_save_restores_crlf_content_byte_identically(tmp_path: Path) -> None:
+    import sqlite3
+
+    project, chapters = _repositories(tmp_path)
+    content = "first line\r\nemoji \U0001f600\r\n"
+    chapter = chapters.create_chapter(
+        project.list_volumes()[0].id,
+        "Opening",
+        "1",
+        content,
+    )
+    with project.database.connect() as connection, connection:
+        connection.execute(
+            "CREATE TRIGGER fail_chapter_update BEFORE UPDATE ON chapters "
+            "BEGIN SELECT RAISE(ABORT, 'RAW_TRIGGER'); END"
+        )
+
+    with pytest.raises(sqlite3.IntegrityError):
+        chapters.save_content(
+            chapter.id,
+            "new text",
+            source="manual",
+            reason="failed save",
+        )
+
+    assert chapters.read_content_exact(chapter.id) == content
+    stored = chapters.get_chapter(chapter.id)
+    assert stored.revision == 0
+    with project.database.connect() as connection:
+        row = connection.execute(
+            "SELECT content_hash FROM chapters WHERE id = ?", (chapter.id,)
+        ).fetchone()
+        canonical = (project.layout.root / stored.content_path).read_bytes()
+    assert row is not None
+    assert str(row["content_hash"]) == hashlib.sha256(content.encode("utf-8")).hexdigest()
+    assert canonical == content.encode("utf-8")
+
+
+_RESTORE_BODY = "第一章\r\n\r\n艾琳在旧塔发现了铜钥匙🔑。\r\n守卫没有察觉。\r\n"
+
+
+def _restore_fixture(tmp_path: Path):
+    project = ProjectRepository.create(tmp_path / "project", "restore 验证")
+    revisions = ChapterRevisionService(project)
+    submitted = revisions.submit_creation(
+        project.list_volumes()[0].id, "第一章", "1", _RESTORE_BODY
+    )
+    chapters = ChapterRepository(project)
+    chapters.delete_chapter(submitted.chapter.id)
+    trash = (
+        project.layout.root
+        / ".ai_pipeline"
+        / "trash"
+        / f"chapter_{submitted.chapter.id}_r{submitted.chapter.revision}.md"
+    )
+    return project, chapters, submitted.chapter.id, trash
+
+
+def test_restore_rejects_tampered_trash_and_keeps_deleted(tmp_path: Path) -> None:
+    project, chapters, chapter_id, trash = _restore_fixture(tmp_path)
+    trash.write_text("被篡改的正文。", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="chapter restore source changed"):
+        chapters.restore_chapter(chapter_id)
+
+    assert chapters.get_chapter(chapter_id).is_deleted is True
+    assert trash.read_text(encoding="utf-8") == "被篡改的正文。"
+    assert not (project.layout.root / ".ai_pipeline" / "chapters").exists() or all(
+        item.suffix == ".md" and "tampered" not in item.name
+        for item in (project.layout.root / ".ai_pipeline" / "chapters").rglob("*")
+    )
+
+
+def test_restore_rejects_missing_and_invalid_utf8_trash(tmp_path: Path) -> None:
+    _project, chapters, chapter_id, trash = _restore_fixture(tmp_path)
+
+    missing = trash.with_name(trash.name + ".gone")
+    trash.rename(missing)
+    with pytest.raises(RuntimeError, match="chapter restore source is missing"):
+        chapters.restore_chapter(chapter_id)
+    missing.rename(trash)
+
+    trash.write_bytes(b"\xff\xfe\x00broken")
+    with pytest.raises(RuntimeError, match="chapter restore source is invalid"):
+        chapters.restore_chapter(chapter_id)
+    assert chapters.get_chapter(chapter_id).is_deleted is True
+
+
+def test_restore_rejects_trash_outside_project_trash_boundary(
+    tmp_path: Path,
+) -> None:
+    project, chapters, chapter_id, trash = _restore_fixture(tmp_path)
+    escaped = project.layout.root / "escaped-body.md"
+    trash.replace(escaped)
+    with project.database.connect() as connection, connection:
+        connection.execute(
+            "UPDATE chapters SET deleted_content_path = 'escaped-body.md' WHERE id = ?",
+            (chapter_id,),
+        )
+
+    with pytest.raises(RuntimeError, match="chapter restore source is invalid"):
+        chapters.restore_chapter(chapter_id)
+
+    assert escaped.exists()
+    assert not trash.exists()
+    assert chapters.get_chapter(chapter_id).is_deleted is True
+
+
+def test_restore_database_failure_rolls_file_back_to_trash(
+    tmp_path: Path,
+) -> None:
+    import sqlite3
+
+    project, chapters, chapter_id, trash = _restore_fixture(tmp_path)
+    with project.database.connect() as connection, connection:
+        connection.execute(
+            "CREATE TRIGGER fail_chapter_update BEFORE UPDATE ON chapters "
+            "BEGIN SELECT RAISE(ABORT, 'RAW_TRIGGER'); END"
+        )
+
+    canonical = Path(project.layout.root) / chapters.get_chapter(chapter_id).content_path
+
+    with pytest.raises(sqlite3.IntegrityError):
+        chapters.restore_chapter(chapter_id)
+
+    assert trash.exists()
+    assert not canonical.exists()
+    assert chapters.get_chapter(chapter_id).is_deleted is True
+
+
+def test_restored_content_matches_exact_verified_bytes(tmp_path: Path) -> None:
+    project, chapters, chapter_id, trash = _restore_fixture(tmp_path)
+
+    restored = chapters.restore_chapter(chapter_id)
+
+    assert restored.is_deleted is False
+    actual = chapters.read_content_exact(chapter_id)
+    assert actual == _RESTORE_BODY
+    with project.database.connect() as connection:
+        stored_hash = connection.execute(
+            "SELECT content_hash FROM chapters WHERE id = ?", (chapter_id,)
+        ).fetchone()["content_hash"]
+    assert hashlib.sha256(actual.encode("utf-8")).hexdigest() == stored_hash
+    assert not trash.exists()
+
+
+def test_restore_rejects_race_tamper_between_validation_and_move(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import ai_novel_studio.infrastructure.storage.chapter_repository as restore_module
+
+    project, chapters, chapter_id, trash = _restore_fixture(tmp_path)
+    canonical = chapters._resolve_manuscript_path(chapters.get_chapter(chapter_id).content_path)
+    real_replace = restore_module.os.replace
+    calls = {"n": 0}
+
+    def racing_replace(src, dst, *args, **kwargs):  # type: ignore[no-untyped-def]
+        calls["n"] += 1
+        if calls["n"] == 1:
+            Path(src).write_text("竞争后篡改字节。", encoding="utf-8")
+        return real_replace(src, dst, *args, **kwargs)
+
+    monkeypatch.setattr(restore_module.os, "replace", racing_replace)
+
+    with pytest.raises(RuntimeError, match="chapter restore source changed"):
+        chapters.restore_chapter(chapter_id)
+
+    assert calls["n"] == 2
+    assert chapters.get_chapter(chapter_id).is_deleted is True
+    assert not canonical.exists()
+    assert trash.read_text(encoding="utf-8") == "竞争后篡改字节。"
+    with project.database.connect() as connection:
+        row = connection.execute(
+            "SELECT revision, content_hash, deleted_content_path FROM chapters WHERE id = ?",
+            (chapter_id,),
+        ).fetchone()
+    assert int(row["revision"]) == submitted_revision(chapters, chapter_id)
+    assert row["content_hash"] == hashlib.sha256(_RESTORE_BODY.encode("utf-8")).hexdigest()
+    assert row["deleted_content_path"]
+
+
+def test_restore_sanitizes_invalid_utf8_race_after_move(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import ai_novel_studio.infrastructure.storage.chapter_repository as restore_module
+
+    _project, chapters, chapter_id, trash = _restore_fixture(tmp_path)
+    canonical = chapters._resolve_manuscript_path(chapters.get_chapter(chapter_id).content_path)
+    real_replace = restore_module.os.replace
+    calls = {"n": 0}
+
+    def racing_replace(src, dst, *args, **kwargs):  # type: ignore[no-untyped-def]
+        calls["n"] += 1
+        if calls["n"] == 1:
+            Path(src).write_bytes(b"\xff\xfe\x00broken")
+        return real_replace(src, dst, *args, **kwargs)
+
+    monkeypatch.setattr(restore_module.os, "replace", racing_replace)
+
+    with pytest.raises(RuntimeError) as caught:
+        chapters.restore_chapter(chapter_id)
+
+    assert str(caught.value) == "chapter restore source is invalid"
+    assert calls["n"] == 2
+    assert chapters.get_chapter(chapter_id).is_deleted is True
+    assert not canonical.exists()
+    assert trash.read_bytes() == b"\xff\xfe\x00broken"
+
+
+def submitted_revision(chapters: ChapterRepository, chapter_id: str) -> int:
+    with chapters.project.database.connect() as connection:
+        row = connection.execute(
+            "SELECT revision FROM chapters WHERE id = ?", (chapter_id,)
+        ).fetchone()
+    assert row is not None
+    return int(row["revision"])
+
+
+def test_restore_rejects_canonical_escape_outside_manuscript(
+    tmp_path: Path,
+) -> None:
+    project, chapters, chapter_id, trash = _restore_fixture(tmp_path)
+    with project.database.connect() as connection, connection:
+        connection.execute(
+            "UPDATE chapters SET content_path = '../escaped.md' WHERE id = ?",
+            (chapter_id,),
+        )
+
+    with pytest.raises(RuntimeError, match="outside manuscript directory"):
+        chapters.restore_chapter(chapter_id)
+
+    escaped_sibling = project.layout.root.parent / "escaped.md"
+    assert not escaped_sibling.exists()
+    assert not (project.layout.root / "escaped.md").exists()
+    assert trash.exists()
+    assert chapters.get_chapter(chapter_id).is_deleted is True
+
+
+def test_restore_cas_rejects_identity_drift_and_rolls_back(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project, chapters, chapter_id, trash = _restore_fixture(tmp_path)
+    canonical = chapters._resolve_manuscript_path(chapters.get_chapter(chapter_id).content_path)
+    real_connect = project.database.connect
+    state = {"drifted": False}
+
+    class _DriftConnection:
+        def __init__(self, real) -> None:  # type: ignore[no-untyped-def]
+            self._real = real
+
+        def execute(self, statement, *args):  # type: ignore[no-untyped-def]
+            cursor = self._real.execute(statement, *args)
+            if not state["drifted"] and statement.lstrip().upper().startswith("SELECT REVISION"):
+                state["drifted"] = True
+                self._real.execute(
+                    "UPDATE chapters SET deleted_content_path = "
+                    "'.ai_pipeline/trash/diverted.md' WHERE id = ?",
+                    (chapter_id,),
+                )
+                self._real.commit()
+            return cursor
+
+        def commit(self) -> None:
+            self._real.commit()
+
+        def rollback(self) -> None:
+            self._real.rollback()
+
+        def close(self) -> None:
+            self._real.close()
+
+    monkeypatch.setattr(
+        type(project.database),
+        "connect",
+        staticmethod(lambda: _DriftConnection(real_connect())),
+    )
+
+    with pytest.raises(RuntimeError, match="chapter changed before restore"):
+        chapters.restore_chapter(chapter_id)
+
+    monkeypatch.undo()
+
+    assert chapters.get_chapter(chapter_id).is_deleted is True
+    assert not canonical.exists()
+    assert trash.read_bytes() == _RESTORE_BODY.encode("utf-8")
+    with project.database.connect() as connection:
+        row = connection.execute(
+            "SELECT content_hash, deleted_content_path FROM chapters WHERE id = ?",
+            (chapter_id,),
+        ).fetchone()
+    assert row["content_hash"] == hashlib.sha256(_RESTORE_BODY.encode("utf-8")).hexdigest()
+    assert row["deleted_content_path"] == ".ai_pipeline/trash/diverted.md"
+    assert row["content_hash"] == hashlib.sha256(_RESTORE_BODY.encode("utf-8")).hexdigest()
+    assert row["deleted_content_path"]

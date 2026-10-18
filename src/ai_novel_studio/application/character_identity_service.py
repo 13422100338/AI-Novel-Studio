@@ -89,6 +89,7 @@ class CharacterIdentityService:
         *,
         reason: str,
         confirmed_by_user: bool,
+        expected_source_state_event_count: int | None = None,
     ) -> CharacterIdentityMerge:
         if not confirmed_by_user:
             raise PermissionError("人物归并必须由用户明确确认")
@@ -102,6 +103,7 @@ class CharacterIdentityService:
                 source_character_id,
                 target_character_id,
                 reason=normalized_reason,
+                expected_source_state_event_count=expected_source_state_event_count,
             )
         except (KeyError, CharacterIdentityRepositoryError) as error:
             raise CharacterIdentityError(str(error)) from error

@@ -123,12 +123,25 @@ class ManuscriptImportService:
             if chapter_match and self._is_end_marker(chapter_match):
                 continue
             if chapter_match:
-                flush_chapter()
-                current_number = chapter_match.group("number").strip()
-                current_title = self._clean_title(
+                next_number = chapter_match.group("number").strip()
+                next_title = self._clean_title(
                     chapter_match.group("title").strip(),
-                    fallback=current_number,
+                    fallback=next_number,
                 )
+                if (
+                    has_chapter
+                    and next_number == current_number
+                    and next_title == current_title
+                    and not any(line.strip() for line in current_lines)
+                ):
+                    # Many exported manuscripts repeat a Markdown heading as
+                    # the first plain-text line. Treat that adjacent duplicate
+                    # as presentation, not as an empty chapter boundary.
+                    current_lines = []
+                    continue
+                flush_chapter()
+                current_number = next_number
+                current_title = next_title
                 has_chapter = True
                 continue
             current_lines.append(raw_line)

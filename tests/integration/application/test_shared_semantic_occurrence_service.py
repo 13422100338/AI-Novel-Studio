@@ -36,6 +36,7 @@ from ai_novel_studio.core.context.shared_semantic_result import (
     StateChangeCandidate,
     SubjectMentionCandidate,
     ViewDifferenceCandidate,
+    ViewDifferenceKind,
     WindowSummaryCandidate,
     candidate_source_id,
 )
@@ -845,6 +846,7 @@ def test_non_occurrence_candidates_are_ignored_without_other_persistence(
         "读者知道",
         (_span(window, 2, 4),),
         target_mention_candidate_id=mention.candidate_id,
+        difference_kind=ViewDifferenceKind.PARTIAL_DISCLOSURE,
     )
     result = SharedSemanticResult(
         window=window,

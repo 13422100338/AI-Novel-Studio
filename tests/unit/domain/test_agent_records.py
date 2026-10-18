@@ -20,6 +20,8 @@ def test_agent_enums_have_stable_values() -> None:
     assert AgentRunStatus.WAITING_FOR_TOOL.value == "WAITING_FOR_TOOL"
     assert AgentTurnRole.TOOL.value == "TOOL"
     assert AgentToolName.SEARCH_MEMORY.value == "SEARCH_MEMORY"
+    assert AgentToolName.LIST_CHAPTERS.value == "LIST_CHAPTERS"
+    assert AgentToolName.READ_CHAPTERS_BATCH.value == "READ_CHAPTERS_BATCH"
     assert AgentToolCallStatus.REJECTED.value == "REJECTED"
 
 

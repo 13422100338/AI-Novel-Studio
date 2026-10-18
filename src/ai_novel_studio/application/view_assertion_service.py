@@ -288,11 +288,13 @@ class ViewAssertionService:
         narrative_sequence: int,
         view_type: ViewType,
         viewer_subject_id: str | None = None,
+        limit: int | None = None,
     ) -> tuple[ViewAssertion, ...]:
         return self.repository.list_visible_at(
             narrative_sequence=narrative_sequence,
             view_type=view_type,
             viewer_subject_id=viewer_subject_id,
+            limit=limit,
         )
 
     def _review_candidate(

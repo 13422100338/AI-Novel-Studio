@@ -55,6 +55,52 @@ def _int_arg(value: object, default: int, *, minimum: int = 1, maximum: int = 20
     return int(max(minimum, min(maximum, parsed)))
 
 
+class ListChaptersTool:
+    name = AgentToolName.LIST_CHAPTERS
+    required_arguments: tuple[str, ...] = ()
+
+    def __init__(self, chapters: ChapterRepository) -> None:
+        self._chapters = chapters
+
+    def execute(self, request: AgentToolRequest) -> AgentToolResult:
+        limit = _int_arg(request.arguments.get("limit"), 50, maximum=100)
+        offset = _int_arg(
+            request.arguments.get("offset"),
+            0,
+            minimum=0,
+            maximum=10_000,
+        )
+        all_chapters = self._chapters.list_chapters()
+        selected = all_chapters[offset : offset + limit]
+        lines = [
+            f"项目章节目录（offset={offset}, returned={len(selected)}, "
+            f"total={len(all_chapters)}）："
+        ]
+        refs: list[AgentSourceRef] = []
+        for chapter in selected:
+            content = self._chapters.read_content_exact(chapter.id)
+            preview = "".join(content.split())[:32] or "（空章）"
+            lines.append(
+                f"- chapter_id={chapter.id} | {chapter.declared_number or '未编号'} "
+                f"| {chapter.title} | revision={chapter.revision} "
+                f"| chars={len(content)} | preview={preview}"
+            )
+            refs.append(
+                AgentSourceRef(
+                    "chapter",
+                    chapter.id,
+                    chapter.revision,
+                    _hash(content),
+                )
+            )
+        omitted: tuple[str, ...] = ()
+        if offset + len(selected) < len(all_chapters):
+            omitted = (
+                f"more chapters available from offset {offset + len(selected)}",
+            )
+        return _result(self.name, "\n".join(lines), refs, omitted)
+
+
 class ReadChapterExcerptTool:
     name = AgentToolName.READ_CHAPTER_EXCERPT
     required_arguments = ("chapter_id",)
@@ -64,9 +110,13 @@ class ReadChapterExcerptTool:
 
     def execute(self, request: AgentToolRequest) -> AgentToolResult:
         chapter_id = str(request.arguments["chapter_id"])
-        max_chars = _int_arg(request.arguments.get("max_chars"), request.max_result_chars)
+        max_chars = _int_arg(
+            request.arguments.get("max_chars"),
+            request.max_result_chars,
+            maximum=request.max_result_chars,
+        )
         chapter = self._chapters.get_chapter(chapter_id, include_deleted=False)
-        content = self._chapters.read_content(chapter_id)
+        content = self._chapters.read_content_exact(chapter_id)
         excerpt = content[:max_chars]
         omitted: tuple[str, ...] = ()
         if len(content) > len(excerpt):
@@ -77,6 +127,153 @@ class ReadChapterExcerptTool:
             (AgentSourceRef("chapter", chapter.id, chapter.revision, _hash(content)),),
             omitted,
         )
+
+
+class ReadChaptersBatchTool:
+    name = AgentToolName.READ_CHAPTERS_BATCH
+    required_arguments = ("chapter_ids",)
+    _MAX_CHAPTERS_PER_CALL = 100
+
+    def __init__(self, chapters: ChapterRepository) -> None:
+        self._chapters = chapters
+
+    def execute(self, request: AgentToolRequest) -> AgentToolResult:
+        raw_ids = request.arguments["chapter_ids"]
+        if not isinstance(raw_ids, list) or not raw_ids:
+            raise AgentToolValidationError("chapter_ids must be a non-empty list")
+        if len(raw_ids) > self._MAX_CHAPTERS_PER_CALL:
+            raise AgentToolValidationError(
+                f"chapter_ids accepts at most {self._MAX_CHAPTERS_PER_CALL} chapters"
+            )
+        chapter_ids = tuple(str(value).strip() for value in raw_ids)
+        if any(not value for value in chapter_ids):
+            raise AgentToolValidationError("chapter_ids contains an invalid chapter id")
+        if len(set(chapter_ids)) != len(chapter_ids):
+            raise AgentToolValidationError("chapter_ids must be unique")
+        requested_per_chapter = _int_arg(
+            request.arguments.get("max_chars_per_chapter"),
+            600,
+            maximum=request.max_result_chars,
+        )
+        section_budget = max(1, request.max_result_chars // len(chapter_ids))
+        sections: list[str] = []
+        refs: list[AgentSourceRef] = []
+        omitted: list[str] = []
+        for index, chapter_id in enumerate(chapter_ids, start=1):
+            try:
+                chapter = self._chapters.get_chapter(chapter_id, include_deleted=False)
+                content = self._chapters.read_content_exact(chapter_id)
+            except (KeyError, RuntimeError):
+                # RC-4: a bad ID must become an omission, not kill the batch.
+                omitted.append(f"chapter {chapter_id} not found or unavailable")
+                continue
+            header = (
+                f"[{index}] {chapter.declared_number or '未编号'} {chapter.title} "
+                f"| chapter_id={chapter.id}"
+            )
+            excerpt_budget = max(0, section_budget - len(header) - 1)
+            excerpt = content[: min(requested_per_chapter, excerpt_budget)]
+            sections.append(header + ("\n" + excerpt if excerpt else ""))
+            refs.append(
+                AgentSourceRef(
+                    "chapter",
+                    chapter.id,
+                    chapter.revision,
+                    _hash(content),
+                )
+            )
+            if len(excerpt) < len(content):
+                omitted.append(f"chapter {chapter.id} excerpt truncated")
+        return _result(self.name, "\n\n".join(sections), refs, omitted)
+
+
+class ReadNovelOverviewTool:
+    """High-level tool for novel-wide reads without manual chapter_id assembly.
+
+    Defaults cover 34+ chapters in one call; pagination metadata is always
+    returned so the model can continue reading if needed.
+    """
+
+    name = AgentToolName.READ_NOVEL_OVERVIEW
+    required_arguments: tuple[str, ...] = ()
+    _MAX_CHAPTERS_PER_CALL = 100
+
+    def __init__(self, chapters: ChapterRepository) -> None:
+        self._chapters = chapters
+
+    def execute(self, request: AgentToolRequest) -> AgentToolResult:
+        offset = _int_arg(
+            request.arguments.get("offset"), 0, minimum=0, maximum=10_000
+        )
+        chapter_count = _int_arg(
+            request.arguments.get("chapter_count"),
+            50,
+            minimum=1,
+            maximum=self._MAX_CHAPTERS_PER_CALL,
+        )
+        total_char_budget = _int_arg(
+            request.arguments.get("total_char_budget"),
+            min(16_000, request.max_result_chars),
+            minimum=200,
+            maximum=request.max_result_chars,
+        )
+
+        all_chapters = self._chapters.list_chapters()
+        total_chapters = len(all_chapters)
+        selected = all_chapters[offset : offset + chapter_count]
+
+        # Pre-compute headers to know exactly how many chapters fit in budget.
+        per_chapter_budget = max(1, total_char_budget // max(len(selected), 1))
+        rendered: list[tuple[int, str, AgentSourceRef]] = []
+        omitted: list[str] = []
+        used_chars = 0
+        for index, chapter in enumerate(selected):
+            seq = offset + index + 1
+            header = (
+                f"[seq={seq}] "
+                f"{chapter.declared_number or '未编号'} {chapter.title}"
+            )
+            try:
+                content = self._chapters.read_content_exact(chapter.id)
+            except (KeyError, RuntimeError):
+                omitted.append(f"chapter seq={seq} unavailable")
+                continue
+            available = per_chapter_budget - len(header) - 1
+            if available <= 0:
+                omitted.append(f"chapter seq={seq} skipped (budget exhausted)")
+                continue
+            excerpt = content[:available]
+            truncated = len(excerpt) < len(content)
+            body = header + ("\n" + excerpt if excerpt else "（空）")
+            if used_chars + len(body) > total_char_budget:
+                omitted.append(f"chapter seq={seq} skipped (total budget exhausted)")
+                continue
+            used_chars += len(body)
+            ref = AgentSourceRef(
+                "chapter", chapter.id, chapter.revision, _hash(content),
+            )
+            rendered.append((index, body, ref))
+            if truncated:
+                omitted.append(f"chapter seq={seq} content truncated")
+
+        next_offset = (
+            offset + len(selected)
+            if offset + len(selected) < total_chapters
+            else None
+        )
+        # Only emit refs for chapters whose content is actually visible.
+        refs = tuple(ref for _, _, ref in rendered)
+
+        summary = (
+            f"全书概览：total_chapters={total_chapters}, "
+            f"returned_chapters={len(rendered)}, "
+            f"next_offset={next_offset if next_offset is not None else '无'}, "
+            f"char_budget={total_char_budget}"
+        )
+        parts = [summary]
+        parts.extend(body for _, body, _ in rendered)
+        parts.extend(f"[omitted] {o}" for o in omitted)
+        return _result(self.name, "\n\n".join(parts), refs, tuple(omitted))
 
 
 class SearchMemoryTool:
@@ -422,7 +619,10 @@ def build_project_agent_registry(project: ProjectRepository) -> AgentToolRegistr
     tools = cast(
         tuple[AgentTool, ...],
         (
+            ListChaptersTool(ChapterRepository(project)),
             ReadChapterExcerptTool(ChapterRepository(project)),
+            ReadChaptersBatchTool(ChapterRepository(project)),
+            ReadNovelOverviewTool(ChapterRepository(project)),
             SearchMemoryTool(SearchRepository(project)),
             GetCharacterStateTool(CharacterMemoryRepository(project)),
             GetCharacterKnowledgeTool(CharacterMemoryRepository(project)),

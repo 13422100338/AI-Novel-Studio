@@ -7,6 +7,7 @@ from ai_novel_studio.core.context.context_filter import ContextEligibility
 from ai_novel_studio.core.context.context_manifest import (
     ContextManifest,
     OmittedManifestItem,
+    RetrievalTraceItem,
     SelectedManifestItem,
     create_manifest_id,
     utc_now,
@@ -24,6 +25,33 @@ class RequiredContextOverflowError(ValueError):
 
 
 @dataclass(frozen=True, slots=True)
+class RetrievalProvenance:
+    """Optional retrieval diagnostics attached to one evidence block.
+
+    Mirrors the persisted RetrievalTraceItem contract without the
+    block outcome fields; scores stay diagnostic-only.
+    """
+
+    document_id: str
+    expanded_document_ids: tuple[str, ...]
+    source_id: str
+    source_hash: str
+    chapter_id: str | None = None
+    volume_id: str | None = None
+    revision: int | None = None
+    start: int | None = None
+    end: int | None = None
+    retrieval_routes: tuple[str, ...] = ()
+    lexical_score: float = 0.0
+    semantic_score: float = 0.0
+    participant_boost: float = 0.0
+    pinned_weight: float = 0.0
+    recency_score: float = 0.0
+    stale_penalty: float = 0.0
+    total_score: float = 0.0
+
+
+@dataclass(frozen=True, slots=True)
 class ContextBlock:
     id: str
     category: str
@@ -38,6 +66,7 @@ class ContextBlock:
     rationale: str
     fallback_content: str | None = None
     eligibility: ContextEligibility = field(default_factory=ContextEligibility)
+    retrieval: RetrievalProvenance | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -199,6 +228,7 @@ class ContextBuilder:
                 )
             )
 
+        trace = self._retrieval_trace(ordered, selected, omitted)
         manifest = ContextManifest(
             id=create_manifest_id(),
             chapter_id=request.chapter_id,
@@ -212,8 +242,56 @@ class ContextBuilder:
             created_at=utc_now(),
             target_chapter_revision=request.target_chapter_revision,
             requirement_revision=request.requirement_revision,
+            retrieval_trace=trace,
         )
         return BuiltContext("".join(contents), manifest)
+
+    @staticmethod
+    def _retrieval_trace(
+        ordered_blocks: list[ContextBlock],
+        selected_items: list[SelectedManifestItem],
+        omitted_items: list[OmittedManifestItem],
+    ) -> tuple[RetrievalTraceItem, ...]:
+        reasons = {item.block_id: item.reason for item in omitted_items}
+        selected_ids = {item.block_id for item in selected_items}
+        trace: list[RetrievalTraceItem] = []
+        seen: set[str] = set()
+        for block in ordered_blocks:
+            provenance = block.retrieval
+            if provenance is None or block.id in seen:
+                continue
+            seen.add(block.id)
+            is_selected = block.id in selected_ids
+            omission_reason: str | None = None
+            if not is_selected:
+                omission_reason = reasons.get(block.id)
+                if omission_reason is None:
+                    continue
+            trace.append(
+                RetrievalTraceItem(
+                    block_id=block.id,
+                    selected=is_selected,
+                    omission_reason=omission_reason,
+                    document_id=provenance.document_id,
+                    expanded_document_ids=provenance.expanded_document_ids,
+                    source_id=provenance.source_id,
+                    chapter_id=provenance.chapter_id,
+                    volume_id=provenance.volume_id,
+                    revision=provenance.revision,
+                    source_hash=provenance.source_hash,
+                    start=provenance.start,
+                    end=provenance.end,
+                    retrieval_routes=provenance.retrieval_routes,
+                    lexical_score=provenance.lexical_score,
+                    semantic_score=provenance.semantic_score,
+                    participant_boost=provenance.participant_boost,
+                    pinned_weight=provenance.pinned_weight,
+                    recency_score=provenance.recency_score,
+                    stale_penalty=provenance.stale_penalty,
+                    total_score=provenance.total_score,
+                )
+            )
+        return tuple(trace)
 
     def _fitting_representation(
         self,

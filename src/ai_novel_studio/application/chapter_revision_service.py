@@ -15,6 +15,7 @@ from ai_novel_studio.core.context.manuscript_chunking import (
 from ai_novel_studio.domain.chapter import Chapter
 from ai_novel_studio.domain.identifiers import validate_id
 from ai_novel_studio.infrastructure.storage.chapter_repository import (
+    ChapterFileTransaction,
     ChapterRelocationExpectation,
     ChapterRepository,
     StaleChapterRevisionError,
@@ -59,12 +60,8 @@ _FAILURE_MESSAGES = {
     FormalMaintenanceFailureCode.SOURCE_SUPERSEDED: (
         "formal manuscript source changed before maintenance"
     ),
-    FormalMaintenanceFailureCode.SOURCE_UNAVAILABLE: (
-        "formal manuscript source is unavailable"
-    ),
-    FormalMaintenanceFailureCode.REPAIR_FAILED: (
-        "formal manuscript projection requires recovery"
-    ),
+    FormalMaintenanceFailureCode.SOURCE_UNAVAILABLE: ("formal manuscript source is unavailable"),
+    FormalMaintenanceFailureCode.REPAIR_FAILED: ("formal manuscript projection requires recovery"),
 }
 
 
@@ -81,9 +78,7 @@ class RevisionSourceIdentity:
             or self.revision < 0
         ):
             raise ValueError("revision source identity revision is invalid")
-        if not isinstance(self.content_hash, str) or _SHA256.fullmatch(
-            self.content_hash
-        ) is None:
+        if not isinstance(self.content_hash, str) or _SHA256.fullmatch(self.content_hash) is None:
             raise ValueError("revision source identity hash is invalid")
         if not isinstance(self.is_deleted, bool):
             raise ValueError("revision source identity deletion state is invalid")
@@ -102,9 +97,7 @@ class RevisionImpact:
         validate_id(self.chapter_id)
         if not isinstance(self.operation, ChapterMutationKind):
             raise ValueError("revision impact operation is invalid")
-        if self.before is not None and not isinstance(
-            self.before, RevisionSourceIdentity
-        ):
+        if self.before is not None and not isinstance(self.before, RevisionSourceIdentity):
             raise ValueError("revision impact prior source is invalid")
         if not isinstance(self.after, RevisionSourceIdentity):
             raise ValueError("revision impact current source is invalid")
@@ -174,10 +167,7 @@ class FormalMaintenanceResult:
         if self.status in successful:
             if self.recovery_required or self.failure is not None:
                 raise ValueError("successful formal maintenance cannot require recovery")
-        elif (
-            not self.recovery_required
-            or not isinstance(self.failure, FormalMaintenanceFailure)
-        ):
+        elif not self.recovery_required or not isinstance(self.failure, FormalMaintenanceFailure):
             raise ValueError("unsuccessful formal maintenance requires a failure")
         if self.status == FormalMaintenanceStatus.REMOVED and self.chunk_count != 0:
             raise ValueError("removed formal maintenance cannot retain chunks")
@@ -203,6 +193,22 @@ class SubmittedRevision:
             or not self.impact.manuscript_committed
         ):
             raise ValueError("submitted revision contracts are inconsistent")
+
+
+@dataclass(frozen=True, slots=True)
+class CommittedRevision:
+    chapter: Chapter
+    impact: RevisionImpact
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.chapter, Chapter)
+            or not isinstance(self.impact, RevisionImpact)
+            or self.impact.chapter_id != self.chapter.id
+            or self.impact.after.revision != self.chapter.revision
+            or not self.impact.manuscript_committed
+        ):
+            raise ValueError("committed revision contracts are inconsistent")
 
 
 @dataclass(frozen=True, slots=True)
@@ -234,6 +240,32 @@ class SubmittedDeletion:
 
 
 @dataclass(frozen=True, slots=True)
+class SubmittedRestore:
+    impact: RevisionImpact
+    maintenance: FormalMaintenanceResult
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.impact, RevisionImpact):
+            raise ValueError("submitted restore impact is invalid")
+        if not isinstance(self.maintenance, FormalMaintenanceResult):
+            raise ValueError("submitted restore maintenance is invalid")
+        before = self.impact.before
+        if (
+            self.impact.operation != ChapterMutationKind.RESTORE
+            or before is None
+            or not self.impact.manuscript_committed
+            or self.impact.semantic_memory_invalidated
+            or not before.is_deleted
+            or self.impact.after.is_deleted
+            or before.revision != self.impact.after.revision
+            or before.content_hash != self.impact.after.content_hash
+            or self.maintenance.chapter_id != self.impact.chapter_id
+            or self.maintenance.source != self.impact.after
+        ):
+            raise ValueError("submitted restore contracts are inconsistent")
+
+
+@dataclass(frozen=True, slots=True)
 class SubmittedTitleRevision:
     chapter: Chapter
     revision: SubmittedRevision | None
@@ -247,6 +279,23 @@ class SubmittedTitleRevision:
             or self.revision.impact.operation != ChapterMutationKind.RENAME
         ):
             raise ValueError("submitted title revision is inconsistent")
+
+
+@dataclass(frozen=True, slots=True)
+class CommittedTitleRevision:
+    chapter: Chapter
+    impact: RevisionImpact | None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.chapter, Chapter):
+            raise ValueError("committed title chapter is invalid")
+        if self.impact is not None and (
+            not isinstance(self.impact, RevisionImpact)
+            or self.impact.chapter_id != self.chapter.id
+            or self.impact.operation is not ChapterMutationKind.RENAME
+            or self.impact.after.revision != self.chapter.revision
+        ):
+            raise ValueError("committed title revision is inconsistent")
 
 
 @dataclass(frozen=True, slots=True)
@@ -320,24 +369,20 @@ class FormalRecoveryReport:
             self.failed_chapters,
         )
         if any(
-            isinstance(value, bool) or not isinstance(value, int) or value < 0
-            for value in counts
+            isinstance(value, bool) or not isinstance(value, int) or value < 0 for value in counts
         ):
             raise ValueError("formal recovery counts are invalid")
         if self.scanned_chapters != sum(counts[1:]):
             raise ValueError("formal recovery counts are inconsistent")
         if not isinstance(self.failures, tuple) or any(
-            not isinstance(failure, FormalRecoveryFailure)
-            for failure in self.failures
+            not isinstance(failure, FormalRecoveryFailure) for failure in self.failures
         ):
             raise ValueError("formal recovery failures are invalid")
         if len(self.failures) != self.pending_chapters + self.failed_chapters:
             raise ValueError("formal recovery failures are inconsistent")
         if not isinstance(self.cancelled, bool):
             raise ValueError("formal recovery cancellation flag is invalid")
-        if self.next_cursor is not None and not isinstance(
-            self.next_cursor, FormalRecoveryCursor
-        ):
+        if self.next_cursor is not None and not isinstance(self.next_cursor, FormalRecoveryCursor):
             raise ValueError("formal recovery cursor is invalid")
 
 
@@ -408,17 +453,61 @@ class ChapterRevisionService:
         expected_revision: int,
         invalidate_memory: bool = True,
     ) -> SubmittedRevision:
+        committed = self.commit_revision(
+            chapter_id,
+            content,
+            source=source,
+            reason=reason,
+            expected_revision=expected_revision,
+            invalidate_memory=invalidate_memory,
+        )
+        after = committed.impact.after
+        try:
+            maintenance = self.maintain_current_revision(
+                committed.chapter.id,
+                expected_revision=after.revision,
+                expected_source_hash=after.content_hash,
+            )
+        except Exception:
+            maintenance = self._failed_result(
+                committed.chapter.id,
+                after,
+                FormalMaintenanceStatus.PENDING,
+                FormalMaintenanceFailureCode.REPAIR_FAILED,
+            )
+        return SubmittedRevision(
+            committed.chapter,
+            committed.impact,
+            maintenance,
+        )
+
+    def commit_revision(
+        self,
+        chapter_id: str,
+        content: str,
+        *,
+        source: str,
+        reason: str,
+        expected_revision: int,
+        invalidate_memory: bool = True,
+        connection: sqlite3.Connection | None = None,
+        file_transaction: ChapterFileTransaction | None = None,
+    ) -> CommittedRevision:
         canonical_chapter_id = validate_id(chapter_id)
         before_chapter = self.chapters.get_chapter(
             canonical_chapter_id,
             include_deleted=False,
+            connection=connection,
         )
         if before_chapter.revision != expected_revision:
             raise StaleChapterRevisionError(
                 "chapter revision changed: "
                 f"expected {expected_revision}, current {before_chapter.revision}"
             )
-        before_content = self.chapters.read_content_exact(canonical_chapter_id)
+        before_content = self.chapters.read_content_exact(
+            canonical_chapter_id,
+            connection=connection,
+        )
         chapter = self.chapters.save_content(
             canonical_chapter_id,
             content,
@@ -426,6 +515,8 @@ class ChapterRevisionService:
             reason=reason,
             invalidate_memory=invalidate_memory,
             expected_revision=expected_revision,
+            connection=connection,
+            file_transaction=file_transaction,
         )
         before = RevisionSourceIdentity(
             before_chapter.revision,
@@ -445,44 +536,76 @@ class ChapterRevisionService:
             manuscript_committed=True,
             semantic_memory_invalidated=invalidate_memory,
         )
-        try:
-            maintenance = self.maintain_current_revision(
-                canonical_chapter_id,
-                expected_revision=after.revision,
-                expected_source_hash=after.content_hash,
-            )
-        except Exception:
-            maintenance = self._failed_result(
-                canonical_chapter_id,
-                after,
-                FormalMaintenanceStatus.PENDING,
-                FormalMaintenanceFailureCode.REPAIR_FAILED,
-            )
-        return SubmittedRevision(chapter, impact, maintenance)
+        return CommittedRevision(chapter, impact)
 
     def submit_title_revision(
         self,
         chapter_id: str,
         title: str,
     ) -> SubmittedTitleRevision:
+        committed = self.commit_title_revision(chapter_id, title)
+        if committed.impact is None:
+            return SubmittedTitleRevision(committed.chapter, revision=None)
+        after = committed.impact.after
+        try:
+            maintenance = self.maintain_current_revision(
+                committed.chapter.id,
+                expected_revision=after.revision,
+                expected_source_hash=after.content_hash,
+            )
+        except Exception:
+            maintenance = self._failed_result(
+                committed.chapter.id,
+                after,
+                FormalMaintenanceStatus.PENDING,
+                FormalMaintenanceFailureCode.REPAIR_FAILED,
+            )
+        submitted = SubmittedRevision(
+            committed.chapter,
+            committed.impact,
+            maintenance,
+        )
+        return SubmittedTitleRevision(committed.chapter, revision=submitted)
+
+    def commit_title_revision(
+        self,
+        chapter_id: str,
+        title: str,
+        *,
+        expected_revision: int | None = None,
+        connection: sqlite3.Connection | None = None,
+        file_transaction: ChapterFileTransaction | None = None,
+    ) -> CommittedTitleRevision:
         canonical_chapter_id = validate_id(chapter_id)
         before_chapter = self.chapters.get_chapter(
             canonical_chapter_id,
             include_deleted=False,
+            connection=connection,
         )
+        if expected_revision is not None and before_chapter.revision != expected_revision:
+            raise StaleChapterRevisionError(
+                "chapter revision changed: "
+                f"expected {expected_revision}, current {before_chapter.revision}"
+            )
         normalized_title = title.strip()
         if not normalized_title:
             raise ValueError("chapter title cannot be empty")
         if normalized_title == before_chapter.title:
-            return SubmittedTitleRevision(before_chapter, revision=None)
-        before_content = self.chapters.read_content_exact(canonical_chapter_id)
+            return CommittedTitleRevision(before_chapter, impact=None)
+        before_content = self.chapters.read_content_exact(
+            canonical_chapter_id,
+            connection=connection,
+        )
         source_hash = _source_hash(before_content)
         chapter = self.chapters.rename_chapter(
             canonical_chapter_id,
             normalized_title,
+            expected_revision=expected_revision,
+            connection=connection,
+            file_transaction=file_transaction,
         )
         if chapter.revision == before_chapter.revision:
-            return SubmittedTitleRevision(chapter, revision=None)
+            return CommittedTitleRevision(chapter, impact=None)
         before = RevisionSourceIdentity(
             before_chapter.revision,
             source_hash,
@@ -501,21 +624,7 @@ class ChapterRevisionService:
             manuscript_committed=True,
             semantic_memory_invalidated=True,
         )
-        try:
-            maintenance = self.maintain_current_revision(
-                canonical_chapter_id,
-                expected_revision=after.revision,
-                expected_source_hash=after.content_hash,
-            )
-        except Exception:
-            maintenance = self._failed_result(
-                canonical_chapter_id,
-                after,
-                FormalMaintenanceStatus.PENDING,
-                FormalMaintenanceFailureCode.REPAIR_FAILED,
-            )
-        submitted = SubmittedRevision(chapter, impact, maintenance)
-        return SubmittedTitleRevision(chapter, revision=submitted)
+        return CommittedTitleRevision(chapter, impact)
 
     def submit_deletion(self, chapter_id: str) -> SubmittedDeletion:
         canonical_chapter_id = validate_id(chapter_id)
@@ -549,9 +658,7 @@ class ChapterRevisionService:
             semantic_memory_invalidated=False,
         )
         try:
-            self.search.remove_orphaned_formal_manuscript_chunks(
-                canonical_chapter_id
-            )
+            self.search.remove_orphaned_formal_manuscript_chunks(canonical_chapter_id)
         except Exception:
             maintenance = self._failed_result(
                 canonical_chapter_id,
@@ -567,6 +674,47 @@ class ChapterRevisionService:
                 0,
             )
         return SubmittedDeletion(impact, maintenance)
+
+    def submit_restore(self, chapter_id: str) -> SubmittedRestore:
+        canonical_chapter_id = validate_id(chapter_id)
+        deleted = self.chapters.get_chapter(canonical_chapter_id)
+        if not deleted.is_deleted:
+            raise ValueError("chapter is not deleted")
+        self.chapters.restore_chapter(canonical_chapter_id)
+        content = self.chapters.read_content_exact(canonical_chapter_id)
+        source_hash = _source_hash(content)
+        before = RevisionSourceIdentity(
+            deleted.revision,
+            source_hash,
+            is_deleted=True,
+        )
+        after = RevisionSourceIdentity(
+            deleted.revision,
+            source_hash,
+            is_deleted=False,
+        )
+        impact = RevisionImpact(
+            ChapterMutationKind.RESTORE,
+            canonical_chapter_id,
+            before,
+            after,
+            manuscript_committed=True,
+            semantic_memory_invalidated=False,
+        )
+        try:
+            maintenance = self.maintain_current_revision(
+                canonical_chapter_id,
+                expected_revision=after.revision,
+                expected_source_hash=after.content_hash,
+            )
+        except Exception:
+            maintenance = self._failed_result(
+                canonical_chapter_id,
+                after,
+                FormalMaintenanceStatus.PENDING,
+                FormalMaintenanceFailureCode.REPAIR_FAILED,
+            )
+        return SubmittedRestore(impact, maintenance)
 
     def submit_volume_deletion(
         self,
@@ -719,6 +867,25 @@ class ChapterRevisionService:
             len(repaired),
         )
 
+    def pending_maintenance_result(
+        self,
+        chapter_id: str,
+        *,
+        expected_revision: int,
+        expected_source_hash: str,
+    ) -> FormalMaintenanceResult:
+        source = RevisionSourceIdentity(
+            expected_revision,
+            expected_source_hash,
+            is_deleted=False,
+        )
+        return self._failed_result(
+            validate_id(chapter_id),
+            source,
+            FormalMaintenanceStatus.PENDING,
+            FormalMaintenanceFailureCode.REPAIR_FAILED,
+        )
+
     def recover_current_revisions(
         self,
         *,
@@ -763,9 +930,7 @@ class ChapterRevisionService:
                     failures.append(
                         FormalRecoveryFailure(
                             chapter_id,
-                            FormalMaintenanceFailure(
-                                FormalMaintenanceFailureCode.REPAIR_FAILED
-                            ),
+                            FormalMaintenanceFailure(FormalMaintenanceFailureCode.REPAIR_FAILED),
                         )
                     )
                 else:
@@ -811,21 +976,13 @@ class ChapterRevisionService:
                     }:
                         pending_chapters += 1
                         if result.failure is None:
-                            raise RuntimeError(
-                                "pending formal maintenance has no failure"
-                            )
-                        failures.append(
-                            FormalRecoveryFailure(chapter_id, result.failure)
-                        )
+                            raise RuntimeError("pending formal maintenance has no failure")
+                        failures.append(FormalRecoveryFailure(chapter_id, result.failure))
                     else:
                         failed_chapters += 1
                         if result.failure is None:
-                            raise RuntimeError(
-                                "failed formal maintenance has no failure"
-                            )
-                        failures.append(
-                            FormalRecoveryFailure(chapter_id, result.failure)
-                        )
+                            raise RuntimeError("failed formal maintenance has no failure")
+                        failures.append(FormalRecoveryFailure(chapter_id, result.failure))
             last_processed = chapter_id
         scanned_chapters = (
             current_chapters

@@ -70,13 +70,15 @@ def _payload(*, subject_id: str, viewer_id: str) -> str:
                     "subject_id": subject_id,
                     "view_type": "CHARACTER_VIEW",
                     "viewer_subject_id": viewer_id,
-                    "epistemic_status": "KNOWS",
-                    "content": "The viewer saw the subject leave the archive.",
+                    "epistemic_status": "MISBELIEVES",
+                    "difference_kind": "FALSE_BELIEF",
+                    "content": "The viewer wrongly believes the subject left.",
                 },
                 {
                     "subject_id": subject_id,
                     "view_type": "READER_VIEW",
-                    "content": "The reader has seen the archive clue.",
+                    "difference_kind": "PARTIAL_DISCLOSURE",
+                    "content": "The reader has seen only part of the archive clue.",
                 },
             ]
         }
@@ -194,6 +196,7 @@ def test_rejects_candidate_count_above_bound_without_writing(tmp_path: Path) -> 
                 {
                     "subject_id": subject_id,
                     "view_type": "READER_VIEW",
+                    "difference_kind": "PARTIAL_DISCLOSURE",
                     "content": f"candidate {index}",
                 }
                 for index in range(13)
@@ -236,3 +239,99 @@ def test_rejects_invalid_view_shape_or_range_without_writing(
 
     assert gateway.calls == [TaskPurpose.MEMORY_EXTRACTION, TaskPurpose.MEMORY_EXTRACTION]
     assert ViewAssertionRepository(project).list_model_review_candidates() == ()
+
+
+def _item_payload(item: dict[str, object]) -> str:
+    return json.dumps({"assertions": [item]})
+
+
+def test_sparse_policy_rejections_fail_in_correction_loop(
+    tmp_path: Path,
+) -> None:
+    project, chapter_id, subject_id, viewer_id = _project(tmp_path)
+    character_base = {
+        "subject_id": subject_id,
+        "view_type": "CHARACTER_VIEW",
+        "viewer_subject_id": viewer_id,
+        "epistemic_status": "MISBELIEVES",
+        "difference_kind": "FALSE_BELIEF",
+        "content": "A genuine epistemic difference.",
+    }
+    reader_base = {
+        "subject_id": subject_id,
+        "view_type": "READER_VIEW",
+        "difference_kind": "PARTIAL_DISCLOSURE",
+        "content": "A partial disclosure.",
+    }
+
+    def missing_kind(item: dict[str, object]) -> None:
+        del item["difference_kind"]
+
+    def unknown_kind(item: dict[str, object]) -> None:
+        item["difference_kind"] = "NOT_A_KIND"
+
+    def plain_knows(item: dict[str, object]) -> None:
+        item["epistemic_status"] = "KNOWS"
+
+    def secret_reader(item: dict[str, object]) -> None:
+        item["difference_kind"] = "SECRET"
+
+    def suspicion_reader(item: dict[str, object]) -> None:
+        item["difference_kind"] = "SUSPICION"
+
+    cases = (
+        (character_base, missing_kind),
+        (character_base, unknown_kind),
+        (character_base, plain_knows),
+        (reader_base, secret_reader),
+        (reader_base, suspicion_reader),
+    )
+    for base, mutate in cases:
+        item = dict(base)
+        mutate(item)
+        payload = _item_payload(item)
+        gateway = _Gateway([payload, payload])
+
+        with pytest.raises(ValueError):
+            ViewAssertionExtractionService(LLMContractRunner(gateway)).extract(
+                project, chapter_id
+            )
+
+        assert gateway.calls == [
+            TaskPurpose.MEMORY_EXTRACTION,
+            TaskPurpose.MEMORY_EXTRACTION,
+        ], f"expected correction loop for {item}"
+        assert ViewAssertionRepository(project).list_model_review_candidates() == ()
+
+
+def test_prompt_declares_difference_kind_and_sparse_policy(tmp_path: Path) -> None:
+    project, chapter_id, subject_id, viewer_id = _project(tmp_path)
+
+    class RecordingGateway(_Gateway):
+        def __init__(self, responses: list[str]) -> None:
+            super().__init__(responses)
+            self.prompts: list[str] = []
+
+        def complete(self, purpose, messages, output_token_limit, **kwargs):  # type: ignore[no-untyped-def]
+            self.prompts.append(messages[0].content)
+            return super().complete(purpose, messages, output_token_limit, **kwargs)
+
+    gateway = RecordingGateway(
+        [_payload(subject_id=subject_id, viewer_id=viewer_id)]
+    )
+
+    ViewAssertionExtractionService(LLMContractRunner(gateway)).extract(
+        project, chapter_id
+    )
+
+    prompt = gateway.prompts[0]
+    assert "difference_kind" in prompt
+    for kind in (
+        "SECRET",
+        "DECEPTION",
+        "SUSPICION",
+        "PARTIAL_DISCLOSURE",
+        "HIDDEN_FACT",
+        "FALSE_BELIEF",
+    ):
+        assert kind in prompt

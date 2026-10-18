@@ -4,7 +4,7 @@ import hashlib
 import re
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 
 from ai_novel_studio.domain.identifiers import new_id, validate_id
 from ai_novel_studio.domain.memory import Authority, ReviewStatus, SourceType
@@ -148,6 +148,40 @@ class OccurrenceRepository:
         except _OccurrenceReadIntegrityError as error:
             raise OccurrenceRepositoryError(str(error)) from None
         except (KeyError, OccurrenceRepositoryError):
+            raise
+        except sqlite3.Error:
+            raise OccurrenceRepositoryError(
+                "occurrence records could not be read"
+            ) from None
+
+    def list_review_candidates(self, *, limit: int = 100) -> tuple[Occurrence, ...]:
+        normalized_limit = _read_limit(limit)
+        try:
+            with self.project.database.connect() as connection:
+                connection.execute("BEGIN")
+                rows = connection.execute(
+                    f"""
+                    SELECT {_OCCURRENCE_COLUMNS}
+                    FROM occurrences
+                    WHERE review_status = 'REVIEW' AND stale = 0
+                      AND source_changed = 0
+                    ORDER BY narrative_sequence, candidate_source_id, id
+                    LIMIT ?
+                    """,
+                    (normalized_limit,),
+                ).fetchall()
+                if not rows:
+                    return ()
+                occurrences, _links = _hydrate_read_records(connection, rows, ())
+                try:
+                    return tuple(occurrences[str(row["id"])] for row in rows)
+                except KeyError:
+                    raise OccurrenceRepositoryError(
+                        "stored occurrence is invalid"
+                    ) from None
+        except _OccurrenceReadIntegrityError as error:
+            raise OccurrenceRepositoryError(str(error)) from None
+        except OccurrenceRepositoryError:
             raise
         except sqlite3.Error:
             raise OccurrenceRepositoryError(
@@ -327,12 +361,155 @@ class OccurrenceRepository:
                     ) from None
         except _OccurrenceReadIntegrityError as error:
             raise OccurrenceRepositoryError(str(error)) from None
-        except (KeyError, OccurrenceRepositoryError):
+        except OccurrenceRepositoryError:
             raise
         except sqlite3.Error:
             raise OccurrenceRepositoryError(
                 "occurrence records could not be read"
             ) from None
+
+    def review_occurrence(
+        self,
+        occurrence_id: str,
+        *,
+        expected_updated_at: str,
+        decision: ReviewStatus,
+    ) -> Occurrence:
+        normalized_id = _occurrence_record_id(occurrence_id)
+        normalized_updated_at = _expected_updated_at(expected_updated_at)
+        normalized_decision = _review_decision(decision)
+        try:
+            with self.project.database.connect() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                row = connection.execute(
+                    "SELECT review_status, stale, source_changed, updated_at, created_at "
+                    "FROM occurrences WHERE id = ?",
+                    (normalized_id,),
+                ).fetchone()
+                if row is None:
+                    raise OccurrenceRepositoryError("occurrence not found")
+                if int(row["stale"]) == 1 or int(row["source_changed"]) == 1:
+                    raise OccurrenceRepositoryError("occurrence source changed")
+                if str(row["review_status"]) != ReviewStatus.REVIEW.value:
+                    raise OccurrenceRepositoryError("occurrence already reviewed")
+                if str(row["updated_at"]) != normalized_updated_at:
+                    raise OccurrenceRepositoryError("occurrence already reviewed")
+                try:
+                    datetime.fromisoformat(normalized_updated_at)
+                except (TypeError, ValueError, OverflowError):
+                    raise OccurrenceRepositoryError("occurrence already reviewed") from None
+                now = datetime.now(UTC).isoformat()
+                cursor = connection.execute(
+                    "UPDATE occurrences SET review_status = ?, updated_at = ? "
+                    "WHERE id = ? AND updated_at = ? AND review_status = ? "
+                    "AND stale = 0 AND source_changed = 0",
+                    (
+                        normalized_decision.value,
+                        now,
+                        normalized_id,
+                        normalized_updated_at,
+                        ReviewStatus.REVIEW.value,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise OccurrenceRepositoryError("occurrence already reviewed")
+                verify = connection.execute(
+                    "SELECT stale, source_changed FROM occurrences WHERE id = ?",
+                    (normalized_id,),
+                ).fetchone()
+                if (
+                    verify is None
+                    or int(verify["stale"]) == 1
+                    or int(verify["source_changed"]) == 1
+                ):
+                    raise OccurrenceRepositoryError("occurrence source changed")
+                connection.commit()
+        except OccurrenceRepositoryError:
+            raise
+        except (OSError, sqlite3.Error):
+            raise OccurrenceRepositoryError("occurrence review could not be saved") from None
+        try:
+            return self.get_occurrence(normalized_id)
+        except _OccurrenceReadIntegrityError as error:
+            raise OccurrenceRepositoryError(str(error)) from None
+
+    def review_link(
+        self,
+        link_id: str,
+        *,
+        expected_updated_at: str,
+        decision: ReviewStatus,
+    ) -> SubjectOccurrenceLink:
+        normalized_id = _occurrence_record_id(link_id)
+        normalized_updated_at = _expected_updated_at(expected_updated_at)
+        normalized_decision = _review_decision(decision)
+        try:
+            with self.project.database.connect() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                row = connection.execute(
+                    "SELECT review_status, stale, source_changed, updated_at "
+                    "FROM subject_occurrence_links WHERE id = ?",
+                    (normalized_id,),
+                ).fetchone()
+                if row is None:
+                    raise OccurrenceRepositoryError("link not found")
+                if int(row["stale"]) == 1 or int(row["source_changed"]) == 1:
+                    raise OccurrenceRepositoryError("link source changed")
+                if str(row["review_status"]) != ReviewStatus.REVIEW.value:
+                    raise OccurrenceRepositoryError("link already reviewed")
+                if str(row["updated_at"]) != normalized_updated_at:
+                    raise OccurrenceRepositoryError("link already reviewed")
+                now = datetime.now(UTC).isoformat()
+                cursor = connection.execute(
+                    "UPDATE subject_occurrence_links SET review_status = ?, updated_at = ? "
+                    "WHERE id = ? AND updated_at = ? AND review_status = ? "
+                    "AND stale = 0 AND source_changed = 0",
+                    (
+                        normalized_decision.value,
+                        now,
+                        normalized_id,
+                        normalized_updated_at,
+                        ReviewStatus.REVIEW.value,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise OccurrenceRepositoryError("link already reviewed")
+                verify = connection.execute(
+                    "SELECT stale, source_changed FROM subject_occurrence_links WHERE id = ?",
+                    (normalized_id,),
+                ).fetchone()
+                if (
+                    verify is None
+                    or int(verify["stale"]) == 1
+                    or int(verify["source_changed"]) == 1
+                ):
+                    raise OccurrenceRepositoryError("link source changed")
+                connection.commit()
+        except OccurrenceRepositoryError:
+            raise
+        except (OSError, sqlite3.Error):
+            raise OccurrenceRepositoryError("occurrence review could not be saved") from None
+        try:
+            with self.project.database.connect() as connection:
+                connection.execute("BEGIN")
+                rows = connection.execute(
+                    f"SELECT {_LINK_COLUMNS} FROM subject_occurrence_links WHERE id = ?",
+                    (normalized_id,),
+                ).fetchall()
+                if not rows:
+                    raise OccurrenceRepositoryError("link not found")
+                occurrence_rows = connection.execute(
+                    f"SELECT {_OCCURRENCE_COLUMNS} FROM occurrences WHERE id = ?",
+                    (str(rows[0]["occurrence_id"]),),
+                ).fetchall()
+                _, links = _hydrate_read_records(connection, occurrence_rows, rows)
+                return links[normalized_id]
+        except _OccurrenceReadIntegrityError as error:
+            raise OccurrenceRepositoryError(str(error)) from None
+        except (OccurrenceRepositoryError, KeyError):
+            raise
+        except sqlite3.Error:
+            raise OccurrenceRepositoryError("occurrence review could not be saved") from None
 
     def _current_source(
         self,
@@ -677,6 +854,134 @@ class OccurrenceRepository:
             )
 
     @staticmethod
+    def invalidate_for_deleted_chapter_in_connection(
+        connection: sqlite3.Connection,
+        *,
+        source_id: str,
+        updated_at: str,
+    ) -> None:
+        normalized_source_id = _record_id(source_id)
+        connection.execute(
+            """
+            UPDATE occurrences SET source_changed = 1, updated_at = ?
+            WHERE source_changed = 0 AND stale = 0
+              AND review_status IN ('APPROVED', 'LOCKED')
+              AND id IN (
+                  SELECT occurrence_id FROM occurrence_source_ranges
+                  WHERE source_chapter_id = ?
+              )
+            """,
+            (updated_at, normalized_source_id),
+        )
+        connection.execute(
+            """
+            UPDATE occurrences SET stale = 1, updated_at = ?
+            WHERE stale = 0
+              AND review_status NOT IN ('APPROVED', 'LOCKED')
+              AND id IN (
+                  SELECT occurrence_id FROM occurrence_source_ranges
+                  WHERE source_chapter_id = ?
+              )
+            """,
+            (updated_at, normalized_source_id),
+        )
+        connection.execute(
+            """
+            UPDATE subject_occurrence_links SET source_changed = 1, updated_at = ?
+            WHERE source_changed = 0 AND stale = 0
+              AND review_status IN ('APPROVED', 'LOCKED')
+              AND id IN (
+                  SELECT link_id FROM subject_occurrence_link_source_ranges
+                  WHERE source_chapter_id = ?
+              )
+            """,
+            (updated_at, normalized_source_id),
+        )
+        connection.execute(
+            """
+            UPDATE subject_occurrence_links SET stale = 1, updated_at = ?
+            WHERE stale = 0
+              AND review_status NOT IN ('APPROVED', 'LOCKED')
+              AND id IN (
+                  SELECT link_id FROM subject_occurrence_link_source_ranges
+                  WHERE source_chapter_id = ?
+              )
+            """,
+            (updated_at, normalized_source_id),
+        )
+        connection.execute(
+            """
+            UPDATE memory_dependencies SET status = 'STALE'
+            WHERE status = 'CURRENT'
+              AND memory_type IN (?, ?)
+              AND source_chapter_id = ?
+            """,
+            (_OCCURRENCE_MEMORY_TYPE, _LINK_MEMORY_TYPE, normalized_source_id),
+        )
+
+    @staticmethod
+    def reinstate_for_restored_chapter_in_connection(
+        connection: sqlite3.Connection,
+        *,
+        source_id: str,
+        expected_revision: int,
+        expected_source_hash: str,
+        updated_at: str,
+    ) -> None:
+        normalized_source_id = _record_id(source_id)
+        if (
+            isinstance(expected_revision, bool)
+            or not isinstance(expected_revision, int)
+            or expected_revision < 0
+        ):
+            raise ValueError("occurrence source revision is invalid")
+        if not isinstance(expected_source_hash, str) or _SHA256.fullmatch(
+            expected_source_hash
+        ) is None:
+            raise ValueError("occurrence source hash is invalid")
+        connection.execute(
+            """
+            UPDATE occurrences SET stale = 0, source_changed = 0, updated_at = ?
+            WHERE (stale = 1 OR source_changed = 1)
+              AND id IN (
+                  SELECT occurrence_id FROM occurrence_source_ranges
+                  WHERE source_chapter_id = ?
+                    AND source_revision = ? AND source_hash = ?
+              )
+            """,
+            (updated_at, normalized_source_id, expected_revision, expected_source_hash),
+        )
+        connection.execute(
+            """
+            UPDATE subject_occurrence_links
+            SET stale = 0, source_changed = 0, updated_at = ?
+            WHERE (stale = 1 OR source_changed = 1)
+              AND id IN (
+                  SELECT link_id FROM subject_occurrence_link_source_ranges
+                  WHERE source_chapter_id = ?
+                    AND source_revision = ? AND source_hash = ?
+              )
+            """,
+            (updated_at, normalized_source_id, expected_revision, expected_source_hash),
+        )
+        connection.execute(
+            """
+            UPDATE memory_dependencies SET status = 'CURRENT'
+            WHERE status = 'STALE'
+              AND memory_type IN (?, ?)
+              AND source_chapter_id = ?
+              AND source_revision = ? AND source_hash = ?
+            """,
+            (
+                _OCCURRENCE_MEMORY_TYPE,
+                _LINK_MEMORY_TYPE,
+                normalized_source_id,
+                expected_revision,
+                expected_source_hash,
+            ),
+        )
+
+    @staticmethod
     def _insert_dependencies(
         connection: sqlite3.Connection,
         chapter_id: str,
@@ -708,6 +1013,70 @@ class OccurrenceRepository:
                     source_hash,
                 ),
             )
+
+    @staticmethod
+    def invalidate_source_revision_in_connection(
+        connection: sqlite3.Connection,
+        *,
+        source_id: str,
+        new_revision: int,
+        updated_at: str,
+    ) -> None:
+        normalized_source_id = _record_id(source_id)
+        if (
+            isinstance(new_revision, bool)
+            or not isinstance(new_revision, int)
+            or new_revision < 0
+        ):
+            raise ValueError("occurrence source revision is invalid")
+        connection.execute(
+            """
+            UPDATE occurrences SET source_changed = 1, updated_at = ?
+            WHERE source_changed = 0 AND stale = 0
+              AND review_status IN ('APPROVED', 'LOCKED')
+              AND id IN (
+                  SELECT occurrence_id FROM occurrence_source_ranges
+                  WHERE source_chapter_id = ? AND source_revision != ?
+              )
+            """,
+            (updated_at, normalized_source_id, new_revision),
+        )
+        connection.execute(
+            """
+            UPDATE occurrences SET stale = 1, updated_at = ?
+            WHERE stale = 0
+              AND review_status NOT IN ('APPROVED', 'LOCKED')
+              AND id IN (
+                  SELECT occurrence_id FROM occurrence_source_ranges
+                  WHERE source_chapter_id = ? AND source_revision != ?
+              )
+            """,
+            (updated_at, normalized_source_id, new_revision),
+        )
+        connection.execute(
+            """
+            UPDATE subject_occurrence_links SET source_changed = 1, updated_at = ?
+            WHERE source_changed = 0 AND stale = 0
+              AND review_status IN ('APPROVED', 'LOCKED')
+              AND id IN (
+                  SELECT link_id FROM subject_occurrence_link_source_ranges
+                  WHERE source_chapter_id = ? AND source_revision != ?
+              )
+            """,
+            (updated_at, normalized_source_id, new_revision),
+        )
+        connection.execute(
+            """
+            UPDATE subject_occurrence_links SET stale = 1, updated_at = ?
+            WHERE stale = 0
+              AND review_status NOT IN ('APPROVED', 'LOCKED')
+              AND id IN (
+                  SELECT link_id FROM subject_occurrence_link_source_ranges
+                  WHERE source_chapter_id = ? AND source_revision != ?
+              )
+            """,
+            (updated_at, normalized_source_id, new_revision),
+        )
 
 
 def _occurrence_record_id(value: object) -> str:
@@ -986,6 +1355,29 @@ def _source_hash(value: object) -> str:
 
 def _hash(content: str) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
+def _expected_updated_at(value: object) -> str:
+    if not isinstance(value, str):
+        raise ValueError("occurrence review request is invalid")
+    normalized = value.strip()
+    if not normalized:
+        raise ValueError("occurrence review request is invalid")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError("occurrence review request is invalid") from None
+    if parsed.utcoffset() is None:
+        raise ValueError("occurrence review request is invalid")
+    return normalized
+
+
+def _review_decision(value: object) -> ReviewStatus:
+    if not isinstance(value, ReviewStatus):
+        raise ValueError("occurrence review request is invalid")
+    if value not in {ReviewStatus.APPROVED, ReviewStatus.REJECTED, ReviewStatus.LOCKED}:
+        raise ValueError("occurrence review request is invalid")
+    return value
 
 
 __all__ = [

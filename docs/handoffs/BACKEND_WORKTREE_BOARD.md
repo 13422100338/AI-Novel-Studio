@@ -3,12 +3,13 @@
 ## Control Plane
 
 - Master controller: current pinned Codex task.
-- Master task ID: `019f87b5-ce06-7f82-bb24-871f43b98f32`.
+- Master task ID: `01a042cd-8bd0-7e03-bba6-e39486bde0ab`.
 - Integration policy: `main`-only integration. Worker tasks never merge or push `main`.
 - Superpowers: disabled for this project workflow.
 - Initial business-code baseline: `e35b50d` (the backend code state before the governance-only dispatch commit).
 - Wave 1 dispatched baseline: `3382dd36c2a4aeb4acdab411e9211885b633e678`.
 - Latest integrated business commit: `69749ee` (O1b-P1 exact Occurrence REVIEW-candidate persistence transaction, including prior O1a-S, I3c, I3b, I3a, I2, I0, R1a-R3a, R2c-L4, C15, S1, P0-1, A1-A4, B1-B14, C1-C14, M1, E1a, E1b-SR1, E1b-SS1, E1b-CR1, E1b-CS1, E1b-CE1, E1b-SM1, SE1-SE3, and ST1 increments).
+- Current Harness repair integration baseline: `6d41eeb` (ADR 0024/0025, H-SEL1, and H-APPR1b-S1 v25 approval execution receipt foundation).
 - Planning sources:
   - `docs/handoffs/2026-07-22-backend-refactor-handoff.md`
   - `docs/handoffs/2026-08-09-backend-refactor-supplemental-upgrade.md`
@@ -111,7 +112,7 @@ All Wave 1 tasks were dispatched from `3382dd36c2a4aeb4acdab411e9211885b633e678`
   - `shared-semantic-import` increment O1a-S (schema v20 and immutable Occurrence/SubjectOccurrenceLink domain foundation), merged as `0111c68`.
   - `shared-semantic-import` increment O1b-P1 (exact MODEL_EXTRACTED/REVIEW Occurrence candidate persistence transaction), merged as `69749ee`.
   - `view-operations-ui` increment C15 (fail-closed Style workspace load feedback with stale-state clearing), merged as `5f848a3`.
-- Active schema owner: none; schema v20 was integrated by O1a-S and its exclusive ownership is released.
+- Active schema owner: `H-APPR1b` owns schema v25 until the approval receipt, atomic execution, and recovery sequence is complete; v25 foundation was integrated as `6d41eeb`.
 
 | Task | Model / reasoning | Thread | Worktree | Assigned branch | HEAD state | Status |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -253,7 +254,7 @@ Every worktree worker must send a cross-task report directly to the master task 
 - `DECISION_REQUIRED`: multiple materially different solutions require a master decision.
 - `READY_FOR_REVIEW`: the approved increment is complete and ready for master verification.
 
-Workers must not rely only on a reply in their own task. When cross-task messaging is available, send the report to master task `019f87b5-ce06-7f82-bb24-871f43b98f32` and confirm delivery locally. Use this format:
+Workers must not rely only on a reply in their own task. When cross-task messaging is available, send the report to master task `01a042cd-8bd0-7e03-bba6-e39486bde0ab` and confirm delivery locally. Use this format:
 
 ```text
 MASTER REPORT

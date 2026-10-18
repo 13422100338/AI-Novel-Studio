@@ -398,12 +398,28 @@ class ViewAssertionRepository:
         narrative_sequence: int,
         view_type: ViewType,
         viewer_subject_id: str | None = None,
+        limit: int | None = None,
     ) -> tuple[ViewAssertion, ...]:
         self._validate_context_query(
             narrative_sequence=narrative_sequence,
             view_type=view_type,
             viewer_subject_id=viewer_subject_id,
         )
+        if limit is not None and (
+            isinstance(limit, bool) or not isinstance(limit, int) or limit < 1
+        ):
+            raise ValueError("limit must be a positive integer when provided")
+        limit_sql = " LIMIT ?" if limit is not None else ""
+        parameters: list[object] = [
+            view_type.value,
+            viewer_subject_id,
+            narrative_sequence,
+            narrative_sequence,
+            narrative_sequence,
+            narrative_sequence,
+        ]
+        if limit is not None:
+            parameters.append(limit)
         with self.project.database.connect() as connection:
             if viewer_subject_id is not None:
                 self._require_active_character(
@@ -412,7 +428,7 @@ class ViewAssertionRepository:
                     "viewer_subject_id",
                 )
             rows = connection.execute(
-                """
+                f"""
                 SELECT va.*
                 FROM view_assertions va
                 JOIN subjects subject
@@ -433,15 +449,9 @@ class ViewAssertionRepository:
                   AND (va.narrative_visible_to_sequence IS NULL
                        OR va.narrative_visible_to_sequence >= ?)
                 ORDER BY va.subject_id, va.created_at, va.id
+                {limit_sql}
                 """,
-                (
-                    view_type.value,
-                    viewer_subject_id,
-                    narrative_sequence,
-                    narrative_sequence,
-                    narrative_sequence,
-                    narrative_sequence,
-                ),
+                tuple(parameters),
             ).fetchall()
         return tuple(self._assertion(row) for row in rows)
 

@@ -84,6 +84,29 @@ def test_import_plain_text_without_headings_creates_single_chapter(tmp_path: Pat
     ) == ("没有章节标题的正文。",)
 
 
+def test_import_collapses_consecutive_duplicate_chapter_headings(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "duplicated.md"
+    source.write_text(
+        "# 第1章 雨夜重逢\n\n"
+        "第1章 雨夜重逢\n\n"
+        "真正的正文从这里开始。\n",
+        encoding="utf-8",
+    )
+    project = ProjectRepository.create(tmp_path / "project", "Imported Novel")
+
+    report = ManuscriptImportService().import_file(project, source)
+
+    chapters = ChapterRepository(project).list_chapters()
+    assert report.imported_chapters == 1
+    assert len(chapters) == 1
+    assert chapters[0].title == "雨夜重逢"
+    assert ChapterRepository(project).read_content_exact(chapters[0].id) == (
+        "真正的正文从这里开始。"
+    )
+
+
 def test_import_formal_ranges_use_normalized_stored_unicode_and_empty_is_valid(
     tmp_path: Path,
 ) -> None:

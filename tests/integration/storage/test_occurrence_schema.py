@@ -166,7 +166,7 @@ def test_schema_v20_adds_empty_occurrence_foundation_with_expected_shape(
             "subject_occurrence_link_source_ranges",
         )
 
-    assert version == migration_module.LATEST_SCHEMA_VERSION == 20
+    assert version == migration_module.LATEST_SCHEMA_VERSION == 25
     assert {
         "occurrences",
         "occurrence_source_ranges",
@@ -566,7 +566,7 @@ def test_future_schema_is_rejected_without_occurrence_migration(
     root = tmp_path / "future"
     project = ProjectRepository.create(root, "Future")
     with sqlite3.connect(project.layout.database) as connection:
-        connection.execute("PRAGMA user_version = 21")
+        connection.execute("PRAGMA user_version = 26")
 
     with pytest.raises(RuntimeError, match="newer schema"):
         ProjectRepository.open(root)

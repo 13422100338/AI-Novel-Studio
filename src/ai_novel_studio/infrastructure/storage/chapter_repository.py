@@ -11,6 +11,9 @@ from ai_novel_studio.infrastructure.storage.atomic_file import atomic_write_text
 from ai_novel_studio.infrastructure.storage.memory_dependency_repository import (
     MemoryDependencyRepository,
 )
+from ai_novel_studio.infrastructure.storage.occurrence_repository import (
+    OccurrenceRepository,
+)
 from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
 from ai_novel_studio.infrastructure.storage.view_assertion_repository import (
     ViewAssertionRepository,
@@ -23,6 +26,48 @@ _CHAPTER_RELOCATION_REASON = "chapter relocated by volume deletion"
 
 class StaleChapterRevisionError(RuntimeError):
     pass
+
+
+class ChapterFileRollbackError(RuntimeError):
+    pass
+
+
+class ChapterFileTransaction:
+    """Same-process file rollback state; process-crash recovery is out of scope."""
+
+    def __init__(self) -> None:
+        self._actions: list[tuple[Path, str | None]] = []
+
+    def checkpoint(self) -> int:
+        return len(self._actions)
+
+    def register_created_file(self, path: Path) -> None:
+        self._actions.append((path, None))
+
+    def register_replaced_text(self, path: Path, previous: str) -> None:
+        self._actions.append((path, previous))
+
+    def rollback_to(self, checkpoint: int) -> None:
+        if not 0 <= checkpoint <= len(self._actions):
+            raise ValueError("chapter file rollback checkpoint is invalid")
+        failures = 0
+        for path, previous in reversed(self._actions[checkpoint:]):
+            try:
+                if previous is None:
+                    path.unlink(missing_ok=True)
+                else:
+                    atomic_write_text(path, previous)
+            except (OSError, UnicodeError):
+                failures += 1
+        del self._actions[checkpoint:]
+        if failures:
+            raise ChapterFileRollbackError("chapter file rollback requires manual recovery")
+
+    def rollback(self) -> None:
+        self.rollback_to(0)
+
+    def finalize(self) -> None:
+        self._actions.clear()
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,17 +184,42 @@ class ChapterRepository:
             connection.close()
         return self.get_chapter(chapter_id)
 
-    def get_chapter(self, chapter_id: str, *, include_deleted: bool = True) -> Chapter:
+    def get_chapter(
+        self,
+        chapter_id: str,
+        *,
+        include_deleted: bool = True,
+        connection: sqlite3.Connection | None = None,
+    ) -> Chapter:
         validate_id(chapter_id)
-        connection = self.project.database.connect()
+        if connection is not None:
+            return self._get_chapter(
+                connection,
+                chapter_id,
+                include_deleted=include_deleted,
+            )
+        owned = self.project.database.connect()
         try:
-            query = "SELECT * FROM chapters WHERE id = ?"
-            parameters: tuple[object, ...] = (chapter_id,)
-            if not include_deleted:
-                query += " AND is_deleted = 0"
-            row = connection.execute(query, parameters).fetchone()
+            return self._get_chapter(
+                owned,
+                chapter_id,
+                include_deleted=include_deleted,
+            )
         finally:
-            connection.close()
+            owned.close()
+
+    @staticmethod
+    def _get_chapter(
+        connection: sqlite3.Connection,
+        chapter_id: str,
+        *,
+        include_deleted: bool,
+    ) -> Chapter:
+        query = "SELECT * FROM chapters WHERE id = ?"
+        parameters: tuple[object, ...] = (chapter_id,)
+        if not include_deleted:
+            query += " AND is_deleted = 0"
+        row = connection.execute(query, parameters).fetchone()
         if row is None:
             raise KeyError(f"unknown chapter: {chapter_id}")
         return _chapter_from_row(row)
@@ -178,8 +248,7 @@ class ChapterRepository:
     def get_chapter_sequences(self) -> dict[str, int]:
         """Return one-based sequences for all non-deleted chapters in book order."""
         return {
-            chapter.id: sequence
-            for sequence, chapter in enumerate(self.list_chapters(), start=1)
+            chapter.id: sequence for sequence, chapter in enumerate(self.list_chapters(), start=1)
         }
 
     def get_chapter_sequence(self, chapter_id: str) -> int:
@@ -233,8 +302,17 @@ class ChapterRepository:
         chapter = self.get_chapter(chapter_id, include_deleted=False)
         return (self.project.layout.root / chapter.content_path).read_text(encoding="utf-8")
 
-    def read_content_exact(self, chapter_id: str) -> str:
-        chapter = self.get_chapter(chapter_id, include_deleted=False)
+    def read_content_exact(
+        self,
+        chapter_id: str,
+        *,
+        connection: sqlite3.Connection | None = None,
+    ) -> str:
+        chapter = self.get_chapter(
+            chapter_id,
+            include_deleted=False,
+            connection=connection,
+        )
         return self._read_content_path_exact(chapter.content_path)
 
     def _resolve_manuscript_path(self, content_path: str | Path) -> Path:
@@ -243,9 +321,7 @@ class ChapterRepository:
         try:
             source_path.relative_to(manuscript_root)
         except ValueError as error:
-            raise RuntimeError(
-                "chapter source path is outside manuscript directory"
-            ) from error
+            raise RuntimeError("chapter source path is outside manuscript directory") from error
         return source_path
 
     def _read_content_path_exact(self, content_path: str | Path) -> str:
@@ -258,14 +334,74 @@ class ChapterRepository:
         except (OSError, UnicodeError):
             raise RuntimeError("chapter source file cannot be read as UTF-8") from None
 
-    def rename_chapter(self, chapter_id: str, title: str) -> Chapter:
-        chapter = self.get_chapter(chapter_id, include_deleted=False)
+    def rename_chapter(
+        self,
+        chapter_id: str,
+        title: str,
+        *,
+        expected_revision: int | None = None,
+        connection: sqlite3.Connection | None = None,
+        file_transaction: ChapterFileTransaction | None = None,
+    ) -> Chapter:
+        if connection is None:
+            if file_transaction is not None:
+                raise ValueError("chapter file transaction requires a connection")
+            owned = self.project.database.connect()
+            local_files = ChapterFileTransaction()
+            try:
+                owned.execute("BEGIN IMMEDIATE")
+                chapter = self._rename_chapter(
+                    owned,
+                    local_files,
+                    chapter_id,
+                    title,
+                    expected_revision=expected_revision,
+                )
+                owned.commit()
+            except BaseException:
+                owned.rollback()
+                local_files.rollback()
+                raise
+            else:
+                local_files.finalize()
+                return chapter
+            finally:
+                owned.close()
+        if file_transaction is None:
+            raise ValueError("caller connection requires a chapter file transaction")
+        return self._rename_chapter(
+            connection,
+            file_transaction,
+            chapter_id,
+            title,
+            expected_revision=expected_revision,
+        )
+
+    def _rename_chapter(
+        self,
+        connection: sqlite3.Connection,
+        file_transaction: ChapterFileTransaction,
+        chapter_id: str,
+        title: str,
+        *,
+        expected_revision: int | None,
+    ) -> Chapter:
+        chapter = self.get_chapter(
+            chapter_id,
+            include_deleted=False,
+            connection=connection,
+        )
+        if expected_revision is not None and chapter.revision != expected_revision:
+            raise StaleChapterRevisionError(
+                "chapter revision changed: "
+                f"expected {expected_revision}, current {chapter.revision}"
+            )
         normalized = title.strip()
         if not normalized:
             raise ValueError("chapter title cannot be empty")
         if normalized == chapter.title:
             return chapter
-        content = self.read_content_exact(chapter.id)
+        content = self.read_content_exact(chapter.id, connection=connection)
         content_hash = _hash(content)
         version_id = new_id()
         snapshot_relative = (
@@ -276,69 +412,211 @@ class ChapterRepository:
         )
         snapshot = self.project.layout.root / snapshot_relative
         now = _now()
-        connection = self.project.database.connect()
-        snapshot_written = False
-        try:
-            connection.execute("BEGIN IMMEDIATE")
-            current = connection.execute(
-                "SELECT title, revision, content_hash FROM chapters "
-                "WHERE id = ? AND is_deleted = 0",
-                (chapter.id,),
-            ).fetchone()
-            if current is None:
-                raise KeyError(f"unknown chapter: {chapter.id}")
-            if str(current["title"]) == normalized:
-                connection.rollback()
-                return self.get_chapter(chapter.id, include_deleted=False)
-            if (
-                int(current["revision"]) != chapter.revision
-                or str(current["title"]) != chapter.title
-            ):
-                raise RuntimeError("chapter changed concurrently")
-            if str(current["content_hash"]) != content_hash:
-                raise RuntimeError("chapter content does not match its stored hash")
-            atomic_write_text(snapshot, content)
-            snapshot_written = True
-            connection.execute(
-                """
-                INSERT INTO chapter_versions VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    version_id,
-                    chapter.id,
-                    chapter.revision,
-                    snapshot_relative.as_posix(),
-                    _METADATA_CHANGE_SOURCE,
-                    _CHAPTER_TITLE_CHANGE_REASON,
-                    now.isoformat(),
-                    content_hash,
-                ),
-            )
-            cursor = connection.execute(
-                """
-                UPDATE chapters
-                SET title = ?, revision = revision + 1, memory_status = 'stale',
-                    updated_at = ?
-                WHERE id = ? AND revision = ? AND title = ? AND content_hash = ?
-                  AND is_deleted = 0
-                """,
-                (
-                    normalized,
-                    now.isoformat(),
-                    chapter.id,
-                    chapter.revision,
-                    chapter.title,
-                    content_hash,
-                ),
-            )
-            if cursor.rowcount != 1:
-                raise RuntimeError("chapter changed concurrently")
-            MemoryDependencyRepository.invalidate_formal_manuscript_in_connection(
-                connection,
+        current = connection.execute(
+            "SELECT title, revision, content_hash FROM chapters WHERE id = ? AND is_deleted = 0",
+            (chapter.id,),
+        ).fetchone()
+        if current is None:
+            raise KeyError(f"unknown chapter: {chapter.id}")
+        if (
+            int(current["revision"]) != chapter.revision
+            or str(current["title"]) != chapter.title
+            or str(current["content_hash"]) != content_hash
+        ):
+            raise RuntimeError("chapter changed concurrently")
+        file_transaction.register_created_file(snapshot)
+        atomic_write_text(snapshot, content)
+        connection.execute(
+            "INSERT INTO chapter_versions VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                version_id,
                 chapter.id,
-                chapter.revision + 1,
+                chapter.revision,
+                snapshot_relative.as_posix(),
+                _METADATA_CHANGE_SOURCE,
+                _CHAPTER_TITLE_CHANGE_REASON,
+                now.isoformat(),
                 content_hash,
+            ),
+        )
+        cursor = connection.execute(
+            """
+            UPDATE chapters
+            SET title = ?, revision = revision + 1, memory_status = 'stale',
+                updated_at = ?
+            WHERE id = ? AND revision = ? AND title = ? AND content_hash = ?
+              AND is_deleted = 0
+            """,
+            (
+                normalized,
+                now.isoformat(),
+                chapter.id,
+                chapter.revision,
+                chapter.title,
+                content_hash,
+            ),
+        )
+        if cursor.rowcount != 1:
+            raise RuntimeError("chapter changed concurrently")
+        MemoryDependencyRepository.invalidate_formal_manuscript_in_connection(
+            connection,
+            chapter.id,
+            chapter.revision + 1,
+            content_hash,
+        )
+        MemoryDependencyRepository.invalidate_in_connection(
+            connection,
+            chapter.id,
+            chapter.revision + 1,
+            content_hash,
+        )
+        ViewAssertionRepository.invalidate_source_revision_in_connection(
+            connection,
+            source_id=chapter.id,
+            new_revision=chapter.revision + 1,
+            updated_at=now.isoformat(),
+        )
+        OccurrenceRepository.invalidate_source_revision_in_connection(
+            connection,
+            source_id=chapter.id,
+            new_revision=chapter.revision + 1,
+            updated_at=now.isoformat(),
+        )
+        if self.read_content_exact(chapter.id, connection=connection) != content:
+            raise RuntimeError("chapter content changed during title update")
+        return self.get_chapter(
+            chapter.id,
+            include_deleted=False,
+            connection=connection,
+        )
+
+    def save_content(
+        self,
+        chapter_id: str,
+        content: str,
+        *,
+        source: str,
+        reason: str,
+        invalidate_memory: bool = True,
+        expected_revision: int | None = None,
+        connection: sqlite3.Connection | None = None,
+        file_transaction: ChapterFileTransaction | None = None,
+    ) -> Chapter:
+        if connection is None:
+            if file_transaction is not None:
+                raise ValueError("chapter file transaction requires a connection")
+            owned = self.project.database.connect()
+            local_files = ChapterFileTransaction()
+            try:
+                with owned:
+                    chapter = self._save_content(
+                        owned,
+                        local_files,
+                        chapter_id,
+                        content,
+                        source=source,
+                        reason=reason,
+                        invalidate_memory=invalidate_memory,
+                        expected_revision=expected_revision,
+                    )
+            except BaseException:
+                local_files.rollback()
+                raise
+            else:
+                local_files.finalize()
+                return chapter
+            finally:
+                owned.close()
+        if file_transaction is None:
+            raise ValueError("caller connection requires a chapter file transaction")
+        return self._save_content(
+            connection,
+            file_transaction,
+            chapter_id,
+            content,
+            source=source,
+            reason=reason,
+            invalidate_memory=invalidate_memory,
+            expected_revision=expected_revision,
+        )
+
+    def _save_content(
+        self,
+        connection: sqlite3.Connection,
+        file_transaction: ChapterFileTransaction,
+        chapter_id: str,
+        content: str,
+        *,
+        source: str,
+        reason: str,
+        invalidate_memory: bool,
+        expected_revision: int | None,
+    ) -> Chapter:
+        chapter = self.get_chapter(
+            chapter_id,
+            include_deleted=False,
+            connection=connection,
+        )
+        if expected_revision is not None and chapter.revision != expected_revision:
+            raise StaleChapterRevisionError(
+                "chapter revision changed: "
+                f"expected {expected_revision}, current {chapter.revision}"
             )
+        canonical = self._resolve_manuscript_path(chapter.content_path)
+        previous = self._read_content_path_exact(chapter.content_path)
+        version_id = new_id()
+        snapshot_relative = (
+            Path(".ai_pipeline")
+            / "history"
+            / chapter.id
+            / f"revision_{chapter.revision}_{version_id}.md"
+        )
+        snapshot = self.project.layout.root / snapshot_relative
+        file_transaction.register_created_file(snapshot)
+        atomic_write_text(snapshot, previous)
+        file_transaction.register_replaced_text(canonical, previous)
+        atomic_write_text(canonical, content)
+        now = _now()
+        previous_hash = _hash(previous)
+        content_hash = _hash(content)
+        connection.execute(
+            "INSERT INTO chapter_versions VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                version_id,
+                chapter.id,
+                chapter.revision,
+                snapshot_relative.as_posix(),
+                source,
+                reason,
+                now.isoformat(),
+                previous_hash,
+            ),
+        )
+        cursor = connection.execute(
+            """
+            UPDATE chapters SET revision = revision + 1, content_hash = ?,
+            memory_status = CASE WHEN ? THEN 'stale' ELSE memory_status END,
+            updated_at = ?
+            WHERE id = ? AND revision = ? AND content_hash = ? AND is_deleted = 0
+            """,
+            (
+                content_hash,
+                int(invalidate_memory),
+                now.isoformat(),
+                chapter.id,
+                chapter.revision,
+                previous_hash,
+            ),
+        )
+        if cursor.rowcount != 1:
+            raise RuntimeError("chapter changed concurrently")
+        MemoryDependencyRepository.invalidate_formal_manuscript_in_connection(
+            connection,
+            chapter.id,
+            chapter.revision + 1,
+            content_hash,
+        )
+        if invalidate_memory:
             MemoryDependencyRepository.invalidate_in_connection(
                 connection,
                 chapter.id,
@@ -351,108 +629,17 @@ class ChapterRepository:
                 new_revision=chapter.revision + 1,
                 updated_at=now.isoformat(),
             )
-            if self.read_content_exact(chapter.id) != content:
-                raise RuntimeError("chapter content changed during title update")
-            connection.commit()
-        except BaseException:
-            connection.rollback()
-            if snapshot_written:
-                snapshot.unlink(missing_ok=True)
-            raise
-        finally:
-            connection.close()
-        return self.get_chapter(chapter.id, include_deleted=False)
-
-    def save_content(
-        self,
-        chapter_id: str,
-        content: str,
-        *,
-        source: str,
-        reason: str,
-        invalidate_memory: bool = True,
-        expected_revision: int | None = None,
-    ) -> Chapter:
-        chapter = self.get_chapter(chapter_id, include_deleted=False)
-        if expected_revision is not None and chapter.revision != expected_revision:
-            raise StaleChapterRevisionError(
-                "chapter revision changed: "
-                f"expected {expected_revision}, current {chapter.revision}"
+            OccurrenceRepository.invalidate_source_revision_in_connection(
+                connection,
+                source_id=chapter.id,
+                new_revision=chapter.revision + 1,
+                updated_at=now.isoformat(),
             )
-        canonical = self.project.layout.root / chapter.content_path
-        previous = canonical.read_text(encoding="utf-8")
-        version_id = new_id()
-        snapshot_relative = (
-            Path(".ai_pipeline")
-            / "history"
-            / chapter.id
-            / f"revision_{chapter.revision}_{version_id}.md"
+        return self.get_chapter(
+            chapter.id,
+            include_deleted=False,
+            connection=connection,
         )
-        snapshot = self.project.layout.root / snapshot_relative
-        atomic_write_text(snapshot, previous)
-        atomic_write_text(canonical, content)
-        now = _now()
-        connection = self.project.database.connect()
-        try:
-            with connection:
-                connection.execute(
-                    """
-                    INSERT INTO chapter_versions VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        version_id,
-                        chapter.id,
-                        chapter.revision,
-                        snapshot_relative.as_posix(),
-                        source,
-                        reason,
-                        now.isoformat(),
-                        _hash(previous),
-                    ),
-                )
-                cursor = connection.execute(
-                    """
-                    UPDATE chapters SET revision = revision + 1, content_hash = ?,
-                    memory_status = CASE WHEN ? THEN 'stale' ELSE memory_status END,
-                    updated_at = ?
-                    WHERE id = ? AND revision = ? AND is_deleted = 0
-                    """,
-                    (
-                        _hash(content),
-                        int(invalidate_memory),
-                        now.isoformat(),
-                        chapter.id,
-                        chapter.revision,
-                    ),
-                )
-                if cursor.rowcount != 1:
-                    raise RuntimeError("chapter changed concurrently")
-                MemoryDependencyRepository.invalidate_formal_manuscript_in_connection(
-                    connection,
-                    chapter.id,
-                    chapter.revision + 1,
-                    _hash(content),
-                )
-                if invalidate_memory:
-                    MemoryDependencyRepository.invalidate_in_connection(
-                        connection,
-                        chapter.id,
-                        chapter.revision + 1,
-                        _hash(content),
-                    )
-                    ViewAssertionRepository.invalidate_source_revision_in_connection(
-                        connection,
-                        source_id=chapter.id,
-                        new_revision=chapter.revision + 1,
-                        updated_at=now.isoformat(),
-                    )
-        except BaseException:
-            atomic_write_text(canonical, previous)
-            snapshot.unlink(missing_ok=True)
-            raise
-        finally:
-            connection.close()
-        return self.get_chapter(chapter.id)
 
     def list_versions(self, chapter_id: str) -> list[ChapterVersion]:
         validate_id(chapter_id)
@@ -538,6 +725,11 @@ class ChapterRepository:
                 connection,
                 chapter.id,
             )
+            OccurrenceRepository.invalidate_for_deleted_chapter_in_connection(
+                connection,
+                source_id=chapter.id,
+                updated_at=_now().isoformat(),
+            )
             connection.commit()
         except BaseException:
             connection.rollback()
@@ -555,24 +747,84 @@ class ChapterRepository:
         connection = self.project.database.connect()
         try:
             row = connection.execute(
-                "SELECT deleted_content_path FROM chapters WHERE id = ?", (chapter.id,)
+                "SELECT revision, content_hash, content_path, "
+                "deleted_content_path FROM chapters WHERE id = ?",
+                (chapter.id,),
             ).fetchone()
             if row is None or not row["deleted_content_path"]:
                 raise RuntimeError("deleted chapter has no trash location")
-            trash = self.project.layout.root / row["deleted_content_path"]
-            canonical = self.project.layout.root / chapter.content_path
-            canonical.parent.mkdir(parents=True, exist_ok=True)
-            os.replace(trash, canonical)
+            retained_revision = int(row["revision"])
+            retained_hash = str(row["content_hash"])
+            retained_content_path = str(row["content_path"])
+            relative = Path(str(row["deleted_content_path"]))
+            canonical = self._resolve_manuscript_path(retained_content_path)
+            trash_root = (self.project.layout.root / ".ai_pipeline" / "trash").resolve()
+            trash = (self.project.layout.root / relative).resolve()
+            if not trash.is_relative_to(trash_root):
+                raise RuntimeError("chapter restore source is invalid")
+            if not trash.is_file():
+                raise RuntimeError("chapter restore source is missing")
             try:
-                with connection:
-                    connection.execute(
-                        "UPDATE chapters SET is_deleted = 0, deleted_content_path = NULL, "
-                        "updated_at = ? "
-                        "WHERE id = ?",
-                        (_now().isoformat(), chapter.id),
-                    )
+                with open(trash, encoding="utf-8", newline="") as handle:
+                    restored_text = handle.read()
+            except UnicodeDecodeError:
+                raise RuntimeError("chapter restore source is invalid") from None
+            verified_hash = hashlib.sha256(restored_text.encode("utf-8")).hexdigest()
+            if verified_hash != retained_hash:
+                raise RuntimeError("chapter restore source changed")
+
+            connection.execute("BEGIN IMMEDIATE")
+            moved = False
+            try:
+                current = connection.execute(
+                    "SELECT is_deleted, revision, content_hash, "
+                    "content_path, deleted_content_path "
+                    "FROM chapters WHERE id = ?",
+                    (chapter.id,),
+                ).fetchone()
+                identity_consistent = (
+                    current is not None
+                    and int(current["is_deleted"]) == 1
+                    and int(current["revision"]) == retained_revision
+                    and str(current["content_hash"]) == retained_hash
+                    and str(current["content_path"]) == retained_content_path
+                    and str(current["deleted_content_path"]) == relative.as_posix()
+                )
+                if not identity_consistent:
+                    raise RuntimeError("chapter changed before restore")
+                canonical.parent.mkdir(parents=True, exist_ok=True)
+                os.replace(trash, canonical)
+                moved = True
+                try:
+                    with open(canonical, encoding="utf-8", newline="") as handle:
+                        moved_text = handle.read()
+                except UnicodeDecodeError:
+                    raise RuntimeError("chapter restore source is invalid") from None
+                moved_hash = hashlib.sha256(moved_text.encode("utf-8")).hexdigest()
+                if moved_hash != retained_hash:
+                    raise RuntimeError("chapter restore source changed")
+                cursor = connection.execute(
+                    "UPDATE chapters SET is_deleted = 0, "
+                    "deleted_content_path = NULL, updated_at = ? "
+                    "WHERE id = ? AND is_deleted = 1 AND revision = ? "
+                    "AND content_hash = ? AND content_path = ? "
+                    "AND deleted_content_path = ?",
+                    (
+                        _now().isoformat(),
+                        chapter.id,
+                        retained_revision,
+                        retained_hash,
+                        retained_content_path,
+                        relative.as_posix(),
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise RuntimeError("chapter changed before restore")
+                connection.commit()
             except BaseException:
-                os.replace(canonical, trash)
+                connection.rollback()
+                if moved:
+                    os.replace(canonical, trash)
                 raise
         finally:
             connection.close()
@@ -592,8 +844,7 @@ class ChapterRepository:
         if expected_sources is not None and (
             not isinstance(expected_sources, tuple)
             or any(
-                not isinstance(source, ChapterRelocationExpectation)
-                for source in expected_sources
+                not isinstance(source, ChapterRelocationExpectation) for source in expected_sources
             )
         ):
             raise TypeError("chapter relocation expectations are invalid")
@@ -638,9 +889,7 @@ class ChapterRepository:
                 if _hash(content) != str(row["content_hash"]):
                     raise RuntimeError("chapter content does not match its stored hash")
                 new_relative = (
-                    Path("manuscript")
-                    / f"volume_{target_volume_id}"
-                    / f"chapter_{chapter.id}.md"
+                    Path("manuscript") / f"volume_{target_volume_id}" / f"chapter_{chapter.id}.md"
                 )
                 old_path = self._resolve_manuscript_path(chapter.content_path)
                 new_path = self._resolve_manuscript_path(new_relative)
@@ -655,9 +904,7 @@ class ChapterRepository:
                 ).fetchone()[0]
             )
             now = _now()
-            for offset, (chapter, content, old_path, new_path, new_relative) in enumerate(
-                prepared
-            ):
+            for offset, (chapter, content, old_path, new_path, new_relative) in enumerate(prepared):
                 content_hash = _hash(content)
                 version_id = new_id()
                 snapshot_relative = (
@@ -720,6 +967,12 @@ class ChapterRepository:
                     content_hash,
                 )
                 ViewAssertionRepository.invalidate_source_revision_in_connection(
+                    connection,
+                    source_id=chapter.id,
+                    new_revision=chapter.revision + 1,
+                    updated_at=now.isoformat(),
+                )
+                OccurrenceRepository.invalidate_source_revision_in_connection(
                     connection,
                     source_id=chapter.id,
                     new_revision=chapter.revision + 1,

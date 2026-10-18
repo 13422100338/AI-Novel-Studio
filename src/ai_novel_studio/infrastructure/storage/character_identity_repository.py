@@ -34,16 +34,41 @@ class CharacterIdentityRepository:
         self.project = project
 
     def apply_merge(
-        self, source_character_id: str, target_character_id: str, *, reason: str
+        self,
+        source_character_id: str,
+        target_character_id: str,
+        *,
+        reason: str,
+        expected_source_state_event_count: int | None = None,
     ) -> CharacterIdentityMerge:
         if not reason.strip():
             raise CharacterIdentityRepositoryError("人物归并原因不能为空")
+        if expected_source_state_event_count is not None and (
+            isinstance(expected_source_state_event_count, bool)
+            or not isinstance(expected_source_state_event_count, int)
+            or expected_source_state_event_count < 0
+        ):
+            raise CharacterIdentityRepositoryError(
+                "subject merge expected revision is invalid"
+            )
         now = datetime.now(UTC).isoformat()
         merge_id = new_id()
         with self.project.database.connect() as connection, connection:
             self._character(connection, source_character_id)
             self._character(connection, target_character_id)
             self._assert_merge_shape(connection, source_character_id, target_character_id)
+            if expected_source_state_event_count is not None:
+                current_state_event_count = int(
+                    connection.execute(
+                        "SELECT COUNT(*) FROM character_state_events "
+                        "WHERE character_id = ?",
+                        (source_character_id,),
+                    ).fetchone()[0]
+                )
+                if current_state_event_count != expected_source_state_event_count:
+                    raise CharacterIdentityRepositoryError(
+                        "subject cards changed since proposal"
+                    )
 
             source_name, source_aliases = self._subject_identity(
                 connection, source_character_id

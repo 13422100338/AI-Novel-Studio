@@ -9,6 +9,11 @@ from ai_novel_studio.infrastructure.storage.schema_migrations_v17 import MIGRATI
 from ai_novel_studio.infrastructure.storage.schema_migrations_v18 import MIGRATIONS_V18
 from ai_novel_studio.infrastructure.storage.schema_migrations_v19 import MIGRATIONS_V19
 from ai_novel_studio.infrastructure.storage.schema_migrations_v20 import MIGRATIONS_V20
+from ai_novel_studio.infrastructure.storage.schema_migrations_v21 import MIGRATIONS_V21
+from ai_novel_studio.infrastructure.storage.schema_migrations_v22 import MIGRATIONS_V22
+from ai_novel_studio.infrastructure.storage.schema_migrations_v23 import MIGRATIONS_V23
+from ai_novel_studio.infrastructure.storage.schema_migrations_v24 import MIGRATIONS_V24
+from ai_novel_studio.infrastructure.storage.schema_migrations_v25 import MIGRATIONS_V25
 
 
 def _compose_migrations(
@@ -38,6 +43,11 @@ MIGRATIONS = _compose_migrations(
     MIGRATIONS_V18,
     MIGRATIONS_V19,
     MIGRATIONS_V20,
+    MIGRATIONS_V21,
+    MIGRATIONS_V22,
+    MIGRATIONS_V23,
+    MIGRATIONS_V24,
+    MIGRATIONS_V25,
 )
 LATEST_SCHEMA_VERSION = max(MIGRATIONS)
 

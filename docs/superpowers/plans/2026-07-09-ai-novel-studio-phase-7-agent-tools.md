@@ -881,7 +881,7 @@ Expected: PASS.
 - [ ] **Step 3: Run privacy scan**
 
 ```powershell
-rg -n "s[k]-[A-Za-z0-9]|s[k]-proj|api[_-]?k[e]y|C:\\\\Users\\\\" README.md docs src tests pyproject.toml
+rg -n "s[k]-[A-Za-z0-9]|s[k]-proj|api[_-]?k[e]y|<local-workspace>" README.md docs src tests pyproject.toml
 ```
 
 Expected: no sensitive matches in release docs/source. If test fixtures intentionally mention credential field names, verify no plaintext secret is present.

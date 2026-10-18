@@ -187,6 +187,8 @@ class ProjectGenerationSession:
         output_token_limit: int,
         target_words: int,
         audit_policy: AuditPolicy = AuditPolicy.MINIMAL,
+        *,
+        instruction: str = "",
     ) -> str:
         if self.current_chapter_id is None or self.current_chapter_revision is None:
             raise RuntimeError("请先选择要生成的章节")
@@ -208,6 +210,7 @@ class ProjectGenerationSession:
                 model_provider_id=route.provider_id,
                 model_id=route.model_id,
                 audit_policy=audit_policy,
+                instruction=instruction,
             )
         )
         self.messages.put(prepared.run.id, prepared.messages)

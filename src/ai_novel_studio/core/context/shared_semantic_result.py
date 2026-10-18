@@ -8,7 +8,7 @@ from ai_novel_studio.domain.identifiers import validate_id
 from ai_novel_studio.domain.memory import Authority, ReviewStatus
 from ai_novel_studio.domain.view import EpistemicStatus, ViewType
 
-SHARED_SEMANTIC_RESULT_V1 = "shared-semantic-result-v1"
+SHARED_SEMANTIC_RESULT_V2 = "shared-semantic-result-v2"
 _MAX_MENTIONS = 100
 _MAX_ALIASES = 100
 _MAX_OCCURRENCES = 100
@@ -21,6 +21,24 @@ _MAX_QUOTE = 2_000
 _MAX_TOTAL_TEXT = 32_000
 _MAX_SPANS = 32
 _MAX_CANDIDATE_ID = 512
+
+
+class ViewDifferenceKind(StrEnum):
+    SECRET = "SECRET"
+    DECEPTION = "DECEPTION"
+    SUSPICION = "SUSPICION"
+    PARTIAL_DISCLOSURE = "PARTIAL_DISCLOSURE"
+    HIDDEN_FACT = "HIDDEN_FACT"
+    FALSE_BELIEF = "FALSE_BELIEF"
+
+
+_READER_VIEW_KINDS: frozenset[ViewDifferenceKind] = frozenset(
+    {
+        ViewDifferenceKind.DECEPTION,
+        ViewDifferenceKind.PARTIAL_DISCLOSURE,
+        ViewDifferenceKind.FALSE_BELIEF,
+    }
+)
 
 
 class SemanticCandidateKind(StrEnum):
@@ -150,9 +168,14 @@ class ViewDifferenceCandidate:
     epistemic_status: EpistemicStatus | None
     content: str
     spans: tuple[SourceSpan, ...]
+    difference_kind: ViewDifferenceKind
     occurrence_candidate_id: str | None = None
     observer_mention_candidate_id: str | None = None
     target_mention_candidate_id: str | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.difference_kind, ViewDifferenceKind):
+            raise ValueError("semantic result view difference kind is invalid")
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,14 +195,14 @@ class SharedSemanticResult:
     state_changes: tuple[StateChangeCandidate, ...] = ()
     view_differences: tuple[ViewDifferenceCandidate, ...] = ()
     summary: WindowSummaryCandidate | None = None
-    schema_version: str = SHARED_SEMANTIC_RESULT_V1
+    schema_version: str = SHARED_SEMANTIC_RESULT_V2
     authority: Authority = Authority.MODEL_EXTRACTED
     review_status: ReviewStatus = ReviewStatus.REVIEW
 
     def __post_init__(self) -> None:
         if (
             not isinstance(self.window, SemanticWindow)
-            or self.schema_version != SHARED_SEMANTIC_RESULT_V1
+            or self.schema_version != SHARED_SEMANTIC_RESULT_V2
             or self.authority is not Authority.MODEL_EXTRACTED
             or self.review_status is not ReviewStatus.REVIEW
         ):
@@ -387,6 +410,8 @@ def _validate_candidate(candidate: object, window: SemanticWindow) -> int:
             candidate.epistemic_status, EpistemicStatus
         ):
             raise ValueError("semantic result view shape is invalid")
+        if not isinstance(candidate.difference_kind, ViewDifferenceKind):
+            raise ValueError("semantic result view kind is invalid")
         if view_type is ViewType.CHARACTER_VIEW:
             observer = candidate.observer
             observer_mention = candidate.observer_mention_candidate_id
@@ -404,6 +429,8 @@ def _validate_candidate(candidate: object, window: SemanticWindow) -> int:
                 observer is not None and target is not None and observer == target
             ):
                 raise ValueError("semantic result view shape is invalid")
+            if candidate.epistemic_status is EpistemicStatus.KNOWS:
+                raise ValueError("semantic result view shape is invalid")
         elif view_type is ViewType.READER_VIEW:
             if (
                 candidate.observer is not None
@@ -414,6 +441,8 @@ def _validate_candidate(candidate: object, window: SemanticWindow) -> int:
                     == (candidate.target_mention_candidate_id is None)
                 )
             ):
+                raise ValueError("semantic result view shape is invalid")
+            if candidate.difference_kind not in _READER_VIEW_KINDS:
                 raise ValueError("semantic result view shape is invalid")
         else:
             raise ValueError("semantic result view shape is invalid")

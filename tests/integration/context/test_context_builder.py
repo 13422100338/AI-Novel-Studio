@@ -411,7 +411,7 @@ def test_context_manifest_persists_sources_omissions_and_dependency(tmp_path: Pa
     payload = json.loads(path.read_text(encoding="utf-8"))
 
     assert payload["chapter_id"] == current.id
-    assert payload["schema_version"] == 2
+    assert payload["schema_version"] == 3
     assert payload["compiler_version"] == "context-compiler/2.0"
     assert payload["target_chapter_revision"] == current.revision
     assert payload["requirement_revision"] == 12
@@ -467,7 +467,7 @@ def test_context_manifest_loads_legacy_v1_json_with_explicit_metadata(
         repository.save(replace(loaded, id=new_id()))
 
 
-@pytest.mark.parametrize("schema_version", [None, 3])
+@pytest.mark.parametrize("schema_version", [None, 4])
 def test_context_manifest_rejects_explicit_invalid_schema(
     tmp_path: Path,
     schema_version: int | None,
@@ -522,3 +522,450 @@ def test_context_manifest_rejects_direct_invalid_version_contract(
             schema_version=schema_version,
             compiler_version=compiler_version,
         )
+
+
+def _provenance_block(
+    block_id: str,
+    content: str,
+    priority: int,
+    *,
+    required: bool = False,
+    source_chapter_id: str = "chapter-source",
+    source_revision: int = 4,
+    source_hash: str | None = None,
+    provenance_overrides: dict[str, object] | None = None,
+) -> ContextBlock:
+    from ai_novel_studio.core.context.context_builder import RetrievalProvenance
+
+    hash_value = source_hash or "a" * 64
+    provenance_fields: dict[str, object] = {
+        "document_id": f"doc-{block_id}",
+        "expanded_document_ids": (f"doc-{block_id}", f"neighbor-{block_id}"),
+        "source_id": f"FORMAL_MANUSCRIPT:{block_id}:0",
+        "chapter_id": source_chapter_id,
+        "volume_id": "volume-1",
+        "revision": source_revision,
+        "source_hash": hash_value,
+        "start": 10,
+        "end": 40,
+        "retrieval_routes": ("EXACT_PHRASE", "KEYWORD"),
+        "lexical_score": 1.5,
+        "semantic_score": 0.0,
+        "participant_boost": 0.25,
+        "pinned_weight": 0.0,
+        "recency_score": 0.9,
+        "stale_penalty": 0.0,
+        "total_score": 2.65,
+    }
+    if provenance_overrides:
+        provenance_fields.update(provenance_overrides)
+    return ContextBlock(
+        id=block_id,
+        category="history",
+        content=content,
+        priority=priority,
+        required=required,
+        source_type="FORMAL_MANUSCRIPT",
+        source_id=str(provenance_fields["source_id"]),
+        source_chapter_id=source_chapter_id,
+        source_revision=source_revision,
+        source_hash=hash_value,
+        rationale="检索命中",
+        retrieval=RetrievalProvenance(**provenance_fields),  # type: ignore[arg-type]
+    )
+
+
+def test_builder_records_retrieval_trace_for_selected_and_omitted_blocks() -> None:
+    selected_block = _provenance_block("trace-selected", "可见内容", 10)
+    omitted_block = _provenance_block("trace-omitted", "X" * 500, 50)
+    plain_block = _block("plain", "无溯源", 60)
+
+    built = ContextBuilder(CharacterEstimator()).build(
+        ContextBuildRequest(
+            chapter_id="chapter-current",
+            run_id="run-trace",
+            budget=TokenBudget(120, 20, 10),
+            blocks=(selected_block, omitted_block, plain_block),
+        )
+    )
+
+    manifest = built.manifest
+    assert manifest.schema_version == 3
+    trace = manifest.retrieval_trace
+    assert [item.block_id for item in trace] == ["trace-selected", "trace-omitted"]
+    chosen = trace[0]
+    dropped = trace[1]
+    assert chosen.selected is True
+    assert chosen.omission_reason is None
+    assert chosen.retrieval_routes == ("EXACT_PHRASE", "KEYWORD")
+    assert chosen.total_score == 2.65
+    assert dropped.selected is False
+    omitted_item = next(
+        item for item in manifest.omitted if item.block_id == "trace-omitted"
+    )
+    assert dropped.omission_reason == omitted_item.reason
+    selected_ids = {item.block_id for item in manifest.selected}
+    omitted_ids = {item.block_id for item in manifest.omitted}
+    for item in trace:
+        target_ids = selected_ids if item.selected else omitted_ids
+        assert item.block_id in target_ids
+
+
+def test_v3_manifest_roundtrips_retrieval_trace_without_body_text(
+    tmp_path: Path,
+) -> None:
+    project = ProjectRepository.create(tmp_path / "project", "trace roundtrip")
+    chapters = ChapterRepository(project)
+    chapter = chapters.create_chapter(project.list_volumes()[0].id, "current")
+    with project.database.connect() as connection:
+        row = connection.execute(
+            "SELECT revision, content_hash FROM chapters WHERE id = ?",
+            (chapter.id,),
+        ).fetchone()
+    body_marker = "TRACE-BODY-MARKER-正文"
+    built = ContextBuilder(CharacterEstimator()).build(
+        ContextBuildRequest(
+            chapter_id=chapter.id,
+            run_id="run-roundtrip",
+            budget=TokenBudget(200, 20, 10),
+            blocks=(
+                _provenance_block(
+                    "kept",
+                    body_marker,
+                    10,
+                    source_chapter_id=chapter.id,
+                    source_revision=int(row["revision"]),
+                    source_hash=str(row["content_hash"]),
+                ),
+                _block("plain", "普通块", 20),
+            ),
+        )
+    )
+    repository = ContextManifestRepository(project)
+    path = repository.save(built.manifest)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+
+    assert payload["schema_version"] == 3
+    assert len(payload["retrieval_trace"]) == 1
+    assert body_marker not in json.dumps(payload, ensure_ascii=False)
+    loaded = repository.load(built.manifest.id)
+
+    assert loaded.schema_version == 3
+    assert loaded.retrieval_trace == built.manifest.retrieval_trace
+
+
+def test_v2_manifest_still_loads_with_empty_trace(tmp_path: Path) -> None:
+    project = ProjectRepository.create(tmp_path / "project", "v2 compat")
+    chapter = ChapterRepository(project).create_chapter(
+        project.list_volumes()[0].id,
+        "current",
+    )
+    built = ContextBuilder(CharacterEstimator()).build(
+        ContextBuildRequest(
+            chapter_id=chapter.id,
+            run_id="run-v2",
+            budget=TokenBudget(100, 20, 10),
+            blocks=(_block("source", "visible", 10),),
+        )
+    )
+    repository = ContextManifestRepository(project)
+    path = repository.save(built.manifest)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["schema_version"] = 2
+    payload.pop("retrieval_trace", None)
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    loaded = repository.load(built.manifest.id)
+    assert loaded.schema_version == 2
+    assert loaded.retrieval_trace == ()
+
+    payload["retrieval_trace"] = [
+        {
+            "block_id": "smuggled",
+            "selected": True,
+            "omission_reason": None,
+            "document_id": "d",
+            "expanded_document_ids": [],
+            "source_id": "s",
+            "chapter_id": None,
+            "volume_id": None,
+            "revision": None,
+            "source_hash": "h",
+            "start": None,
+            "end": None,
+            "retrieval_routes": [],
+            "lexical_score": 0,
+            "semantic_score": 0,
+            "participant_boost": 0,
+            "pinned_weight": 0,
+            "recency_score": 0,
+            "stale_penalty": 0,
+            "total_score": 0,
+        }
+    ]
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    reloaded = repository.load(built.manifest.id)
+    assert reloaded.schema_version == 2
+    assert reloaded.retrieval_trace == ()
+
+
+def test_retrieval_trace_item_validation_rejects_bad_rows() -> None:
+    from ai_novel_studio.core.context.context_manifest import RetrievalTraceItem
+
+    base: dict[str, object] = {
+        "block_id": "b",
+        "selected": True,
+        "omission_reason": None,
+        "document_id": "doc",
+        "expanded_document_ids": ("doc",),
+        "source_id": "src",
+        "chapter_id": None,
+        "volume_id": None,
+        "revision": 1,
+        "source_hash": "a" * 64,
+        "start": None,
+        "end": None,
+        "retrieval_routes": ("KEYWORD",),
+        "lexical_score": 0.0,
+        "semantic_score": 0.0,
+        "participant_boost": 0.0,
+        "pinned_weight": 0.0,
+        "recency_score": 0.0,
+        "stale_penalty": 0.0,
+        "total_score": 0.0,
+    }
+    assert RetrievalTraceItem(**base).block_id == "b"
+
+    def broken(**changes: object) -> dict[str, object]:
+        row = dict(base)
+        row.update(changes)
+        return row
+
+    with pytest.raises(ValueError):
+        RetrievalTraceItem(**broken(selected=False))
+    with pytest.raises(ValueError):
+        RetrievalTraceItem(**broken(omission_reason="dropped"))
+    with pytest.raises(ValueError):
+        RetrievalTraceItem(**broken(start=40, end=10))
+    with pytest.raises(ValueError):
+        RetrievalTraceItem(**broken(end=10))
+    with pytest.raises(ValueError):
+        RetrievalTraceItem(**broken(revision=-1))
+    with pytest.raises(ValueError):
+        RetrievalTraceItem(**broken(total_score=True))
+    with pytest.raises(ValueError):
+        RetrievalTraceItem(**broken(document_id=""))
+
+
+def test_manifest_save_rolls_back_file_when_database_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import sqlite3
+
+    from ai_novel_studio.infrastructure.storage.database import Database
+
+    project = ProjectRepository.create(tmp_path / "project", "rollback")
+    chapter = ChapterRepository(project).create_chapter(
+        project.list_volumes()[0].id,
+        "current",
+    )
+    manifest = ContextBuilder(CharacterEstimator()).build(
+        ContextBuildRequest(
+            chapter_id=chapter.id,
+            run_id="run-rollback",
+            budget=TokenBudget(100, 20, 10),
+            blocks=(_block("source", "visible", 10),),
+        )
+    ).manifest
+    repository = ContextManifestRepository(project)
+    expected_path = (
+        project.layout.pipeline / "manifests" / f"context_{manifest.id}.json"
+    )
+
+    def broken_connect(self: Database) -> object:
+        raise sqlite3.OperationalError("database is closed")
+
+    monkeypatch.setattr(Database, "connect", broken_connect)
+    with pytest.raises(sqlite3.OperationalError):
+        repository.save(manifest)
+
+    assert not expected_path.exists()
+
+
+def _valid_trace_row() -> dict[str, object]:
+    return {
+        "block_id": "kept",
+        "selected": True,
+        "omission_reason": None,
+        "document_id": "doc-kept",
+        "expanded_document_ids": ("doc-kept", "neighbor"),
+        "source_id": "FORMAL_MANUSCRIPT:src:0",
+        "chapter_id": None,
+        "volume_id": None,
+        "revision": 1,
+        "source_hash": "a" * 64,
+        "start": 0,
+        "end": 5,
+        "retrieval_routes": ("KEYWORD",),
+        "lexical_score": 1.0,
+        "semantic_score": 0.0,
+        "participant_boost": 0.0,
+        "pinned_weight": 0.0,
+        "recency_score": 0.0,
+        "stale_penalty": 0.0,
+        "total_score": 1.0,
+    }
+
+
+def test_retrieval_trace_item_fails_closed_on_nan_and_identity_gaps() -> None:
+    from ai_novel_studio.core.context.context_manifest import RetrievalTraceItem
+
+    base = _valid_trace_row()
+
+    def broken(**changes: object) -> dict[str, object]:
+        row = dict(base)
+        row.update(changes)
+        return row
+
+    assert RetrievalTraceItem(**base).block_id == "kept"
+
+    cases = (
+        {"lexical_score": float("nan")},
+        {"total_score": float("inf")},
+        {"semantic_score": -float("inf")},
+        {"source_hash": "not-a-sha256"},
+        {"source_hash": "A" * 64},
+        {"expanded_document_ids": ()},
+        {"expanded_document_ids": ("neighbor",)},
+        {"expanded_document_ids": ("doc-kept", "doc-kept")},
+        {"retrieval_routes": ()},
+        {"retrieval_routes": ("UNKNOWN",)},
+        {"retrieval_routes": ("KEYWORD", "KEYWORD")},
+        {"retrieval_routes": ("keyword",)},
+    )
+    for changes in cases:
+        with pytest.raises(ValueError):
+            RetrievalTraceItem(**broken(**changes))
+
+
+def test_manifest_rejects_orphan_mislabeled_and_duplicate_trace_rows(
+    tmp_path: Path,
+) -> None:
+    project = ProjectRepository.create(tmp_path / "project", "orphan trace")
+    chapter = ChapterRepository(project).create_chapter(
+        project.list_volumes()[0].id, "current"
+    )
+    with project.database.connect() as connection:
+        chapter_row = connection.execute(
+            "SELECT revision, content_hash FROM chapters WHERE id = ?",
+            (chapter.id,),
+        ).fetchone()
+    built = ContextBuilder(CharacterEstimator()).build(
+        ContextBuildRequest(
+            chapter_id=chapter.id,
+            run_id="run-orphan",
+            budget=TokenBudget(200, 20, 10),
+            blocks=(
+                _provenance_block(
+                    "kept",
+                    "可见内容",
+                    10,
+                    source_chapter_id=chapter.id,
+                    source_revision=int(chapter_row["revision"]),
+                    source_hash=str(chapter_row["content_hash"]),
+                ),
+            ),
+        )
+    )
+    from ai_novel_studio.core.context.context_manifest import RetrievalTraceItem
+
+    repository = ContextManifestRepository(project)
+
+    with pytest.raises(ValueError, match="context manifest retrieval trace"):
+        replace(
+            built.manifest,
+            retrieval_trace=(
+                *built.manifest.retrieval_trace,
+                RetrievalTraceItem(
+                    **{  # type: ignore[arg-type]
+                        **_valid_trace_row(),
+                        "block_id": "orphan",
+                        "document_id": "doc-orphan",
+                        "expanded_document_ids": ("doc-orphan",),
+                    }
+                ),
+            ),
+        )
+
+    mislabeled_rows = [
+        {**row, "selected": False, "omission_reason": "预算不足"}
+        for row in [json.loads(json.dumps(_valid_trace_row()))]
+    ]
+    path = repository.save(built.manifest)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["retrieval_trace"] = mislabeled_rows
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(ValueError, match="context manifest retrieval trace"):
+        repository.load(built.manifest.id)
+
+    duplicated = json.loads(path.read_text(encoding="utf-8"))
+    duplicated["schema_version"] = 3
+    duplicated["retrieval_trace"] = [
+        json.loads(json.dumps(_valid_trace_row())),
+        json.loads(json.dumps(_valid_trace_row())),
+    ]
+    path.write_text(json.dumps(duplicated), encoding="utf-8")
+    with pytest.raises(ValueError, match="context manifest retrieval trace"):
+        repository.load(built.manifest.id)
+
+
+def test_manifest_rejects_duplicate_selected_block_ids() -> None:
+    chapter_free_manifest = ContextBuilder(CharacterEstimator()).build(
+        ContextBuildRequest(
+            chapter_id="chapter-current",
+            run_id="run-dup",
+            budget=TokenBudget(100, 20, 10),
+            blocks=(_block("dup", "内容", 10),),
+        )
+    ).manifest
+
+    with pytest.raises(ValueError, match="context manifest block identity"):
+        replace(
+            chapter_free_manifest,
+            selected=chapter_free_manifest.selected
+            + chapter_free_manifest.selected[:1],
+        )
+
+
+def test_loader_unknown_trace_field_fails_fixed_without_payload_leak(
+    tmp_path: Path,
+) -> None:
+    project = ProjectRepository.create(tmp_path / "project", "unknown field")
+    chapter = ChapterRepository(project).create_chapter(
+        project.list_volumes()[0].id, "current"
+    )
+    built = ContextBuilder(CharacterEstimator()).build(
+        ContextBuildRequest(
+            chapter_id=chapter.id,
+            run_id="run-unknown",
+            budget=TokenBudget(100, 20, 10),
+            blocks=(_block("source", "visible", 10),),
+        )
+    )
+    repository = ContextManifestRepository(project)
+    path = repository.save(built.manifest)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["retrieval_trace"] = [
+        {
+            **json.loads(json.dumps(_valid_trace_row())),
+            "smuggled_field": "SECRET-INJECTION",
+        }
+    ]
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError) as caught:
+        repository.load(built.manifest.id)
+
+    assert str(caught.value) == "retrieval trace item is invalid"
+    assert "SECRET-INJECTION" not in str(caught.value)

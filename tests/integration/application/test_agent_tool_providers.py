@@ -114,12 +114,29 @@ def test_project_agent_tools_return_bounded_source_referenced_content(tmp_path: 
 
     registry = build_project_agent_registry(project)
 
+    chapter_index = registry.execute(
+        AgentToolName.LIST_CHAPTERS,
+        {"limit": 10, "offset": 0},
+        run_id="run",
+        chapter_id=chapter_2.id,
+        max_result_chars=500,
+    )
     excerpt = registry.execute(
         AgentToolName.READ_CHAPTER_EXCERPT,
         {"chapter_id": chapter_1.id, "max_chars": 20},
         run_id="run",
         chapter_id=chapter_2.id,
         max_result_chars=50,
+    )
+    batch = registry.execute(
+        AgentToolName.READ_CHAPTERS_BATCH,
+        {
+            "chapter_ids": [chapter_1.id, chapter_2.id],
+            "max_chars_per_chapter": 100,
+        },
+        run_id="run",
+        chapter_id=chapter_2.id,
+        max_result_chars=500,
     )
     memory = registry.execute(
         AgentToolName.SEARCH_MEMORY,
@@ -182,10 +199,30 @@ def test_project_agent_tools_return_bounded_source_referenced_content(tmp_path: 
         max_result_chars=500,
     )
 
-    for result in (excerpt, memory, state, knowledge_result, clues, canon, style):
+    for result in (
+        chapter_index,
+        excerpt,
+        batch,
+        memory,
+        state,
+        knowledge_result,
+        clues,
+        canon,
+        style,
+    ):
         assert result.content
-        assert len(result.content) <= 120
+        assert len(result.content) <= 500
+    assert chapter_1.id in chapter_index.content
+    assert chapter_2.id in chapter_index.content
+    assert "Opening" in chapter_index.content
+    assert "Aftermath" in chapter_index.content
     assert excerpt.source_refs[0].source_id == chapter_1.id
+    assert [ref.source_id for ref in batch.source_refs] == [
+        chapter_1.id,
+        chapter_2.id,
+    ]
+    assert "旧信被藏在井底" in batch.content
+    assert "主角开始追查旧信" in batch.content
     assert "旧信" in memory.content
     assert "寻找旧信" in state.content
     assert "character_name" in missing_character.content
@@ -213,3 +250,40 @@ def test_project_agent_tools_return_bounded_source_referenced_content(tmp_path: 
             chapter_id=chapter_2.id,
             max_result_chars=500,
         )
+
+
+def test_batch_chapter_reader_covers_a_full_small_novel_in_one_call(
+    tmp_path: Path,
+) -> None:
+    project = ProjectRepository.create(tmp_path / "novel", "Batch Reader")
+    chapters = ChapterRepository(project)
+    volume_id = project.list_volumes()[0].id
+    created = tuple(
+        chapters.create_chapter(
+            volume_id,
+            f"Chapter {index}",
+            str(index),
+            f"第{index}章正文。" + ("情节内容" * 80),
+        )
+        for index in range(1, 35)
+    )
+    registry = build_project_agent_registry(project)
+
+    result = registry.execute(
+        AgentToolName.READ_CHAPTERS_BATCH,
+        {
+            "chapter_ids": [chapter.id for chapter in created],
+            "max_chars_per_chapter": 600,
+        },
+        run_id="run",
+        chapter_id=created[-1].id,
+        max_result_chars=16_000,
+    )
+
+    assert len(result.source_refs) == 34
+    assert [ref.source_id for ref in result.source_refs] == [
+        chapter.id for chapter in created
+    ]
+    assert "第1章正文" in result.content
+    assert "第34章正文" in result.content
+    assert len(result.content) <= 16_000

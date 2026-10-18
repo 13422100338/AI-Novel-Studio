@@ -9,7 +9,7 @@ from ai_novel_studio.core.context.semantic_windowing import (
     project_semantic_windows,
 )
 from ai_novel_studio.core.context.shared_semantic_result import (
-    SHARED_SEMANTIC_RESULT_V1,
+    SHARED_SEMANTIC_RESULT_V2,
     AliasCandidate,
     OccurrenceCandidate,
     ParticipantLinkCandidate,
@@ -19,6 +19,7 @@ from ai_novel_studio.core.context.shared_semantic_result import (
     StateChangeCandidate,
     SubjectMentionCandidate,
     ViewDifferenceCandidate,
+    ViewDifferenceKind,
     WindowSummaryCandidate,
     candidate_source_id,
 )
@@ -82,10 +83,11 @@ def _result(window=None) -> SharedSemanticResult:
         ViewType.CHARACTER_VIEW,
         ResolvedSubjectReference(resolved.subject_id),
         target,
-        EpistemicStatus.KNOWS,
-        "观察者知道秘密",
+        EpistemicStatus.MISBELIEVES,
+        "观察者误信秘密",
         (_span(window, 4, 6),),
-        occurrence.candidate_id,
+        occurrence_candidate_id=occurrence.candidate_id,
+        difference_kind=ViewDifferenceKind.FALSE_BELIEF,
     )
     return SharedSemanticResult(
         window=window,
@@ -105,10 +107,11 @@ def _result(window=None) -> SharedSemanticResult:
 
 def test_result_is_bound_to_one_exact_window_and_has_fixed_review_defaults() -> None:
     result = _result()
-    assert result.schema_version == SHARED_SEMANTIC_RESULT_V1
+    assert result.schema_version == SHARED_SEMANTIC_RESULT_V2
     assert result.authority is Authority.MODEL_EXTRACTED
     assert result.review_status is ReviewStatus.REVIEW
     assert result.occurrences[0].candidate_id
+    assert result.view_differences[0].difference_kind is ViewDifferenceKind.FALSE_BELIEF
     with pytest.raises(FrozenInstanceError):
         result.summary = None  # type: ignore[misc]
 
@@ -161,6 +164,7 @@ def test_view_shape_is_sparse_and_reader_view_has_no_observer() -> None:
                     EpistemicStatus.KNOWS,
                     "知道",
                     (_span(window, 0, 1),),
+                    difference_kind=ViewDifferenceKind.FALSE_BELIEF,
                 ),
             ),
         )
@@ -265,3 +269,134 @@ def test_candidate_kind_is_closed_and_long_policy_ids_remain_valid() -> None:
     assert source_id.endswith(":participant-link:9999")
     with pytest.raises(ValueError, match="semantic result"):
         candidate_source_id(window, "custom-kind", 0)
+
+
+def test_explicit_v1_schema_version_fails_fixed() -> None:
+    window = _window()
+    with pytest.raises(ValueError, match="semantic result"):
+        SharedSemanticResult(
+            window=window,
+            schema_version=SHARED_SEMANTIC_RESULT_V2.replace("v2", "v1"),
+        )
+
+
+def _view(
+    window,
+    *,
+    view_type,
+    kind: ViewDifferenceKind,
+    status=None,
+) -> ViewDifferenceCandidate:
+    observer = (
+        ResolvedSubjectReference("00000000-0000-0000-0000-000000000011")
+        if view_type is ViewType.CHARACTER_VIEW
+        else None
+    )
+    return ViewDifferenceCandidate(
+        candidate_source_id(window, "view-difference", 0),
+        view_type,
+        observer,
+        ResolvedSubjectReference("00000000-0000-0000-0000-000000000010"),
+        status,
+        "差异内容",
+        (_span(window, 0, 1),),
+        difference_kind=kind,
+    )
+
+
+def test_character_view_accepts_all_six_kinds_and_rejects_plain_knows() -> None:
+    window = _window()
+    for kind in ViewDifferenceKind:
+        result = SharedSemanticResult(
+            window=window,
+            view_differences=(
+                _view(
+                    window,
+                    view_type=ViewType.CHARACTER_VIEW,
+                    kind=kind,
+                    status=EpistemicStatus.MISBELIEVES,
+                ),
+            ),
+        )
+        assert result.view_differences[0].difference_kind is kind
+    with pytest.raises(ValueError, match="semantic result"):
+        SharedSemanticResult(
+            window=window,
+            view_differences=(
+                _view(
+                    window,
+                    view_type=ViewType.CHARACTER_VIEW,
+                    kind=ViewDifferenceKind.SECRET,
+                    status=EpistemicStatus.KNOWS,
+                ),
+            ),
+        )
+
+
+def test_reader_view_kind_allowlist_is_enforced_at_envelope() -> None:
+    window = _window()
+    allowed = (
+        ViewDifferenceKind.DECEPTION,
+        ViewDifferenceKind.PARTIAL_DISCLOSURE,
+        ViewDifferenceKind.FALSE_BELIEF,
+    )
+    for kind in allowed:
+        result = SharedSemanticResult(
+            window=window,
+            view_differences=(
+                _view(
+                    window,
+                    view_type=ViewType.READER_VIEW,
+                    kind=kind,
+                ),
+            ),
+        )
+        assert result.view_differences[0].difference_kind is kind
+    for kind in (
+        ViewDifferenceKind.SECRET,
+        ViewDifferenceKind.SUSPICION,
+        ViewDifferenceKind.HIDDEN_FACT,
+    ):
+        with pytest.raises(ValueError, match="semantic result"):
+            SharedSemanticResult(
+                window=window,
+                view_differences=(
+                    _view(
+                        window,
+                        view_type=ViewType.READER_VIEW,
+                        kind=kind,
+                    ),
+                ),
+            )
+
+
+def test_unknown_difference_kind_value_fails_closed() -> None:
+    window = _window()
+    with pytest.raises(ValueError, match="semantic result"):
+        SharedSemanticResult(
+            window=window,
+            view_differences=(
+                replace(
+                    _view(
+                        window,
+                        view_type=ViewType.READER_VIEW,
+                        kind=ViewDifferenceKind.FALSE_BELIEF,
+                    ),
+                    difference_kind="NOT_A_KIND",  # type: ignore[arg-type]
+                ),
+            ),
+        )
+
+
+def test_kindless_view_difference_cannot_exist_in_v2() -> None:
+    window = _window()
+    with pytest.raises(TypeError):
+        ViewDifferenceCandidate(
+            candidate_source_id(window, "view-difference", 0),
+            ViewType.READER_VIEW,
+            None,
+            ResolvedSubjectReference("00000000-0000-0000-0000-000000000010"),
+            None,
+            "缺失差异类型的候选。",
+            (_span(window, 0, 1),),
+        )

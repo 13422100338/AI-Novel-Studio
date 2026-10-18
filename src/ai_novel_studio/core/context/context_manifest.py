@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import math
+import re
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -10,8 +12,17 @@ from ai_novel_studio.infrastructure.storage.atomic_file import atomic_write_text
 from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
 
 LEGACY_CONTEXT_MANIFEST_SCHEMA_VERSION = 1
-CONTEXT_MANIFEST_SCHEMA_VERSION = 2
+PREVIOUS_CONTEXT_MANIFEST_SCHEMA_VERSION = 2
+CONTEXT_MANIFEST_SCHEMA_VERSION = 3
 CONTEXT_COMPILER_VERSION = "context-compiler/2.0"
+_MAX_TRACE_TEXT = 512
+_MAX_TRACE_HASH = 256
+_MAX_EXPANDED_DOCUMENTS = 64
+_MAX_RETRIEVAL_ROUTES = 16
+_SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+_VALID_RETRIEVAL_ROUTES = frozenset(
+    {"EXACT_PHRASE", "KEYWORD", "EMBEDDING", "SUBJECT"}
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,6 +51,126 @@ class OmittedManifestItem:
     reason: str
 
 
+def _bounded_text(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and bool(value.strip())
+        and len(value) <= _MAX_TRACE_TEXT
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class RetrievalTraceItem:
+    """Diagnostic retrieval provenance for one candidate context block.
+
+    Ranges are zero-based half-open code-point offsets; routes and scores
+    are recorded verbatim for explainability only and never authorize
+    content. No manuscript body text is stored here.
+    """
+
+    block_id: str
+    selected: bool
+    omission_reason: str | None
+    document_id: str
+    expanded_document_ids: tuple[str, ...]
+    source_id: str
+    chapter_id: str | None
+    volume_id: str | None
+    revision: int | None
+    source_hash: str
+    start: int | None
+    end: int | None
+    retrieval_routes: tuple[str, ...]
+    lexical_score: float
+    semantic_score: float
+    participant_boost: float
+    pinned_weight: float
+    recency_score: float
+    stale_penalty: float
+    total_score: float
+
+    def __post_init__(self) -> None:
+        if isinstance(self.expanded_document_ids, list):
+            object.__setattr__(
+                self,
+                "expanded_document_ids",
+                tuple(self.expanded_document_ids),
+            )
+        if isinstance(self.retrieval_routes, list):
+            object.__setattr__(
+                self,
+                "retrieval_routes",
+                tuple(self.retrieval_routes),
+            )
+        if (
+            not _bounded_text(self.block_id)
+            or not isinstance(self.selected, bool)
+            or not _bounded_text(self.document_id)
+            or not _bounded_text(self.source_id)
+            or not isinstance(self.source_hash, str)
+            or not _SHA256_PATTERN.match(self.source_hash)
+        ):
+            raise ValueError("retrieval trace item is invalid")
+        if self.selected:
+            if self.omission_reason is not None:
+                raise ValueError("retrieval trace item is invalid")
+        elif not _bounded_text(self.omission_reason):
+            raise ValueError("retrieval trace item is invalid")
+        if (
+            not isinstance(self.expanded_document_ids, tuple)
+            or len(self.expanded_document_ids) < 1
+            or len(self.expanded_document_ids) > _MAX_EXPANDED_DOCUMENTS
+            or len(set(self.expanded_document_ids)) != len(self.expanded_document_ids)
+            or any(not _bounded_text(item) for item in self.expanded_document_ids)
+            or self.document_id not in self.expanded_document_ids
+        ):
+            raise ValueError("retrieval trace item is invalid")
+        if (
+            not isinstance(self.retrieval_routes, tuple)
+            or len(self.retrieval_routes) < 1
+            or len(self.retrieval_routes) > _MAX_RETRIEVAL_ROUTES
+            or len(set(self.retrieval_routes)) != len(self.retrieval_routes)
+            or any(route not in _VALID_RETRIEVAL_ROUTES for route in self.retrieval_routes)
+        ):
+            raise ValueError("retrieval trace item is invalid")
+        for optional_id in (self.chapter_id, self.volume_id):
+            if optional_id is not None and not _bounded_text(optional_id):
+                raise ValueError("retrieval trace item is invalid")
+        if self.revision is not None and (
+            isinstance(self.revision, bool)
+            or not isinstance(self.revision, int)
+            or self.revision < 0
+        ):
+            raise ValueError("retrieval trace item is invalid")
+        if (self.start is None) != (self.end is None):
+            raise ValueError("retrieval trace item is invalid")
+        if self.start is not None or self.end is not None:
+            if (
+                isinstance(self.start, bool)
+                or isinstance(self.end, bool)
+                or not isinstance(self.start, int)
+                or not isinstance(self.end, int)
+                or self.start < 0
+                or self.end <= self.start
+            ):
+                raise ValueError("retrieval trace item is invalid")
+        for score in (
+            self.lexical_score,
+            self.semantic_score,
+            self.participant_boost,
+            self.pinned_weight,
+            self.recency_score,
+            self.stale_penalty,
+            self.total_score,
+        ):
+            if (
+                isinstance(score, bool)
+                or not isinstance(score, (int, float))
+                or not math.isfinite(score)
+            ):
+                raise ValueError("retrieval trace item is invalid")
+
+
 @dataclass(frozen=True, slots=True)
 class ContextManifest:
     id: str
@@ -56,6 +187,7 @@ class ContextManifest:
     compiler_version: str | None = CONTEXT_COMPILER_VERSION
     target_chapter_revision: int | None = None
     requirement_revision: int | None = None
+    retrieval_trace: tuple[RetrievalTraceItem, ...] = ()
 
     def __post_init__(self) -> None:
         if (
@@ -64,10 +196,42 @@ class ContextManifest:
             or self.schema_version
             not in {
                 LEGACY_CONTEXT_MANIFEST_SCHEMA_VERSION,
+                PREVIOUS_CONTEXT_MANIFEST_SCHEMA_VERSION,
                 CONTEXT_MANIFEST_SCHEMA_VERSION,
             }
         ):
             raise ValueError("context manifest schema version is invalid")
+
+        if self.schema_version != CONTEXT_MANIFEST_SCHEMA_VERSION and (
+            self.retrieval_trace
+        ):
+            raise ValueError("context manifest retrieval trace is invalid")
+        if len(set(item.block_id for item in self.retrieval_trace)) != len(
+            self.retrieval_trace
+        ) or any(
+            not isinstance(item, RetrievalTraceItem)
+            for item in self.retrieval_trace
+        ):
+            raise ValueError("context manifest retrieval trace is invalid")
+
+        selected_ids = [item.block_id for item in self.selected]
+        omitted_ids = [item.block_id for item in self.omitted]
+        if len(set(selected_ids)) != len(selected_ids) or len(
+            set(omitted_ids)
+        ) != len(omitted_ids):
+            raise ValueError("context manifest block identity is invalid")
+        selected_set = set(selected_ids)
+        omitted_set = set(omitted_ids)
+        if selected_set & omitted_set:
+            raise ValueError("context manifest block identity is invalid")
+        for item in self.retrieval_trace:
+            members, others = (
+                (selected_set, omitted_set)
+                if item.selected
+                else (omitted_set, selected_set)
+            )
+            if item.block_id not in members or item.block_id in others:
+                raise ValueError("context manifest retrieval trace is invalid")
 
         if self.schema_version == LEGACY_CONTEXT_MANIFEST_SCHEMA_VERSION:
             if (
@@ -106,6 +270,7 @@ class ContextManifest:
             "estimated_input_tokens": self.estimated_input_tokens,
             "selected": [asdict(item) for item in self.selected],
             "omitted": [asdict(item) for item in self.omitted],
+            "retrieval_trace": [asdict(item) for item in self.retrieval_trace],
             "warnings": list(self.warnings),
             "created_at": self.created_at.isoformat(),
         }
@@ -121,7 +286,7 @@ class ContextManifestRepository:
 
     def save(self, manifest: ContextManifest) -> Path:
         if manifest.schema_version != CONTEXT_MANIFEST_SCHEMA_VERSION:
-            raise ValueError("new context manifest must use schema version 2")
+            raise ValueError("new context manifest must use schema version 3")
         path = self.project.layout.pipeline / "manifests" / f"context_{manifest.id}.json"
         if path.exists():
             raise FileExistsError(f"上下文清单已存在：{manifest.id}")
@@ -190,6 +355,22 @@ class ContextManifestRepository:
             target_chapter_revision,
             requirement_revision,
         ) = self._schema_metadata(payload)
+        if schema_version == CONTEXT_MANIFEST_SCHEMA_VERSION:
+            raw_trace = payload.get("retrieval_trace", ())
+            if not isinstance(raw_trace, list):
+                raise ValueError("retrieval trace item is invalid")
+            try:
+                retrieval_trace = tuple(
+                    RetrievalTraceItem(**item)
+                    for item in raw_trace
+                    if isinstance(item, dict)
+                )
+            except TypeError:
+                raise ValueError("retrieval trace item is invalid") from None
+            if len(retrieval_trace) != len(raw_trace):
+                raise ValueError("retrieval trace item is invalid")
+        else:
+            retrieval_trace = ()
         return ContextManifest(
             id=payload["id"],
             chapter_id=payload["chapter_id"],
@@ -205,6 +386,7 @@ class ContextManifestRepository:
             compiler_version=compiler_version,
             target_chapter_revision=target_chapter_revision,
             requirement_revision=requirement_revision,
+            retrieval_trace=retrieval_trace,
         )
 
     @staticmethod
@@ -218,7 +400,10 @@ class ContextManifestRepository:
             raise ValueError("context manifest schema version is invalid")
         if schema_value == LEGACY_CONTEXT_MANIFEST_SCHEMA_VERSION:
             return (LEGACY_CONTEXT_MANIFEST_SCHEMA_VERSION, None, None, None)
-        if schema_value != CONTEXT_MANIFEST_SCHEMA_VERSION:
+        if schema_value not in {
+            PREVIOUS_CONTEXT_MANIFEST_SCHEMA_VERSION,
+            CONTEXT_MANIFEST_SCHEMA_VERSION,
+        }:
             raise ValueError("unsupported context manifest schema version")
         compiler_version = payload.get("compiler_version")
         if not isinstance(compiler_version, str) or not compiler_version.strip():

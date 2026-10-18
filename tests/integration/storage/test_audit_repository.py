@@ -121,13 +121,80 @@ def test_audit_repository_updates_finding_and_proposal_status(tmp_path: Path) ->
         status=RepairProposalStatus.VALIDATED,
     )
 
-    updated_finding = audits.update_finding_status(
-        finding.id, AuditFindingStatus.FALSE_POSITIVE
-    )
-    updated_proposal = audits.update_repair_status(
-        proposal.id, RepairProposalStatus.APPLIED
-    )
+    updated_finding = audits.update_finding_status(finding.id, AuditFindingStatus.FALSE_POSITIVE)
+    updated_proposal = audits.update_repair_status(proposal.id, RepairProposalStatus.APPLIED)
 
     assert updated_finding.status == AuditFindingStatus.FALSE_POSITIVE
     assert updated_proposal.status == RepairProposalStatus.APPLIED
 
+
+def test_repair_audit_writes_join_and_rollback_with_caller_connection(
+    tmp_path: Path,
+) -> None:
+    project, chapter, audits = _workspace(tmp_path)
+    run = audits.create_run(
+        chapter_id=chapter.id,
+        target_kind=AuditTargetKind.FORMAL_CHAPTER,
+        target_id=chapter.id,
+        target_revision=0,
+        target_hash="hash",
+        mode=CreationMode.BASIC,
+        status=AuditRunStatus.COMPLETED,
+        prompt_version="deterministic-v1",
+    )
+    finding = audits.add_finding(
+        run_id=run.id,
+        category=AuditFindingCategory.FORMAT,
+        severity=AuditSeverity.WARNING,
+        source=AuditFindingSource.DETERMINISTIC,
+        location_json="{}",
+        evidence="old",
+        explanation="example",
+        related_source_json="[]",
+        confidence=1.0,
+    )
+    proposal = audits.add_repair_proposal(
+        finding_id=finding.id,
+        target_revision=0,
+        target_hash="hash",
+        strategy=RepairStrategy.REPLACE_TEXT,
+        target_text="old",
+        replacement_text="new",
+        patch_json="{}",
+        explanation="example",
+        risk_note="low",
+        status=RepairProposalStatus.VALIDATED,
+    )
+
+    with project.database.connect() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        assert audits.get_run(run.id, connection=connection) == run
+        updated_proposal = audits.update_repair_status(
+            proposal.id,
+            RepairProposalStatus.APPLIED,
+            connection=connection,
+        )
+        updated_finding = audits.update_finding_status(
+            finding.id,
+            AuditFindingStatus.ACCEPTED_REPAIR,
+            connection=connection,
+        )
+        event = audits.add_provenance_event(
+            chapter_id=chapter.id,
+            chapter_revision_before=0,
+            chapter_revision_after=1,
+            event_type=ProvenanceEventType.REPAIR_APPLIED,
+            source_audit_run_id=run.id,
+            source_finding_id=finding.id,
+            source_repair_id=proposal.id,
+            summary="tentative",
+            connection=connection,
+        )
+        assert updated_proposal.status is RepairProposalStatus.APPLIED
+        assert updated_finding.status is AuditFindingStatus.ACCEPTED_REPAIR
+        assert audits.get_provenance_event(event.id, connection=connection) == event
+        connection.rollback()
+
+    assert audits.get_repair_proposal(proposal.id).status is (RepairProposalStatus.VALIDATED)
+    assert audits.get_finding(finding.id).status is AuditFindingStatus.OPEN
+    assert audits.list_provenance(chapter.id) == ()

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sqlite3
 from dataclasses import dataclass
 
 from ai_novel_studio.application.chapter_revision_service import (
@@ -10,6 +11,7 @@ from ai_novel_studio.application.chapter_revision_service import (
 from ai_novel_studio.domain.audit import (
     AuditFinding,
     AuditFindingStatus,
+    AuditTargetKind,
     ProvenanceEvent,
     ProvenanceEventType,
     RepairProposal,
@@ -19,6 +21,7 @@ from ai_novel_studio.domain.audit import (
 from ai_novel_studio.domain.chapter import Chapter
 from ai_novel_studio.infrastructure.storage.audit_repository import AuditRepository
 from ai_novel_studio.infrastructure.storage.chapter_repository import (
+    ChapterFileTransaction,
     ChapterRepository,
     StaleChapterRevisionError,
 )
@@ -36,6 +39,16 @@ class AppliedRepair:
     provenance: ProvenanceEvent
 
 
+@dataclass(frozen=True, slots=True)
+class PreparedRepair:
+    chapter_id: str
+    expected_revision: int
+    source_hash: str
+    repaired_content: str
+    finding: AuditFinding
+    proposal: RepairProposal
+
+
 class RepairApplicationService:
     def __init__(
         self,
@@ -46,9 +59,7 @@ class RepairApplicationService:
     ) -> None:
         self.chapters = chapters
         self.audits = audits
-        self.revision_service = revision_service or ChapterRevisionService(
-            chapters.project
-        )
+        self.revision_service = revision_service or ChapterRevisionService(chapters.project)
 
     def create_validated_text_repair(
         self,
@@ -88,6 +99,112 @@ class RepairApplicationService:
             explanation=explanation,
             risk_note=risk_note,
             status=RepairProposalStatus.VALIDATED,
+        )
+
+    def prepare_apply(
+        self,
+        proposal_id: str,
+        *,
+        chapter_id: str,
+        expected_revision: int,
+        source_content: str,
+        connection: sqlite3.Connection | None = None,
+    ) -> PreparedRepair:
+        proposal = self.audits.get_repair_proposal(
+            proposal_id,
+            connection=connection,
+        )
+        if proposal.status is not RepairProposalStatus.VALIDATED:
+            raise RepairApplicationError(
+                f"repair proposal is not validated: {proposal.status.value}"
+            )
+        if proposal.target_revision != expected_revision:
+            raise RepairApplicationError("stale repair proposal revision")
+        source_hash = _hash(source_content)
+        if proposal.target_hash != source_hash:
+            raise RepairApplicationError("stale repair proposal hash")
+        finding = self.audits.get_finding(
+            proposal.finding_id,
+            connection=connection,
+        )
+        run = self.audits.get_run(
+            finding.run_id,
+            connection=connection,
+        )
+        if (
+            run.chapter_id != chapter_id
+            or run.target_kind is not AuditTargetKind.FORMAL_CHAPTER
+            or run.target_id != chapter_id
+            or run.target_revision != expected_revision
+            or run.target_hash != source_hash
+        ):
+            raise RepairApplicationError("repair proposal target identity is invalid")
+        repaired = self._apply_text_strategy(source_content, proposal)
+        return PreparedRepair(
+            chapter_id,
+            expected_revision,
+            source_hash,
+            repaired,
+            finding,
+            proposal,
+        )
+
+    def commit_prepared(
+        self,
+        prepared: PreparedRepair,
+        *,
+        connection: sqlite3.Connection,
+        file_transaction: ChapterFileTransaction,
+    ) -> AppliedRepair:
+        if not isinstance(prepared, PreparedRepair):
+            raise TypeError("prepared repair is invalid")
+        current = self.prepare_apply(
+            prepared.proposal.id,
+            chapter_id=prepared.chapter_id,
+            expected_revision=prepared.expected_revision,
+            source_content=self.chapters.read_content_exact(
+                prepared.chapter_id,
+                connection=connection,
+            ),
+            connection=connection,
+        )
+        if current != prepared:
+            raise RepairApplicationError("repair proposal changed before commit")
+        committed = self.revision_service.commit_revision(
+            prepared.chapter_id,
+            prepared.repaired_content,
+            source="audit_repair",
+            reason=f"accepted repair proposal {prepared.proposal.id}",
+            expected_revision=prepared.expected_revision,
+            connection=connection,
+            file_transaction=file_transaction,
+        )
+        updated_proposal = self.audits.update_repair_status(
+            prepared.proposal.id,
+            RepairProposalStatus.APPLIED,
+            connection=connection,
+        )
+        finding = self.audits.update_finding_status(
+            prepared.finding.id,
+            AuditFindingStatus.ACCEPTED_REPAIR,
+            connection=connection,
+        )
+        provenance = self.audits.add_provenance_event(
+            chapter_id=prepared.chapter_id,
+            chapter_revision_before=prepared.expected_revision,
+            chapter_revision_after=committed.chapter.revision,
+            event_type=ProvenanceEventType.REPAIR_APPLIED,
+            source_audit_run_id=finding.run_id,
+            source_finding_id=finding.id,
+            source_repair_id=prepared.proposal.id,
+            summary=prepared.proposal.explanation,
+            connection=connection,
+        )
+        return AppliedRepair(
+            committed.chapter,
+            finding,
+            updated_proposal,
+            provenance,
         )
 
     def apply(

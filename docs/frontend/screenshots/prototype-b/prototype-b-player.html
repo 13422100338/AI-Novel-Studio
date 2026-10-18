@@ -1,0 +1,20 @@
+<!doctype html><meta charset="utf-8"><title>Prototype B</title>
+<style>body{background:#111;color:#ccc;font-family:sans-serif}
+canvas{image-rendering:auto}button{margin:4px}</style>
+<h3>ShaderEffect neon border - continuous playback / 0.25x</h3>
+<canvas id="c" width="1120" height="840"></canvas><br>
+<button id="play1">1x</button><button id="play025">0.25x</button>
+<button id="pause">pause</button><span id="idx"></span>
+<script>
+const imgs = ['frame-000.png', 'frame-001.png', 'frame-002.png', 'frame-003.png', 'frame-004.png', 'frame-005.png', 'frame-006.png', 'frame-007.png', 'frame-008.png', 'frame-009.png', 'frame-010.png', 'frame-011.png', 'frame-012.png', 'frame-013.png', 'frame-014.png', 'frame-015.png', 'frame-016.png', 'frame-017.png', 'frame-018.png', 'frame-019.png', 'frame-020.png', 'frame-021.png', 'frame-022.png', 'frame-023.png', 'frame-024.png', 'frame-025.png', 'frame-026.png', 'frame-027.png', 'frame-028.png', 'frame-029.png', 'frame-030.png', 'frame-031.png', 'frame-032.png', 'frame-033.png', 'frame-034.png', 'frame-035.png', 'frame-036.png', 'frame-037.png', 'frame-038.png', 'frame-039.png', 'frame-040.png', 'frame-041.png', 'frame-042.png', 'frame-043.png', 'frame-044.png', 'frame-045.png', 'frame-046.png', 'frame-047.png', 'frame-048.png', 'frame-049.png', 'frame-050.png', 'frame-051.png', 'frame-052.png', 'frame-053.png', 'frame-054.png', 'frame-055.png', 'frame-056.png', 'frame-057.png', 'frame-058.png', 'frame-059.png', 'frame-060.png', 'frame-061.png', 'frame-062.png', 'frame-063.png', 'frame-064.png', 'frame-065.png', 'frame-066.png', 'frame-067.png', 'frame-068.png', 'frame-069.png', 'frame-070.png', 'frame-071.png'].map(f => {const i=new Image();i.src=f;return i});
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+let idx=0,playing=false,delay=100,timer=null;
+function tick(){ctx.drawImage(imgs[idx],0,0);idx=(idx+1)%imgs.length;
+document.getElementById('idx').textContent='frame '+idx+'/'+imgs.length;}
+function start(d){stop();playing=true;delay=d;timer=setInterval(tick,d);}
+function stop(){playing=false;if(timer)clearInterval(timer);timer=null;}
+document.getElementById('play1').onclick=()=>start(100);
+document.getElementById('play025').onclick=()=>start(400);
+document.getElementById('pause').onclick=stop;
+tick();
+</script>

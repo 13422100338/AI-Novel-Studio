@@ -14,6 +14,7 @@ from ai_novel_studio.application.repair_application_service import (
 from ai_novel_studio.domain.audit import (
     AuditFindingCategory,
     AuditFindingSource,
+    AuditFindingStatus,
     AuditRunStatus,
     AuditSeverity,
     AuditTargetKind,
@@ -23,7 +24,10 @@ from ai_novel_studio.domain.audit import (
 )
 from ai_novel_studio.domain.generation import CreationMode
 from ai_novel_studio.infrastructure.storage.audit_repository import AuditRepository
-from ai_novel_studio.infrastructure.storage.chapter_repository import ChapterRepository
+from ai_novel_studio.infrastructure.storage.chapter_repository import (
+    ChapterFileTransaction,
+    ChapterRepository,
+)
 from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
 from ai_novel_studio.infrastructure.storage.search_repository import SearchRepository
 
@@ -112,9 +116,62 @@ def test_apply_validated_replacement_creates_chapter_version_and_provenance(
         expected_source_hash=_hash("The new sentence stayed."),
         chunk_policy_version="paragraph-codepoint-v1",
     )
-    assert tuple(document.content for document in formal) == (
-        "The new sentence stayed.",
+    assert tuple(document.content for document in formal) == ("The new sentence stayed.",)
+
+
+def test_prepared_repair_joins_caller_transaction_and_rolls_back_all_facts(
+    tmp_path: Path,
+) -> None:
+    project, chapters, chapter, audits, finding = _workspace(tmp_path)
+    service = RepairApplicationService(chapters, audits)
+    proposal = service.create_validated_text_repair(
+        finding_id=finding.id,
+        chapter_id=chapter.id,
+        strategy=RepairStrategy.REPLACE_TEXT,
+        target_text="old sentence",
+        replacement_text="new sentence",
+        explanation="local repair",
+        risk_note="low risk",
     )
+    prepared = service.prepare_apply(
+        proposal.id,
+        chapter_id=chapter.id,
+        expected_revision=chapter.revision,
+        source_content=chapters.read_content_exact(chapter.id),
+    )
+    files = ChapterFileTransaction()
+
+    with project.database.connect() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        applied = service.commit_prepared(
+            prepared,
+            connection=connection,
+            file_transaction=files,
+        )
+        assert applied.chapter.revision == 1
+        assert (
+            audits.get_repair_proposal(
+                proposal.id,
+                connection=connection,
+            ).status
+            is RepairProposalStatus.APPLIED
+        )
+        assert (
+            audits.get_finding(
+                finding.id,
+                connection=connection,
+            ).status
+            is AuditFindingStatus.ACCEPTED_REPAIR
+        )
+        connection.rollback()
+        files.rollback()
+
+    assert chapters.read_content_exact(chapter.id) == "The old sentence stayed."
+    assert chapters.get_chapter(chapter.id).revision == 0
+    assert chapters.list_versions(chapter.id) == []
+    assert audits.get_repair_proposal(proposal.id).status is (RepairProposalStatus.VALIDATED)
+    assert audits.get_finding(finding.id).status is AuditFindingStatus.OPEN
+    assert audits.list_provenance(chapter.id) == ()
 
 
 def test_apply_maintenance_failure_keeps_committed_repair_and_audit_writes(
@@ -223,9 +280,7 @@ def test_note_only_repair_preserves_same_content_revision_behavior(
         expected_source_hash=_hash("The old sentence stayed."),
         chunk_policy_version="paragraph-codepoint-v1",
     )
-    assert tuple(document.content for document in formal) == (
-        "The old sentence stayed.",
-    )
+    assert tuple(document.content for document in formal) == ("The old sentence stayed.",)
 
 
 def test_post_write_audit_failure_does_not_rollback_repaired_content(
@@ -271,9 +326,7 @@ def test_post_write_audit_failure_does_not_rollback_repaired_content(
         expected_source_hash=_hash("The committed replacement stayed."),
         chunk_policy_version="paragraph-codepoint-v1",
     )
-    assert tuple(document.content for document in formal) == (
-        "The committed replacement stayed.",
-    )
+    assert tuple(document.content for document in formal) == ("The committed replacement stayed.",)
 
 
 def test_apply_rejects_stale_revision_without_changing_chapter(tmp_path: Path) -> None:

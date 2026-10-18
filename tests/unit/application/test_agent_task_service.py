@@ -3,7 +3,10 @@ from ai_novel_studio.application.agent_task_service import (
     AGENT_ASSISTANT_PROMPT_VERSION,
     AgentTaskService,
 )
-from ai_novel_studio.domain.agent import AgentPurpose, AgentRunStatus
+from ai_novel_studio.domain.agent import (
+    AgentPurpose,
+    AgentRunStatus,
+)
 from ai_novel_studio.infrastructure.llm import LLMMessage
 
 
@@ -45,15 +48,50 @@ def test_plot_agent_prompt_order_and_boundaries() -> None:
     catalog = next(
         message.content
         for message in messages
-        if "READ_CHAPTER_EXCERPT" in message.content
+        if "允许的只读工具" in message.content
     )
+    assert "LIST_CHAPTERS" in catalog
+    assert "READ_NOVEL_OVERVIEW" in catalog
     assert "character_name" in catalog
     assert "不要臆造 character_id" in catalog
     assert "PROPOSE_CHARACTER_IDENTITY_MERGE" in catalog
     assert "只会创建待人工确认提案" in catalog
     assert any("JSON" in message.content for message in messages)
     assert loop.request.output_token_limit == 900
-    assert loop.request.require_tool_before_final is True
+    assert loop.request.require_tool_before_final is False
+
+
+def test_whole_book_question_does_not_preselect_tools() -> None:
+    """Ticket B: keyword routing removed; model chooses tools autonomously."""
+    loop = CapturingLoop()
+    service = AgentTaskService(loop)
+
+    for phrase in (
+        "那整个小说呢",
+        "看看全篇讲了什么",
+        "分析前后章节关系",
+        "请概括整本小说，并分析其他章节的关系",
+    ):
+        service.discuss_plot_with_tools(
+            user_message=phrase,
+            current_manuscript="当前章。",
+            chapter_requirement="",
+            chapter_id="chapter-2",
+            model_provider_id="provider",
+            model_id="model",
+        )
+
+        assert loop.request is not None
+        # No keyword-based preselection.
+        assert loop.request.required_tool_names == ()
+        # But budget is generous enough for cross-chapter reads.
+        assert loop.request.max_iterations >= 6
+        assert loop.request.max_tool_result_chars >= 16_000
+        # Tool catalog includes the high-level overview tool.
+        catalog = next(
+            m.content for m in loop.request.messages if "允许的只读工具" in m.content
+        )
+        assert "READ_NOVEL_OVERVIEW" in catalog
 
 
 def test_revision_agent_uses_revision_purpose() -> None:
@@ -71,3 +109,4 @@ def test_revision_agent_uses_revision_purpose() -> None:
 
     assert loop.request is not None
     assert loop.request.purpose == AgentPurpose.REVISION_PLAN
+    assert loop.request.require_tool_before_final is True

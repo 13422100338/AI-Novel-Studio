@@ -1,4 +1,4 @@
-import hashlib
+﻿import hashlib
 from dataclasses import replace
 from pathlib import Path
 
@@ -149,7 +149,7 @@ def test_basic_preparation_preserves_output_limit_and_links_manifest(
     assert prepared.run.output_token_limit == 32_000
     assert prepared.run.context_manifest_id == prepared.manifest.id
     assert prepared.manifest.run_id == prepared.run.id
-    assert prepared.manifest.schema_version == 2
+    assert prepared.manifest.schema_version == 3
     assert prepared.manifest.compiler_version == "context-compiler/2.0"
     assert prepared.manifest.target_chapter_revision == workspace["current"].revision
     assert prepared.manifest.requirement_revision == workspace["requirement"].revision
@@ -206,7 +206,7 @@ def test_writer_prompt_and_manifest_use_physical_character_state_projection(
     assert selected.source_hash == hashlib.sha256(
         block.content.encode("utf-8")
     ).hexdigest()
-    assert prepared.manifest.schema_version == 2
+    assert prepared.manifest.schema_version == 3
     assert prepared.manifest.compiler_version == "context-compiler/2.0"
 
 
@@ -757,3 +757,292 @@ def test_project_guidance_is_required_system_context_and_manifest_records_revisi
     assert prepared.messages[2].role == "system"
     assert "小说最高系统提示" in prepared.messages[2].content
     assert guidance.highest_system_prompt in prepared.messages[2].content
+
+
+def test_prepare_with_evidence_needs_appends_exact_evidence(
+    tmp_path: Path,
+) -> None:
+    from ai_novel_studio.application.chapter_revision_service import (
+        ChapterRevisionService,
+    )
+    from ai_novel_studio.application.compile_context_service import (
+        CompileContextService,
+        EvidenceNeed,
+        EvidenceNeedKind,
+    )
+    from ai_novel_studio.application.evidence_query_service import (
+        EvidenceQueryService,
+    )
+    from ai_novel_studio.application.formal_manuscript_evidence_service import (
+        FormalManuscriptEvidenceService,
+    )
+    from ai_novel_studio.core.context.history_retriever import HistoryRetriever
+    from ai_novel_studio.infrastructure.storage.search_repository import (
+        SearchRepository,
+    )
+
+    project = ProjectRepository.create(tmp_path / "novel", "证据接线")
+    revisions = ChapterRevisionService(project)
+    volume = project.list_volumes()[0]
+    earlier = revisions.submit_creation(
+        volume.id,
+        "第一章",
+        "1",
+        "第一章\r\n\r\n艾琳在旧塔发现了铜钥匙。\r\n守卫没有察觉。\r\n",
+    )
+    current = revisions.submit_creation(
+        volume.id, "第二章", "2", "第二章\r\n\r\n铜钥匙在井底发出微光。\r\n"
+    )
+    requirements = ChapterRequirementRepository(project)
+    empty = requirements.get_or_create(current.chapter.id)
+    requirements.update(
+        current.chapter.id,
+        "必须交代铜钥匙的来历。",
+        is_locked=True,
+        expected_revision=empty.revision,
+    )
+
+    search = SearchRepository(project)
+    evidence_query = EvidenceQueryService(
+        retriever=HistoryRetriever(search),
+        evidence=FormalManuscriptEvidenceService(search),
+    )
+    compiler = CompileContextService(evidence_query=evidence_query)
+    service = GenerationContextService(
+        project,
+        ChapterRepository(project),
+        requirements,
+        ChapterBriefRepository(project),
+        GenerationRepository(project),
+        ContextManifestRepository(project),
+        history=HistoryRetriever(search),
+        compile_context=compiler,
+    )
+    request = GenerationPreparationRequest(
+        chapter_id=current.chapter.id,
+        mode=CreationMode.BASIC,
+        brief_id=None,
+        output_token_limit=32_000,
+        model_capabilities=ModelCapabilities(
+            context_window=128_000,
+            max_output_tokens=64_000,
+        ),
+        target_words=5000,
+        model_provider_id="provider-1",
+        model_id="writer-1",
+        evidence_needs=(
+            EvidenceNeed(
+                kind=EvidenceNeedKind.HISTORICAL_DETAIL,
+                query="铜钥匙",
+            ),
+        ),
+    )
+
+    prepared = service.prepare(request)
+
+    assert prepared.run.status == GenerationStatus.READY
+    assert prepared.manifest.schema_version == 3
+    evidence_blocks = [
+        block
+        for block in prepared.selected_blocks
+        if block.category == "exact_evidence"
+    ]
+    assert evidence_blocks
+    assert all(
+        block.source_type == "FORMAL_MANUSCRIPT" for block in evidence_blocks
+    )
+    assert any(
+        block.source_chapter_id == earlier.chapter.id for block in evidence_blocks
+    )
+    prompt_text = "\n".join(message.content for message in prepared.messages)
+    assert "艾琳在旧塔发现了铜钥匙" in prompt_text
+    assert "门后是空房间" not in prompt_text
+
+
+def test_evidence_needs_fail_closed_without_compiler(
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    from ai_novel_studio.application.compile_context_service import (
+        EvidenceNeed,
+        EvidenceNeedKind,
+    )
+
+    request = _request(
+        workspace,
+        evidence_needs=(
+            EvidenceNeed(
+                kind=EvidenceNeedKind.EXISTENCE_CHECK,
+                query="任何内容",
+            ),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="证据编译服务"):
+        workspace["service"].prepare(request)
+
+
+def _evidence_wired_service(tmp_path: Path):  # type: ignore[no-untyped-def]
+    from ai_novel_studio.application.chapter_revision_service import (
+        ChapterRevisionService,
+    )
+    from ai_novel_studio.application.compile_context_service import (
+        CompileContextService,
+    )
+    from ai_novel_studio.application.evidence_query_service import (
+        EvidenceQueryService,
+    )
+    from ai_novel_studio.application.formal_manuscript_evidence_service import (
+        FormalManuscriptEvidenceService,
+    )
+    from ai_novel_studio.core.context.history_retriever import HistoryRetriever
+    from ai_novel_studio.infrastructure.storage.search_repository import (
+        SearchRepository,
+    )
+
+    project = ProjectRepository.create(tmp_path / "novel", "证据接线 spy")
+    revisions = ChapterRevisionService(project)
+    volume = project.list_volumes()[0]
+    revisions.submit_creation(
+        volume.id,
+        "第一章",
+        "1",
+        "第一章\r\n\r\n艾琳在旧塔发现了铜钥匙。\r\n守卫没有察觉。\r\n",
+    )
+    current = revisions.submit_creation(
+        volume.id, "第二章", "2", "第二章\r\n\r\n铜钥匙在井底发出微光。\r\n"
+    )
+    requirements = ChapterRequirementRepository(project)
+    empty = requirements.get_or_create(current.chapter.id)
+    requirements.update(
+        current.chapter.id,
+        "必须交代铜钥匙的来历。",
+        is_locked=True,
+        expected_revision=empty.revision,
+    )
+    search = SearchRepository(project)
+    evidence_query = EvidenceQueryService(
+        retriever=HistoryRetriever(search),
+        evidence=FormalManuscriptEvidenceService(search),
+    )
+    compiler = CompileContextService(evidence_query=evidence_query)
+    service = GenerationContextService(
+        project,
+        ChapterRepository(project),
+        requirements,
+        ChapterBriefRepository(project),
+        GenerationRepository(project),
+        ContextManifestRepository(project),
+        history=HistoryRetriever(search),
+        compile_context=compiler,
+    )
+    return service, compiler, evidence_query, current.chapter.id
+
+
+def test_compile_facade_called_once_and_direct_query_forbidden(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, compiler, evidence_query, chapter_id = _evidence_wired_service(tmp_path)
+    from ai_novel_studio.application.compile_context_service import (
+        EvidenceNeed,
+        EvidenceNeedKind,
+    )
+    from ai_novel_studio.application.evidence_query_service import (
+        EvidenceQueryService as _EqS,
+    )
+
+    del evidence_query
+    compile_calls: list[int] = []
+    original_compile = compiler.compile
+    inside_compile = {"flag": False}
+
+    def recording_compile(base_request, *, evidence_needs):
+        compile_calls.append(1)
+        inside_compile["flag"] = True
+        try:
+            return original_compile(base_request, evidence_needs=evidence_needs)
+        finally:
+            inside_compile["flag"] = False
+
+    monkeypatch.setattr(compiler, "compile", recording_compile)
+
+    query_calls: list[str] = []
+
+    def spying_query(self, request):  # type: ignore[no-untyped-def]
+        if not inside_compile["flag"]:
+            raise AssertionError("generation must not query the facade directly")
+        query_calls.append(request.query)
+        return _original_query(self, request)
+
+    _original_query = _EqS.query
+    monkeypatch.setattr(_EqS, "query", spying_query)
+
+    request = GenerationPreparationRequest(
+        chapter_id=chapter_id,
+        mode=CreationMode.BASIC,
+        brief_id=None,
+        output_token_limit=32_000,
+        model_capabilities=ModelCapabilities(
+            context_window=128_000,
+            max_output_tokens=64_000,
+        ),
+        target_words=5000,
+        model_provider_id="provider-1",
+        model_id="writer-1",
+        evidence_needs=(
+            EvidenceNeed(kind=EvidenceNeedKind.HISTORICAL_DETAIL, query="铜钥匙"),
+        ),
+    )
+
+    prepared = service.prepare(request)
+
+    assert len(compile_calls) == 1
+    assert query_calls == ["铜钥匙"]
+    assert prepared.run.status == GenerationStatus.READY
+    assert any(
+        block.category == "exact_evidence" for block in prepared.selected_blocks
+    )
+
+
+def test_compile_failure_marks_run_failed(tmp_path: Path) -> None:
+    service, compiler, _facade, chapter_id = _evidence_wired_service(tmp_path)
+    from ai_novel_studio.application.compile_context_service import (
+        EvidenceNeed,
+        EvidenceNeedKind,
+    )
+
+    def broken_compile(base_request, *, evidence_needs):
+        raise ValueError("编译失败：固定净化文案")
+
+    compiler.compile = broken_compile  # type: ignore[method-assign]
+    failure_calls: list[tuple[str, str]] = []
+    original_fail = service.runs.fail_preparation
+
+    def recording_fail(run_id: str, error_type: str, message: str) -> None:
+        failure_calls.append((error_type, message))
+        original_fail(run_id, error_type, message)
+
+    service.runs.fail_preparation = recording_fail  # type: ignore[method-assign]
+
+    request = GenerationPreparationRequest(
+        chapter_id=chapter_id,
+        mode=CreationMode.BASIC,
+        brief_id=None,
+        output_token_limit=32_000,
+        model_capabilities=ModelCapabilities(
+            context_window=128_000,
+            max_output_tokens=64_000,
+        ),
+        target_words=5000,
+        model_provider_id="provider-1",
+        model_id="writer-1",
+        evidence_needs=(
+            EvidenceNeed(kind=EvidenceNeedKind.HISTORICAL_DETAIL, query="铜钥匙"),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="编译失败"):
+        service.prepare(request)
+
+    assert failure_calls == [("ValueError", "编译失败：固定净化文案")]

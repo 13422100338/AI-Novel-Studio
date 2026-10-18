@@ -6,6 +6,7 @@ from ai_novel_studio.application.view_assertion_service import (
     ViewAssertionExtractionAlreadyExistsError,
     ViewAssertionService,
 )
+from ai_novel_studio.core.context.shared_semantic_result import ViewDifferenceKind
 from ai_novel_studio.domain.view import EpistemicStatus, ViewAssertion, ViewAssertionDraft, ViewType
 from ai_novel_studio.infrastructure.llm.contract_runner import (
     ContractValidationError,
@@ -24,6 +25,14 @@ _CONTRACT = JsonObjectContract((JsonField("assertions", list),))
 _MAX_CANDIDATES = 12
 _OUTPUT_TOKEN_LIMIT = 3_000
 _SUPPORTED_VIEW_TYPES = {ViewType.CHARACTER_VIEW, ViewType.READER_VIEW}
+_CHARACTER_VIEW_KINDS = frozenset(kind.value for kind in ViewDifferenceKind)
+_READER_VIEW_KINDS = frozenset(
+    {
+        ViewDifferenceKind.DECEPTION.value,
+        ViewDifferenceKind.PARTIAL_DISCLOSURE.value,
+        ViewDifferenceKind.FALSE_BELIEF.value,
+    }
+)
 
 
 class ViewAssertionExtractionService:
@@ -91,9 +100,15 @@ class ViewAssertionExtractionService:
                 "system",
                 "仅提取当前章节中的候选 View Assertion。返回 JSON 对象，"
                 "顶层 assertions 必须为数组。每项只可含 subject_id、view_type、"
-                "content、viewer_subject_id、epistemic_status、valid_from_sequence、"
-                "valid_to_sequence、story_time_label。只可使用提供的活跃人物 ID；"
-                "view_type 只可为 CHARACTER_VIEW 或 READER_VIEW。输出仅供人工审查，"
+                "difference_kind、content、viewer_subject_id、epistemic_status、"
+                "valid_from_sequence、valid_to_sequence、story_time_label。"
+                "只可使用提供的活跃人物 ID；"
+                "view_type 只可为 CHARACTER_VIEW 或 READER_VIEW。每项必须携带 "
+                "difference_kind：CHARACTER_VIEW 只可为 SECRET、DECEPTION、SUSPICION、"
+                "PARTIAL_DISCLOSURE、HIDDEN_FACT、FALSE_BELIEF 之一；READER_VIEW 只可"
+                "为 DECEPTION、PARTIAL_DISCLOSURE、FALSE_BELIEF 之一。只提取高价值认知"
+                "差异：普通参与、普通目击与正文显式可见事实不得生成候选；"
+                "epistemic_status 不得为 KNOWS。输出仅供人工审查，"
                 "不得创建人物、不得推断未知身份、不得包含叙事可见性或来源字段。"
                 f"活跃人物 IDs：{', '.join(sorted(active_ids))}",
             ),
@@ -159,6 +174,16 @@ class ViewAssertionExtractionService:
         epistemic_status = (
             EpistemicStatus(epistemic_value) if epistemic_value is not None else None
         )
+        difference_kind = ViewAssertionExtractionService._required_string(
+            value, "difference_kind"
+        )
+        if view_type is ViewType.CHARACTER_VIEW:
+            if difference_kind not in _CHARACTER_VIEW_KINDS:
+                raise ValueError("difference_kind 不适用于 CHARACTER_VIEW")
+            if epistemic_status is EpistemicStatus.KNOWS:
+                raise ValueError("普通 KNOWS 不构成认知差异")
+        elif difference_kind not in _READER_VIEW_KINDS:
+            raise ValueError("difference_kind 不适用于 READER_VIEW")
         return ViewAssertionDraft(
             subject_id=subject_id,
             view_type=view_type,

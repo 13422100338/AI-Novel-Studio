@@ -1,4 +1,5 @@
 import hashlib
+import inspect
 from pathlib import Path
 
 import pytest
@@ -331,3 +332,160 @@ def test_deleting_volume_moves_its_chapters_through_shared_revision_service(
     assert tree[0].chapters[0].revision == chapter.revision + 1
     assert service.load_chapter(chapter.id).title == "不会丢失"
     service.close_project()
+
+
+def test_workspace_create_chapter_routes_through_revision_service_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = ProjectWorkspaceService()
+    service.create_project(tmp_path / "novel", "My Novel")
+    volume_id = service.volume_tree()[0].id
+    revisions = service.revision_service
+    assert isinstance(revisions, ChapterRevisionService)
+    calls: list[tuple[str, str, str]] = []
+    original = revisions.submit_creation
+
+    def tracked_submit(
+        volume_id_arg: str,
+        title: str,
+        declared_number: str = "",
+        **kwargs: object,
+    ):  # type: ignore[no-untyped-def]
+        calls.append((volume_id_arg, title, declared_number))
+        return original(volume_id_arg, title, declared_number, **kwargs)
+
+    monkeypatch.setattr(revisions, "submit_creation", tracked_submit)
+
+    item = service.create_chapter(volume_id, "New Chapter", "1")
+
+    assert calls == [(volume_id, "New Chapter", "1")]
+    assert item.title == "New Chapter"
+    assert item.declared_number == "1"
+    service.close_project()
+
+
+def test_workspace_create_chapter_returns_compatible_tree_item(
+    tmp_path: Path,
+) -> None:
+    service = ProjectWorkspaceService()
+    service.create_project(tmp_path / "novel", "My Novel")
+    volume_id = service.volume_tree()[0].id
+
+    item = service.create_chapter(volume_id, "Compat Title", "7")
+
+    assert item.id
+    assert item.title == "Compat Title"
+    assert item.declared_number == "7"
+    assert item.revision == 0
+    assert item.word_count == 0
+    service.close_project()
+
+
+def test_workspace_create_chapter_authoritative_content_is_exact_empty(
+    tmp_path: Path,
+) -> None:
+    service = ProjectWorkspaceService()
+    service.create_project(tmp_path / "novel", "My Novel")
+    volume_id = service.volume_tree()[0].id
+
+    item = service.create_chapter(volume_id, "Empty", "1")
+
+    project = service.project
+    assert project is not None
+    chapters = ChapterRepository(project)
+    assert chapters.read_content_exact(item.id) == ""
+    assert chapters.read_content(item.id) == ""
+    assert chapters.get_chapter(item.id).revision == 0
+    with project.database.connect() as connection:
+        row = connection.execute(
+            "SELECT content_hash FROM chapters WHERE id = ?", (item.id,)
+        ).fetchone()
+        assert row is not None
+        assert str(row["content_hash"]) == _source_hash("")
+    assert item.revision == 0
+    assert chapters.list_versions(item.id) == []
+    service.close_project()
+
+
+def test_workspace_create_chapter_empty_projection_has_zero_formal_rows_and_no_vector(
+    tmp_path: Path,
+) -> None:
+    service = ProjectWorkspaceService()
+    service.create_project(tmp_path / "novel", "My Novel")
+    volume_id = service.volume_tree()[0].id
+
+    item = service.create_chapter(volume_id, "Empty Formal", "1")
+
+    project = service.project
+    assert project is not None
+    with project.database.connect() as connection:
+        formal_rows = connection.execute(
+            "SELECT id FROM memory_documents "
+            "WHERE document_type = 'FORMAL_MANUSCRIPT' AND chapter_id = ?",
+            (item.id,),
+        ).fetchall()
+        vector_rows = connection.execute(
+            "SELECT document_id FROM memory_embeddings "
+            "WHERE document_id IN (SELECT id FROM memory_documents WHERE chapter_id = ?)",
+            (item.id,),
+        ).fetchall()
+    assert len(formal_rows) == 0
+    assert len(vector_rows) == 0
+    docs = SearchRepository(project).read_formal_manuscript_chunks(
+        item.id,
+        expected_revision=0,
+        expected_source_hash=_source_hash(""),
+        chunk_policy_version="paragraph-codepoint-v1",
+    )
+    assert docs == ()
+    service.close_project()
+
+
+def test_workspace_create_chapter_maintenance_failure_still_returns_committed_chapter(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = ProjectWorkspaceService()
+    service.create_project(tmp_path / "novel", "My Novel")
+    volume_id = service.volume_tree()[0].id
+    revisions = service.revision_service
+    assert isinstance(revisions, ChapterRevisionService)
+    baseline_count = len(ChapterRepository(service.project).list_chapters(volume_id))  # type: ignore[arg-type]
+    maintenance_calls = 0
+
+    def fail_maintenance(
+        _chapter_id: str,
+        *,
+        expected_revision: int,
+        expected_source_hash: str,
+    ) -> FormalMaintenanceResult:
+        nonlocal maintenance_calls
+        maintenance_calls += 1
+        raise RuntimeError(
+            f"raw maintenance failure: {expected_revision}: {expected_source_hash}"
+        )
+
+    monkeypatch.setattr(revisions, "maintain_current_revision", fail_maintenance)
+
+    item = service.create_chapter(volume_id, "Survives Failure", "1")
+
+    assert maintenance_calls == 1
+    assert item.title == "Survives Failure"
+    assert item.revision == 0
+    assert item.word_count == 0
+    project = service.project
+    assert project is not None
+    chapters = ChapterRepository(project)
+    assert chapters.read_content_exact(item.id) == ""
+    assert len(chapters.list_chapters(volume_id)) == baseline_count + 1
+    # no second creation should have happened; verify chapter exists exactly once
+    assert chapters.get_chapter(item.id).revision == 0
+    service.close_project()
+
+
+def test_workspace_create_chapter_does_not_call_repository_directly() -> None:
+    source = inspect.getsource(ProjectWorkspaceService.create_chapter)
+    assert "submit_creation" in source
+    assert "ChapterRepository" not in source
+    assert "create_chapter" not in source or source.count("submit_creation") == 1

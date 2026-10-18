@@ -366,6 +366,148 @@ class NarrativeMemoryRepository:
             for row in clue_rows
         )
 
+    def bounded_clue_timelines_before(
+        self,
+        chapter_id: str,
+        *,
+        max_clues: int,
+        max_events_per_clue: int,
+    ) -> tuple[tuple[ClueTimeline, ...], dict[str, int]]:
+        """SQL-bounded variant (RC-4 follow-up).
+
+        Step 1: find at most ``max_clues`` clue IDs that have at least one
+        eligible event (approved + strictly before target).
+        Step 2: rank and limit events ONLY for those selected clue IDs.
+        Events are returned in chronological order (old→new) so that
+        ``events[-1]`` is always the latest before-target event.
+
+        Returns the timelines plus a per-clue true total count.
+        """
+        if (
+            isinstance(max_clues, bool)
+            or not isinstance(max_clues, int)
+            or not 1 <= max_clues <= 200
+        ):
+            raise ValueError("clue timeline max_clues is invalid")
+        if (
+            isinstance(max_events_per_clue, bool)
+            or not isinstance(max_events_per_clue, int)
+            or not 1 <= max_events_per_clue <= 50
+        ):
+            raise ValueError("clue timeline max_events_per_clue is invalid")
+        with self.project.database.connect() as connection:
+            # Step 1: select the bounded set of clue IDs that have
+            # eligible events strictly before the target chapter.
+            clue_rows = connection.execute(
+                """
+                WITH target AS (
+                    SELECT v.sort_index AS volume_order,
+                           c.sort_index AS chapter_order
+                    FROM chapters c JOIN volumes v ON v.id = c.volume_id
+                    WHERE c.id = ? AND c.is_deleted = 0
+                )
+                SELECT ncl.* FROM narrative_clues ncl
+                WHERE ncl.status = 'CURRENT'
+                  AND ncl.review_status IN ('APPROVED', 'LOCKED')
+                  AND EXISTS (
+                      SELECT 1 FROM narrative_clue_events e
+                      JOIN chapters c ON c.id = e.chapter_id AND c.is_deleted = 0
+                      JOIN volumes v ON v.id = c.volume_id
+                      CROSS JOIN target t
+                      WHERE e.clue_id = ncl.id
+                        AND e.review_status IN ('APPROVED', 'LOCKED')
+                        AND (v.sort_index < t.volume_order OR
+                             (v.sort_index = t.volume_order
+                              AND c.sort_index < t.chapter_order))
+                  )
+                ORDER BY ncl.created_at, ncl.id
+                LIMIT ?
+                """,
+                (chapter_id, int(max_clues)),
+            ).fetchall()
+            clue_ids = tuple(str(row["id"]) for row in clue_rows)
+            if not clue_ids:
+                return (), {}
+            placeholders = ", ".join("?" for _ in clue_ids)
+            # Step 2: rank and limit events only for those selected IDs;
+            # ROW_NUMBER over the eligible set; rn=1 is newest, so we sort
+            # by created_at/id ascending in the final output to get old→new.
+            capped_rows = connection.execute(
+                f"""
+                WITH target AS (
+                    SELECT v.sort_index AS volume_order,
+                           c.sort_index AS chapter_order
+                    FROM chapters c JOIN volumes v ON v.id = c.volume_id
+                    WHERE c.id = ? AND c.is_deleted = 0
+                ),
+                ranked AS (
+                    SELECT e.*,
+                           v.sort_index AS volume_order,
+                           c.sort_index AS chapter_order,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY e.clue_id
+                               ORDER BY v.sort_index DESC, c.sort_index DESC,
+                                        e.created_at DESC, e.id DESC
+                           ) AS rn,
+                           COUNT(*) OVER (PARTITION BY e.clue_id) AS total
+                    FROM narrative_clue_events e
+                    JOIN chapters c ON c.id = e.chapter_id AND c.is_deleted = 0
+                    JOIN volumes v ON v.id = c.volume_id
+                    CROSS JOIN target t
+                    WHERE e.review_status IN ('APPROVED', 'LOCKED')
+                      AND e.clue_id IN ({placeholders})
+                      AND (v.sort_index < t.volume_order OR
+                           (v.sort_index = t.volume_order
+                            AND c.sort_index < t.chapter_order))
+                )
+                SELECT * FROM ranked WHERE rn <= ?
+                ORDER BY clue_id, volume_order, chapter_order, created_at, id
+                """,
+                (chapter_id, *clue_ids, int(max_events_per_clue)),
+            ).fetchall()
+        events: dict[str, list[NarrativeClueEvent]] = {}
+        totals: dict[str, int] = {}
+        for row in capped_rows:
+            key = str(row["clue_id"])
+            events.setdefault(key, []).append(self._clue_event(row))
+            totals[key] = int(row["total"])
+        timelines = tuple(
+            ClueTimeline(self._clue(row), tuple(events.get(str(row["id"]), [])))
+            for row in clue_rows
+        )
+        return timelines, totals
+
+    def count_clue_events_before(
+        self,
+        chapter_id: str,
+        clue_ids: tuple[str, ...],
+    ) -> dict[str, int]:
+        """True total of before-target approved events for each given clue."""
+        if not clue_ids:
+            return {}
+        placeholders = ", ".join("?" for _ in clue_ids)
+        with self.project.database.connect() as connection:
+            rows = connection.execute(
+                f"""
+                WITH target AS (
+                    SELECT v.sort_index AS volume_order, c.sort_index AS chapter_order
+                    FROM chapters c JOIN volumes v ON v.id = c.volume_id WHERE c.id = ?
+                )
+                SELECT e.clue_id AS clue_id, COUNT(*) AS total
+                FROM narrative_clue_events e
+                JOIN chapters c ON c.id = e.chapter_id
+                JOIN volumes v ON v.id = c.volume_id
+                CROSS JOIN target t
+                WHERE e.review_status IN ('APPROVED', 'LOCKED')
+                  AND e.clue_id IN ({placeholders})
+                  AND (v.sort_index < t.volume_order OR
+                       (v.sort_index = t.volume_order AND c.sort_index < t.chapter_order))
+                GROUP BY e.clue_id
+                """,
+                (chapter_id, *clue_ids),
+            ).fetchall()
+        return {str(row["clue_id"]): int(row["total"]) for row in rows}
+
     def list_ineligible_clue_events_before(
         self,
         chapter_id: str,

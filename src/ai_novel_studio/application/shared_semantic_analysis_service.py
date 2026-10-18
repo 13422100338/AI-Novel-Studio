@@ -13,6 +13,7 @@ from ai_novel_studio.core.context.shared_semantic_result import (
     StateChangeCandidate,
     SubjectMentionCandidate,
     ViewDifferenceCandidate,
+    ViewDifferenceKind,
     WindowSummaryCandidate,
     candidate_source_id,
 )
@@ -31,6 +32,12 @@ _MAX_SPANS = 32
 _MAX_TEXT = 4_000
 _MAX_QUOTE = 2_000
 _RESULT_KEY = "_validated_shared_semantic_result"
+_READER_VIEW_KINDS = frozenset(
+    {"DECEPTION", "PARTIAL_DISCLOSURE", "FALSE_BELIEF"}
+)
+_CHARACTER_VIEW_KINDS = frozenset(
+    {kind.value for kind in ViewDifferenceKind}
+)
 _FIELDS = (
     "subject_mentions",
     "aliases",
@@ -121,7 +128,11 @@ class SharedSemanticAnalysisService:
                 "target_mention_ordinal,epistemic_status,content,spans,"
                 "occurrence_ordinal?}; a READER_VIEW omits observer_mention_ordinal and "
                 "epistemic_status. Summary is exactly null or {content,spans}; each span "
-                "is exactly {start,end}. Represent one shared event once and attach many "
+                "is exactly {start,end}. View items must carry a difference_kind: "
+                "CHARACTER_VIEW allows SECRET,DECEPTION,SUSPICION,PARTIAL_DISCLOSURE,"
+                "HIDDEN_FACT,FALSE_BELIEF and READER_VIEW allows only DECEPTION,"
+                "PARTIAL_DISCLOSURE,FALSE_BELIEF; ordinary KNOWS is not an epistemic "
+                "difference. Represent one shared event once and attach many "
                 "participant links. State means a real change; View means only a sparse "
                 "epistemic difference, never an ordinary participation matrix.",
             ),
@@ -181,6 +192,7 @@ class SharedSemanticAnalysisService:
                 required = frozenset(
                     {
                         "view_type",
+                        "difference_kind",
                         "observer_mention_ordinal",
                         "target_mention_ordinal",
                         "epistemic_status",
@@ -192,6 +204,7 @@ class SharedSemanticAnalysisService:
                 required = frozenset(
                     {
                         "view_type",
+                        "difference_kind",
                         "target_mention_ordinal",
                         "content",
                         "spans",
@@ -200,6 +213,20 @@ class SharedSemanticAnalysisService:
             else:
                 raise ValueError
             cls._require_exact_fields(item, required, optional_occurrence=True)
+            difference_kind = item.get("difference_kind")
+            if (
+                view_type == ViewType.READER_VIEW.value
+                and difference_kind not in _READER_VIEW_KINDS
+            ):
+                raise ValueError
+            if (
+                view_type == ViewType.CHARACTER_VIEW.value
+                and (
+                    difference_kind not in _CHARACTER_VIEW_KINDS
+                    or item.get("epistemic_status") == EpistemicStatus.KNOWS.value
+                )
+            ):
+                raise ValueError
         elif field == "summary":
             cls._require_exact_fields(
                 item,
@@ -496,6 +523,12 @@ class SharedSemanticAnalysisService:
     ) -> ViewDifferenceCandidate:
         item = cls._item(raw)
         view_type = ViewType(cls._text(item, "view_type"))
+        difference_kind = ViewDifferenceKind(cls._text(item, "difference_kind"))
+        if (
+            view_type is ViewType.READER_VIEW
+            and difference_kind not in _READER_VIEW_KINDS
+        ):
+            raise ValueError
         target = cls._reference(
             item,
             "target_mention_ordinal",
@@ -533,6 +566,7 @@ class SharedSemanticAnalysisService:
             ),
             observer_mention_candidate_id=observer,
             target_mention_candidate_id=target,
+            difference_kind=difference_kind,
         )
 
     @classmethod

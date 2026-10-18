@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 
+from ai_novel_studio.application.compile_context_service import (
+    CompileContextService,
+    EvidenceNeed,
+)
 from ai_novel_studio.application.generation_memory_context_provider import (
     GenerationMemoryContextProvider,
 )
@@ -71,14 +76,26 @@ class GenerationPreparationRequest:
     model_id: str
     safety_margin: int = 1024
     audit_policy: AuditPolicy = AuditPolicy.MINIMAL
+    evidence_needs: tuple[EvidenceNeed, ...] = ()
+    instruction: str = ""
 
     def __post_init__(self) -> None:
+        if (
+            not isinstance(self.instruction, str)
+            or len(self.instruction) > 20_000
+            or "\x00" in self.instruction
+        ):
+            raise ValueError("本次写作要求无效或过长")
         if not self.chapter_id.strip():
             raise ValueError("章节 ID 不能为空")
         if self.target_words <= 0:
             raise ValueError("目标字数必须大于零")
         if not self.model_provider_id.strip() or not self.model_id.strip():
             raise ValueError("生成准备必须绑定连接和模型")
+        if not isinstance(self.evidence_needs, tuple) or any(
+            not isinstance(need, EvidenceNeed) for need in self.evidence_needs
+        ):
+            raise ValueError("证据需求无效")
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,6 +117,7 @@ class GenerationContextService:
         manifests: ContextManifestRepository,
         builder: ContextBuilder | None = None,
         history: HistoryRetriever | None = None,
+        compile_context: CompileContextService | None = None,
     ) -> None:
         self.project = project
         self.chapters = chapters
@@ -108,13 +126,38 @@ class GenerationContextService:
         self.runs = runs
         self.manifests = manifests
         self.builder = builder or ContextBuilder()
+        self.history = history
+        if compile_context is not None and not isinstance(
+            compile_context, CompileContextService
+        ):
+            raise TypeError("生成上下文证据编译服务无效")
+        self._compile_context = compile_context
         self.memory_context = GenerationMemoryContextProvider(project, history)
         self.project_guidance = ProjectGuidanceService(
             ProjectGuidanceRepository(project)
         )
 
     def prepare(self, request: GenerationPreparationRequest) -> PreparedGeneration:
-        requirement = self.requirements.get(request.chapter_id)
+        try:
+            requirement = self.requirements.get(request.chapter_id)
+        except KeyError:
+            if not request.instruction.strip():
+                raise
+            now = datetime.now(UTC)
+            requirement = ChapterRequirement(
+                f"task-{request.chapter_id}", request.chapter_id, "", False, 0, _hash(""), now, now
+            )
+        if request.instruction.strip():
+            # A chat task belongs to this run; it must never replace the author's saved requirement.
+            content = "\n\n".join(
+                part
+                for part in (
+                    requirement.content.strip(),
+                    "本次写作任务（Codex 根据作者要求整理）：\n" + request.instruction.strip(),
+                )
+                if part
+            )
+            requirement = replace(requirement, content=content, content_hash=_hash(content))
         if not requirement.content.strip():
             raise ValueError("当前章要求不能为空")
         chapter = self.chapters.get_chapter(request.chapter_id, include_deleted=False)
@@ -153,22 +196,32 @@ class GenerationContextService:
         )
         try:
             blocks = self._blocks(request, requirement, brief)
-            built = self.builder.build(
-                ContextBuildRequest(
-                    request.chapter_id,
-                    run.id,
-                    budget,
-                    blocks,
-                    task=ContextTask(
-                        task_type="PROSE_GENERATION",
-                        query_text=requirement.content,
-                    ),
-                    deduplicate=True,
-                    minimum_category_coverage=("RECENT_FULL",),
-                    target_chapter_revision=chapter.revision,
-                    requirement_revision=requirement.revision,
-                )
+            context_request = ContextBuildRequest(
+                request.chapter_id,
+                run.id,
+                budget,
+                blocks,
+                task=ContextTask(
+                    task_type="PROSE_GENERATION",
+                    query_text=requirement.content,
+                ),
+                deduplicate=True,
+                minimum_category_coverage=("RECENT_FULL",),
+                target_chapter_revision=chapter.revision,
+                requirement_revision=requirement.revision,
             )
+            if request.evidence_needs:
+                if self._compile_context is None:
+                    raise ValueError("证据需求需要先配置证据编译服务")
+                compiled = self._compile_context.compile(
+                    context_request,
+                    evidence_needs=request.evidence_needs,
+                )
+                built = compiled.built
+                evidence_blocks = compiled.evidence_blocks
+            else:
+                built = self.builder.build(context_request)
+                evidence_blocks = ()
             manifest = built.manifest
             if context_warning is not None:
                 manifest = replace(
@@ -176,7 +229,7 @@ class GenerationContextService:
                     warnings=manifest.warnings + (context_warning,),
                 )
             self.manifests.save(manifest)
-            selected = self._selected_blocks(blocks, manifest)
+            selected = self._selected_blocks(blocks + evidence_blocks, manifest)
             messages = build_prose_messages(requirement, brief, selected)
             ready = self.runs.mark_ready(run.id, manifest.id)
         except BaseException as error:
@@ -261,7 +314,7 @@ class GenerationContextService:
                     requirement.content,
                     4,
                     True,
-                    "CHAPTER_REQUIREMENT",
+                    "GENERATION_REQUEST" if request.instruction else "CHAPTER_REQUIREMENT",
                     requirement.id,
                     request.chapter_id,
                     requirement.revision,
@@ -317,9 +370,7 @@ class GenerationContextService:
                 requirement.content,
                 tuple(content for _chapter, content in recent_contents),
                 brief.participants if brief is not None else (),
-                pov_character_id=(
-                    brief.pov_character_id if brief is not None else None
-                ),
+                pov_character_id=(brief.pov_character_id if brief is not None else None),
             )
         )
         for distance, (chapter, content) in enumerate(recent_contents, start=1):

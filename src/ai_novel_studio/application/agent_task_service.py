@@ -6,7 +6,7 @@ from ai_novel_studio.application.agent_loop_service import AgentLoopRequest, Age
 from ai_novel_studio.domain.agent import AgentPurpose
 from ai_novel_studio.infrastructure.llm import LLMMessage
 
-AGENT_ASSISTANT_PROMPT_VERSION = "agent-assistant-v2"
+AGENT_ASSISTANT_PROMPT_VERSION = "agent-assistant-v4"
 
 
 class AgentLoopRunner(Protocol):
@@ -14,6 +14,12 @@ class AgentLoopRunner(Protocol):
 
 
 class AgentTaskService:
+    """Routes agent conversations without keyword-based tool preselection.
+
+    The model autonomously chooses tools via structured JSON output; the
+    system prompt and tool catalog provide enough context for it to decide
+    when cross-chapter evidence is needed (Ticket B)."""
+
     def __init__(self, loop: AgentLoopRunner) -> None:
         self._loop = loop
 
@@ -30,7 +36,7 @@ class AgentTaskService:
         output_token_limit: int = 2_000,
         max_iterations: int = 4,
         max_tool_calls: int = 8,
-        max_tool_result_chars: int = 4_000,
+        max_tool_result_chars: int = 16_000,
     ) -> AgentLoopResult:
         return self._run(
             purpose=AgentPurpose.PLOT_DISCUSSION,
@@ -42,9 +48,10 @@ class AgentTaskService:
             model_provider_id=model_provider_id,
             model_id=model_id,
             output_token_limit=output_token_limit,
-            max_iterations=max_iterations,
+            max_iterations=max(max_iterations, 6),
             max_tool_calls=max_tool_calls,
             max_tool_result_chars=max_tool_result_chars,
+            require_tool_before_final=False,
         )
 
     def plan_revision_with_tools(
@@ -75,6 +82,7 @@ class AgentTaskService:
             max_iterations=max_iterations,
             max_tool_calls=max_tool_calls,
             max_tool_result_chars=max_tool_result_chars,
+            require_tool_before_final=True,
         )
 
     def _run(
@@ -92,6 +100,7 @@ class AgentTaskService:
         max_iterations: int,
         max_tool_calls: int,
         max_tool_result_chars: int,
+        require_tool_before_final: bool,
     ) -> AgentLoopResult:
         messages = (
             LLMMessage("system", self._system_boundary()),
@@ -114,7 +123,7 @@ class AgentTaskService:
                 max_tool_calls=max_tool_calls,
                 max_tool_result_chars=max_tool_result_chars,
                 output_token_limit=output_token_limit,
-                require_tool_before_final=True,
+                require_tool_before_final=require_tool_before_final,
             )
         )
 
@@ -126,6 +135,10 @@ class AgentTaskService:
             "不要声称读过任何未由正文窗口、当前章要求或工具结果提供的材料。"
             "如果问题依赖项目背景，而已注入的历史、前文记忆、当前正文或章要求不足，"
             "必须先尝试只读工具，不得在未检索时直接说没有上下文。"
+            "如果用户询问其他章节、全书内容或跨章关系，"
+            "优先使用 READ_NOVEL_OVERVIEW 按叙事序批量读取；"
+            "也可以先调用 LIST_CHAPTERS 获取目录，再用 READ_CHAPTERS_BATCH 精确读取。"
+            "不得在未尝试章节目录工具时声称没有读取权限。"
             "禁止修改正文、记忆库、正典、伏笔、Brief、风格规则、模型配置或设置。"
             "最终输出只能是建议、解释或可审查的修订计划。"
         )
@@ -134,7 +147,12 @@ class AgentTaskService:
     def _tool_catalog() -> str:
         return (
             "允许的只读工具及参数："
+            "LIST_CHAPTERS(limit?, offset?)；"
+            "READ_NOVEL_OVERVIEW(offset?, chapter_count?, total_char_budget?) — "
+            "按叙事序批量读取章节概览并返回分页元数据，适合跨章/全书问题；"
             "READ_CHAPTER_EXCERPT(chapter_id, max_chars?)；"
+            "READ_CHAPTERS_BATCH(chapter_ids, max_chars_per_chapter?) — "
+            "不存在的 ID 会以 omitted 返回而非报错；"
             "SEARCH_MEMORY(query, before_chapter_id?, limit?)；"
             "GET_CHARACTER_STATE(character_name 或 character_id, before_chapter_id?)；"
             "GET_CHARACTER_KNOWLEDGE(character_name 或 character_id, before_chapter_id?)；"

@@ -19,6 +19,7 @@ from ai_novel_studio.application.chapter_revision_service import (
     RevisionSourceIdentity,
     SubmittedDeletion,
     SubmittedRelocation,
+    SubmittedRestore,
     SubmittedRevision,
     SubmittedTitleRevision,
 )
@@ -28,6 +29,7 @@ from ai_novel_studio.core.context.manuscript_chunking import (
 )
 from ai_novel_studio.domain.embedding import EmbeddingIndexIdentity
 from ai_novel_studio.infrastructure.storage.chapter_repository import (
+    ChapterFileTransaction,
     ChapterRepository,
     StaleChapterRevisionError,
 )
@@ -67,9 +69,7 @@ def test_revision_contract_dtos_reject_invalid_or_leaky_states() -> None:
         manuscript_committed=True,
         semantic_memory_invalidated=False,
     )
-    failure = FormalMaintenanceFailure(
-        FormalMaintenanceFailureCode.REPAIR_FAILED
-    )
+    failure = FormalMaintenanceFailure(FormalMaintenanceFailureCode.REPAIR_FAILED)
 
     assert impact.after == source
     assert failure.message == "formal manuscript projection requires recovery"
@@ -151,6 +151,55 @@ def test_submit_revision_rejects_stale_cas_before_write_or_index(
     assert formal_count == 0
 
 
+def test_canonical_commits_join_caller_transaction_and_defer_maintenance(
+    tmp_path: Path,
+) -> None:
+    project, chapters, chapter_id = _project_with_chapter(
+        tmp_path,
+        content="old authoritative text",
+    )
+    service = ChapterRevisionService(project)
+    files = ChapterFileTransaction()
+
+    with project.database.connect() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        content = service.commit_revision(
+            chapter_id,
+            "new authoritative text",
+            source="changeset",
+            reason="tentative",
+            expected_revision=0,
+            connection=connection,
+            file_transaction=files,
+        )
+        title = service.commit_title_revision(
+            chapter_id,
+            "Tentative Title",
+            expected_revision=1,
+            connection=connection,
+            file_transaction=files,
+        )
+        formal_count = int(
+            connection.execute(
+                "SELECT COUNT(*) FROM memory_documents "
+                "WHERE document_type = 'FORMAL_MANUSCRIPT' AND chapter_id = ?",
+                (chapter_id,),
+            ).fetchone()[0]
+        )
+        connection.rollback()
+        files.rollback()
+
+    assert content.impact.after.revision == 1
+    assert title.impact is not None
+    assert title.impact.after.revision == 2
+    assert formal_count == 0
+    restored = chapters.get_chapter(chapter_id)
+    assert restored.title == "Opening"
+    assert restored.revision == 0
+    assert chapters.read_content_exact(chapter_id) == "old authoritative text"
+    assert chapters.list_versions(chapter_id) == []
+
+
 def test_submit_creation_builds_revision_zero_formal_projection_without_vectors(
     tmp_path: Path,
 ) -> None:
@@ -207,9 +256,7 @@ def test_submit_creation_builds_revision_zero_formal_projection_without_vectors(
         for document in stored
         if document.source_start is not None and document.source_end is not None
     )
-    assert {source.document_id for source in pending} == {
-        document.id for document in stored
-    }
+    assert {source.document_id for source in pending} == {document.id for document in stored}
     assert embedding_count == 0
 
 
@@ -342,9 +389,7 @@ def test_submit_revision_returns_impact_and_current_formal_without_vectors(
     )
     assert result.maintenance.status == FormalMaintenanceStatus.REPAIRED
     assert result.maintenance.recovery_required is False
-    assert tuple(document.content for document in stored) == (
-        "new authoritative text",
-    )
+    assert tuple(document.content for document in stored) == ("new authoritative text",)
     assert embedding_count == 0
 
 
@@ -511,9 +556,7 @@ def test_submit_title_revision_rebuilds_current_title_and_leaves_embedding_pendi
     assert current
     assert all(document.title == "Storm Front" for document in current)
     assert all(document.source_revision == 1 for document in current)
-    assert {source.document_id for source in pending} == {
-        document.id for document in current
-    }
+    assert {source.document_id for source in pending} == {document.id for document in current}
     assert prior_current_count == 0
     assert embedding_count == 0
 
@@ -709,10 +752,13 @@ def test_submit_volume_deletion_relocates_and_maintains_each_current_revision(
     }
     with project.database.connect() as connection:
         assert connection.execute("SELECT COUNT(*) FROM memory_embeddings").fetchone()[0] == 0
-        assert connection.execute(
-            "SELECT COUNT(*) FROM memory_documents WHERE id IN (?, ?)",
-            tuple(prior_ids),
-        ).fetchone()[0] == 0
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM memory_documents WHERE id IN (?, ?)",
+                tuple(prior_ids),
+            ).fetchone()[0]
+            == 0
+        )
 
 
 def test_submit_volume_deletion_isolates_sanitized_maintenance_failures(
@@ -746,9 +792,7 @@ def test_submit_volume_deletion_isolates_sanitized_maintenance_failures(
     ) -> FormalMaintenanceResult:
         calls.append(chapter_id)
         if chapter_id == first.id:
-            raise RuntimeError(
-                f"raw relocation failure: {project.layout.root}: {first_content}"
-            )
+            raise RuntimeError(f"raw relocation failure: {project.layout.root}: {first_content}")
         return real_maintain(
             chapter_id,
             expected_revision=expected_revision,
@@ -769,14 +813,17 @@ def test_submit_volume_deletion_isolates_sanitized_maintenance_failures(
     assert result.revisions[1].maintenance.status == FormalMaintenanceStatus.REPAIRED
     assert all(chapters.get_chapter(chapter.id).revision == 1 for chapter in (first, second))
     with project.database.connect() as connection:
-        assert connection.execute(
-            """
+        assert (
+            connection.execute(
+                """
             SELECT COUNT(*) FROM memory_documents
             WHERE document_type = 'FORMAL_MANUSCRIPT' AND chapter_id = ?
               AND status = 'CURRENT'
             """,
-            (first.id,),
-        ).fetchone()[0] == 0
+                (first.id,),
+            ).fetchone()[0]
+            == 0
+        )
 
     monkeypatch.undo()
     recovery = service.recover_current_revisions(limit=100)
@@ -891,11 +938,14 @@ def test_submit_deletion_removes_formal_projection_and_reports_exact_impact(
     with pytest.raises(KeyError):
         search.get(formal.id)
     assert search.pending_embedding_sources(_EMBEDDING_IDENTITY) == ()
-    assert search.recall_embeddings(
-        _EMBEDDING_IDENTITY,
-        (1.0, 0.0),
-        limit=10,
-    ) == ()
+    assert (
+        search.recall_embeddings(
+            _EMBEDDING_IDENTITY,
+            (1.0, 0.0),
+            limit=10,
+        )
+        == ()
+    )
 
 
 def test_submit_deletion_cleanup_failure_is_sanitized_and_recoverable(
@@ -974,11 +1024,14 @@ def test_submit_deletion_cleanup_failure_is_sanitized_and_recoverable(
         )
     assert statuses == ("STALE", "STALE", "STALE")
     assert search.pending_embedding_sources(_EMBEDDING_IDENTITY) == ()
-    assert search.recall_embeddings(
-        _EMBEDDING_IDENTITY,
-        (1.0, 0.0),
-        limit=10,
-    ) == ()
+    assert (
+        search.recall_embeddings(
+            _EMBEDDING_IDENTITY,
+            (1.0, 0.0),
+            limit=10,
+        )
+        == ()
+    )
     assert search.search_rows(content, target.id, limit=10) == ()
 
     monkeypatch.undo()
@@ -1001,12 +1054,16 @@ def test_submit_deletion_rejects_a_newer_revision_before_cas(
         expected_revision=0,
         expected_source_hash=_source_hash(content),
     )
-    formal_id = SearchRepository(project).read_formal_manuscript_chunks(
-        chapter_id,
-        expected_revision=0,
-        expected_source_hash=_source_hash(content),
-        chunk_policy_version=DEFAULT_MANUSCRIPT_CHUNK_POLICY.version,
-    )[0].id
+    formal_id = (
+        SearchRepository(project)
+        .read_formal_manuscript_chunks(
+            chapter_id,
+            expected_revision=0,
+            expected_source_hash=_source_hash(content),
+            chunk_policy_version=DEFAULT_MANUSCRIPT_CHUNK_POLICY.version,
+        )[0]
+        .id
+    )
     original_delete = service.chapters.delete_chapter
 
     def revise_then_delete(
@@ -1135,9 +1192,7 @@ def test_maintain_missing_projection_builds_exact_crlf_chunks_without_vectors(
     assert stored[0].content == content
     assert stored[0].source_start == 0
     assert stored[0].source_end == len(content)
-    assert {source.document_id for source in pending}.issuperset(
-        document.id for document in stored
-    )
+    assert {source.document_id for source in pending}.issuperset(document.id for document in stored)
     assert embedding_count == 0
 
 
@@ -1286,8 +1341,7 @@ def test_maintenance_repairs_corrupt_or_incomplete_projection(
             )
         else:
             connection.execute(
-                "DELETE FROM memory_dependencies "
-                "WHERE memory_type = 'SEARCH' AND memory_id = ?",
+                "DELETE FROM memory_dependencies WHERE memory_type = 'SEARCH' AND memory_id = ?",
                 (prior[0].id,),
             )
 
@@ -1348,9 +1402,7 @@ def test_repair_failure_is_sanitized_and_keeps_recovery_required(
         )
 
     def fail_repair(*_args: object, **_kwargs: object) -> tuple[object, ...]:
-        raise RuntimeError(
-            f"injected repair failure at {project.layout.root}: {content}"
-        )
+        raise RuntimeError(f"injected repair failure at {project.layout.root}: {content}")
 
     monkeypatch.setattr(
         service.search,
@@ -1366,9 +1418,7 @@ def test_repair_failure_is_sanitized_and_keeps_recovery_required(
 
     assert result.status == FormalMaintenanceStatus.PENDING
     assert result.recovery_required is True
-    assert result.failure == FormalMaintenanceFailure(
-        FormalMaintenanceFailureCode.REPAIR_FAILED
-    )
+    assert result.failure == FormalMaintenanceFailure(FormalMaintenanceFailureCode.REPAIR_FAILED)
     assert content not in result.failure.message
     assert str(project.layout.root) not in result.failure.message
     with project.database.connect() as connection:
@@ -1594,8 +1644,7 @@ def test_recovery_cancellation_stops_between_chapter_transactions(
     chapters = ChapterRepository(project)
     volume_id = project.list_volumes()[0].id
     ordered_ids = sorted(
-        chapters.create_chapter(volume_id, title, "", title).id
-        for title in ("First", "Second")
+        chapters.create_chapter(volume_id, title, "", title).id for title in ("First", "Second")
     )
     checks = 0
 
@@ -1808,3 +1857,119 @@ def test_source_race_during_pre_repair_invalidation_preserves_newer_projection(
     )
     assert newer
     assert all(document.status.value == "CURRENT" for document in newer)
+
+
+def test_submit_restore_reinstates_source_and_repairs_formal_projection(
+    tmp_path: Path,
+) -> None:
+    content = "Restored evidence \U0001f600\r\nsecond line\r\n"
+    project, chapters, chapter_id = _project_with_chapter(tmp_path, content=content)
+    chapter = chapters.get_chapter(chapter_id)
+    service = ChapterRevisionService(project)
+    search = SearchRepository(project)
+    service.maintain_current_revision(
+        chapter.id,
+        expected_revision=chapter.revision,
+        expected_source_hash=_source_hash(content),
+    )
+    formal_id = search.read_formal_manuscript_chunks(
+        chapter.id,
+        expected_revision=chapter.revision,
+        expected_source_hash=_source_hash(content),
+        chunk_policy_version=DEFAULT_MANUSCRIPT_CHUNK_POLICY.version,
+    )[0].id
+    deletion = service.submit_deletion(chapter.id)
+    assert chapters.get_chapter(chapter.id).is_deleted is True
+
+    result = service.submit_restore(chapter.id)
+
+    before = RevisionSourceIdentity(
+        chapter.revision,
+        _source_hash(content),
+        is_deleted=True,
+    )
+    after = RevisionSourceIdentity(
+        chapter.revision,
+        _source_hash(content),
+        is_deleted=False,
+    )
+    assert isinstance(result, SubmittedRestore)
+    assert result.impact == RevisionImpact(
+        ChapterMutationKind.RESTORE,
+        chapter.id,
+        before,
+        after,
+        manuscript_committed=True,
+        semantic_memory_invalidated=False,
+    )
+    assert result.impact.chapter_id == deletion.impact.chapter_id
+    assert result.maintenance.status == FormalMaintenanceStatus.REPAIRED
+    assert result.maintenance.chunk_count > 0
+    restored = chapters.get_chapter(chapter.id)
+    assert restored.is_deleted is False
+    assert restored.revision == chapter.revision
+    assert chapters.read_content_exact(chapter.id) == content
+    repaired = search.read_formal_manuscript_chunks(
+        chapter.id,
+        expected_revision=chapter.revision,
+        expected_source_hash=_source_hash(content),
+        chunk_policy_version=DEFAULT_MANUSCRIPT_CHUNK_POLICY.version,
+    )
+    expected_chunks = project_formal_manuscript_chunks(
+        chapter.id,
+        chapter.revision,
+        content,
+    )
+    assert tuple(document.content for document in repaired) == tuple(
+        chunk.content for chunk in expected_chunks
+    )
+    with pytest.raises(KeyError):
+        search.get(formal_id)
+
+
+def test_submit_restore_on_live_chapter_is_rejected_before_changes(
+    tmp_path: Path,
+) -> None:
+    content = "live content"
+    project, chapters, chapter_id = _project_with_chapter(tmp_path, content=content)
+    service = ChapterRevisionService(project)
+
+    with pytest.raises(ValueError, match="not deleted"):
+        service.submit_restore(chapter_id)
+
+    assert chapters.get_chapter(chapter_id).is_deleted is False
+    assert chapters.list_versions(chapter_id) == []
+    assert chapters.read_content_exact(chapter_id) == content
+
+
+def test_submit_restore_sanitizes_maintenance_failure_as_pending(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    content = "pending restore"
+    project, chapters, chapter_id = _project_with_chapter(tmp_path, content=content)
+    service = ChapterRevisionService(project)
+    service.submit_deletion(chapter_id)
+
+    def fail_maintenance(
+        _chapter_id: str,
+        *,
+        expected_revision: int,
+        expected_source_hash: str,
+    ) -> FormalMaintenanceResult:
+        raise RuntimeError("raw maintenance failure")
+
+    monkeypatch.setattr(service, "maintain_current_revision", fail_maintenance)
+
+    result = service.submit_restore(chapter_id)
+
+    assert result.maintenance.status == FormalMaintenanceStatus.PENDING
+    assert result.maintenance.recovery_required is True
+    assert result.maintenance.failure == FormalMaintenanceFailure(
+        FormalMaintenanceFailureCode.REPAIR_FAILED
+    )
+    assert chapters.get_chapter(chapter_id).is_deleted is False
+    assert chapters.read_content_exact(chapter_id) == content
+    monkeypatch.undo()
+    report = service.recover_current_revisions(limit=10)
+    assert report.repaired_chapters == 1

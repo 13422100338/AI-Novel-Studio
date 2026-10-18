@@ -1,0 +1,107 @@
+/* --- viewport & scrollbar reset (C1.5) -------------------------------
+ * The WebEngine page must paint every pixel of the view with the editor
+ * background. Without explicit sizes and margins, QtWebEngine can leave the
+ * default (black) canvas visible as an L-shaped strip on the right/bottom
+ * until the first chapter load, and default scrollbars render black tracks.
+ */
+html,
+body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  background: var(--editor-bg, #fffdf7);
+  overflow: hidden;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+#editor-mount {
+  width: 100%;
+  height: 100%;
+  min-height: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--editor-bg, #fffdf7);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--editor-muted, #6e6a61);
+  border-radius: 5px;
+}
+
+.novel-editor {
+  --editor-bg: #fffdf7;
+  --editor-text: #2b2925;
+  --editor-accent: #8c5a2b;
+  --editor-muted: #6e6a61;
+  background: var(--editor-bg);
+  color: var(--editor-text);
+  font-family: "SimSun", "Songti SC", "Microsoft YaHei", serif;
+  font-size: 18px;
+  line-height: 1.95;
+  min-height: 100%;
+  max-width: 840px;
+  margin-inline: auto;
+  padding: 32px clamp(24px, 6%, 48px);
+  outline: none;
+}
+
+/* The mount is not editable; Chromium focuses the nested ProseMirror node. */
+.novel-editor .ProseMirror:focus,
+.novel-editor .ProseMirror:focus-visible {
+  outline: none;
+}
+
+.novel-editor p {
+  margin: 0 0 0.85em;
+}
+
+.novel-editor h1,
+.novel-editor h2 {
+  font-weight: 600;
+  margin: 0.8em 0 0.4em;
+}
+
+.novel-editor blockquote {
+  border-left: 3px solid var(--editor-accent);
+  color: var(--editor-muted);
+  margin: 0.4em 0;
+  padding-left: 12px;
+}
+
+.novel-editor hr {
+  border: none;
+  border-top: 1px solid var(--editor-muted);
+  margin: 1.2em 0;
+}
+
+.novel-audit-decoration {
+  background: rgba(166, 69, 63, 0.18);
+  border-bottom: 2px solid rgba(166, 69, 63, 0.7);
+  cursor: help;
+}
+
+.novel-selection-toolbar {
+  position: absolute;
+  background: #292a2d;
+  color: #fff;
+  border-radius: 8px;
+  padding: 4px 6px;
+  font-size: 12px;
+  display: none;
+  z-index: 20;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+}

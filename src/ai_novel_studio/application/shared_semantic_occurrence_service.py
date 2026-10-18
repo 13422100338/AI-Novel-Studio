@@ -7,6 +7,10 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from uuid import UUID, uuid5
 
+from ai_novel_studio.application.confirmed_subject_resolver import (
+    ConfirmedSubjectResolutionError,
+    ConfirmedSubjectResolver,
+)
 from ai_novel_studio.application.shared_semantic_import_service import (
     SharedSemanticChapterResult,
 )
@@ -27,7 +31,6 @@ from ai_novel_studio.domain.occurrence import (
     SubjectOccurrenceLink,
     SubjectOccurrenceLinkSourceRange,
 )
-from ai_novel_studio.domain.subject import SubjectType
 from ai_novel_studio.infrastructure.storage.occurrence_repository import (
     OccurrenceRepository,
     OccurrenceRepositoryError,
@@ -224,7 +227,7 @@ class SharedSemanticOccurrenceService:
         if not callable(clock):
             raise TypeError("occurrence binding clock is invalid")
         self._repository = OccurrenceRepository(project)
-        self._subjects = SubjectRepository(project)
+        self._resolver = ConfirmedSubjectResolver(SubjectRepository(project))
         self._clock = clock
         self._resolved_names: dict[str, tuple[str, ...]] = {}
 
@@ -435,14 +438,14 @@ class SharedSemanticOccurrenceService:
     ) -> tuple[str | None, OccurrenceBindingIssueCode | None]:
         if candidate.subject is not None:
             try:
-                subject = self._subjects.get(candidate.subject.subject_id)
-            except KeyError:
-                return None, OccurrenceBindingIssueCode.SUBJECT_UNAVAILABLE
-            except (sqlite3.Error, TypeError, ValueError):
+                resolved = self._resolver.resolve_active_character(
+                    candidate.subject.subject_id
+                )
+            except ConfirmedSubjectResolutionError:
                 raise _ResolutionStorageFailure from None
-            if not subject.active or subject.type is not SubjectType.CHARACTER:
+            if resolved is None:
                 return None, OccurrenceBindingIssueCode.SUBJECT_UNAVAILABLE
-            return subject.id, None
+            return resolved, None
         mention = mentions.get(candidate.subject_mention_candidate_id or "")
         name = getattr(mention, "mention", None)
         if not isinstance(name, str):
@@ -451,30 +454,15 @@ class SharedSemanticOccurrenceService:
         try:
             matches = self._resolved_names.get(normalized)
             if matches is None:
-                matches = self._confirmed_subject_ids(normalized)
+                matches = self._resolver.resolve_name(normalized)
                 self._resolved_names[normalized] = matches
-        except (sqlite3.Error, TypeError, ValueError):
+        except ConfirmedSubjectResolutionError:
             raise _ResolutionStorageFailure from None
         if not matches:
             return None, OccurrenceBindingIssueCode.UNRESOLVED_SUBJECT
         if len(matches) > 1:
             return None, OccurrenceBindingIssueCode.AMBIGUOUS_SUBJECT
         return matches[0], None
-
-    def _confirmed_subject_ids(self, name: str) -> tuple[str, ...]:
-        accepted: list[str] = []
-        for subject in self._subjects.resolve_character_name(name):
-            if not subject.active or subject.type is not SubjectType.CHARACTER:
-                continue
-            if subject.canonical_name == name:
-                accepted.append(subject.id)
-                continue
-            if any(
-                alias.confirmed and alias.alias == name
-                for alias in self._subjects.list_aliases(subject.id)
-            ):
-                accepted.append(subject.id)
-        return tuple(sorted(set(accepted)))
 
 
 def _validate_chapter_result(chapter: SharedSemanticChapterResult) -> None:
