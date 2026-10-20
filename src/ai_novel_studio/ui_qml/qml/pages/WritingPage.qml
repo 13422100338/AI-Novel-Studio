@@ -196,7 +196,11 @@ Item {
                             }
                         }
                         function onEditorRevisionChanged(revision) {
-                            if (webEditorLoader.item !== null) {
+                            // A queued whole-document reload already carries its
+                            // revision and exact Markdown. Do not acknowledge it
+                            // again by serializing the freshly loaded document.
+                            if (webEditorLoader.item !== null
+                                    && webEditorLoader.item.pendingDocumentPayload === "") {
                                 webEditorLoader.item.setBaseRevision(revision)
                             }
                         }
