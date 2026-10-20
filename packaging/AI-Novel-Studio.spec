@@ -9,6 +9,10 @@ a = Analysis(
     binaries=[],
     datas=[
         (
+            str(project_root / "src" / "ai_novel_studio" / "infrastructure" / "codex" / "skills"),
+            "ai_novel_studio/infrastructure/codex/skills",
+        ),
+        (
             str(
                 project_root
                 / "src"
