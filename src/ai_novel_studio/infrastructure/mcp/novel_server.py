@@ -16,8 +16,13 @@ from mcp.types import ToolAnnotations
 from pydantic import Field
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from ai_novel_studio.application.novel_read_service import NOVEL_TOOLS, NovelReadService
+from ai_novel_studio.application.novel_read_service import (
+    LEGACY_NOVEL_TOOLS,
+    NOVEL_TOOLS,
+    NovelReadService,
+)
 from ai_novel_studio.application.novel_writer_service import WRITER_TOOL, NovelWriterService
+from ai_novel_studio.application.outline_writer_input import OutlineRequiredError
 
 
 @dataclass(frozen=True)
@@ -95,7 +100,11 @@ class _LoopbackAuth:
 
 class NovelMcpServer:
     def __init__(
-        self, service: NovelReadService, *, writer: NovelWriterService | None = None
+        self,
+        service: NovelReadService,
+        *,
+        writer: NovelWriterService | None = None,
+        include_legacy_tools: bool = False,
     ) -> None:
         self.service = service
         self.writer = writer
@@ -104,6 +113,8 @@ class NovelMcpServer:
         port = self._socket.getsockname()[1]
         host = f"127.0.0.1:{port}"
         tools = NOVEL_TOOLS + ((WRITER_TOOL,) if writer is not None else ())
+        if include_legacy_tools:
+            tools += LEGACY_NOVEL_TOOLS
         self.endpoint = NovelMcpEndpoint(
             f"http://{host}/mcp", secrets.token_urlsafe(32), tools=tools
         )
@@ -186,10 +197,12 @@ class NovelMcpServer:
             """读取作者计划、章节要求和创作规则，不能把计划当作已发生的事实。"""
             return call("get_novel_constraints", chapter_id=chapter_id)
 
-        @mcp.tool(annotations=annotation)
-        def query_novel_characters(query: str, limit: int = 20) -> dict[str, Any]:
-            """按人物名称或别名查找作品角色 ID；query 最长256字。"""
-            return call("query_novel_characters", query=query, limit=limit)
+        if include_legacy_tools:
+
+            @mcp.tool(annotations=annotation)
+            def query_novel_characters(query: str, limit: int = 20) -> dict[str, Any]:
+                """只读查询旧人物记录，不代表当前大纲或正式正文；query 最长256字。"""
+                return call("query_novel_characters", query=query, limit=limit)
 
         if writer is not None:
 
@@ -207,13 +220,21 @@ class NovelMcpServer:
                 instruction: Annotated[str, Field(min_length=1, max_length=20_000)],
                 target_words: Annotated[int, Field(strict=True, ge=100, le=30_000)] = 800,
                 output_token_limit: Annotated[int, Field(strict=True, ge=1024, le=32_768)] = 8192,
+                related_refs: Annotated[list[dict[str, Any]], Field(max_length=64)] | None = None,
+                style_refs: Annotated[list[dict[str, Any]], Field(max_length=64)] | None = None,
+                recent_chapters: Annotated[int, Field(strict=True, ge=0, le=10)] = 3,
             ) -> dict[str, Any]:
-                """调用独立正文模型生成当前章候选草稿，状态和全文显示在作者侧栏，不覆盖正文。
+                """准备独立正文模型的完整输入，作者确认后生成候选，不覆盖正文。
 
                 仅在作者明确要求写作时调用，每轮最多一次。先读取当前小说和章要求，
                 expected_revision 使用当前上下文修订。instruction 整理作者目标、必要素材、
                 接续位置和禁止改动；素材注明来源。目标100-30000字，输出1024-32768 tokens。
-                优先传任务与必要摘录，不重复整章正文；模型输入预算会进一步限制素材长度。
+                完整大纲是基础输入；尚未登记时须先请作者在大纲页导入或新建并保存。
+                此工具只准备输入提案，作者在软件中确认后才调用正文模型，不自动开始生成。
+                related_refs、style_refs 显式传章节原文引用：chapter_id、revision、source_hash，
+                可选 start/end 半开字符区间，均取自正文读取结果。Codex 读过不代表写作模型收到。
+                范章由作者指定，recent_chapters 是目标前面近期原文章数，默认3，可为0。
+                返回 AWAITING_CONFIRMATION 时应提示作者审阅输入，不能声称草稿已生成。
                 完成后简短告知作者查看任务卡片，不重复粘贴整篇草稿。
                 """
                 try:
@@ -224,10 +245,15 @@ class NovelMcpServer:
                         instruction,
                         target_words,
                         output_token_limit,
+                        related_refs,
+                        style_refs,
+                        recent_chapters,
                     )
                 except asyncio.CancelledError:
                     writer.cancel()
                     raise
+                except OutlineRequiredError as exc:
+                    raise ValueError(str(exc)) from exc
                 except Exception as exc:
                     raise ValueError("正文任务未启动，请重新读取当前章节并检查写作参数") from exc
 

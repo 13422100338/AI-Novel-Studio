@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from contextlib import closing
 from datetime import UTC, datetime
 
 from ai_novel_studio.domain.generation import (
@@ -69,7 +70,6 @@ def _now() -> datetime:
 
 
 class GenerationRepository:
-
     def __init__(self, project: ProjectRepository) -> None:
         self.project = project
 
@@ -119,9 +119,7 @@ class GenerationRepository:
                     ),
                 )
         except sqlite3.IntegrityError as error:
-            if "generation_one_active_writer" in str(error) or "UNIQUE constraint" in str(
-                error
-            ):
+            if "generation_one_active_writer" in str(error) or "UNIQUE constraint" in str(error):
                 raise ActiveGenerationError("当前章节已有活动中的生成任务") from error
             raise
         return self.get(run_id)
@@ -148,8 +146,15 @@ class GenerationRepository:
         run_id: str,
         expected_status: GenerationStatus,
         target_status: GenerationStatus,
+        *,
+        connection: sqlite3.Connection | None = None,
         **fields: object,
     ) -> GenerationRun:
+        if connection is None:
+            with closing(self.project.database.connect()) as owned, owned:
+                return self.transition(
+                    run_id, expected_status, target_status, connection=owned, **fields
+                )
         unsupported = set(fields) - _UPDATABLE_FIELDS
         if unsupported:
             raise ValueError(f"不支持的更新字段：{', '.join(sorted(unsupported))}")
@@ -157,13 +162,12 @@ class GenerationRepository:
             raise GenerationStateError(
                 f"非法生成状态转换：{expected_status.value} -> {target_status.value}"
             )
-        if target_status == GenerationStatus.READY and not fields.get(
-            "context_manifest_id"
-        ):
+        if target_status == GenerationStatus.READY and not fields.get("context_manifest_id"):
             raise GenerationStateError("READY 状态必须绑定 Context Manifest")
-        if target_status == GenerationStatus.ACCEPTED and fields.get(
-            "accepted_chapter_revision"
-        ) is None:
+        if (
+            target_status == GenerationStatus.ACCEPTED
+            and fields.get("accepted_chapter_revision") is None
+        ):
             raise GenerationStateError("ACCEPTED 状态必须记录采用的章节修订")
 
         now = _now().isoformat()
@@ -184,23 +188,18 @@ class GenerationRepository:
             assignments.append("accepted_at = ?")
             values.append(now)
         values.extend((run_id, expected_status.value))
-        with self.project.database.connect() as connection, connection:
-            cursor = connection.execute(
-                f"UPDATE generation_runs SET {', '.join(assignments)} "
-                "WHERE id = ? AND status = ?",
-                tuple(values),
-            )
+        cursor = connection.execute(
+            f"UPDATE generation_runs SET {', '.join(assignments)} WHERE id = ? AND status = ?",
+            tuple(values),
+        )
         if cursor.rowcount != 1:
-            current = self.get(run_id)
+            current = self.get(run_id, connection=connection)
             raise GenerationStateError(
-                f"生成任务状态已变化：预期 {expected_status.value}，"
-                f"当前 {current.status.value}"
+                f"生成任务状态已变化：预期 {expected_status.value}，当前 {current.status.value}"
             )
-        return self.get(run_id)
+        return self.get(run_id, connection=connection)
 
-    def list_by_statuses(
-        self, statuses: tuple[GenerationStatus, ...]
-    ) -> tuple[GenerationRun, ...]:
+    def list_by_statuses(self, statuses: tuple[GenerationStatus, ...]) -> tuple[GenerationRun, ...]:
         if not statuses:
             return ()
         placeholders = ", ".join("?" for _ in statuses)
@@ -212,11 +211,11 @@ class GenerationRepository:
             ).fetchall()
         return tuple(self._run_from_row(row) for row in rows)
 
-    def get(self, run_id: str) -> GenerationRun:
-        with self.project.database.connect() as connection:
-            row = connection.execute(
-                "SELECT * FROM generation_runs WHERE id = ?", (run_id,)
-            ).fetchone()
+    def get(self, run_id: str, *, connection: sqlite3.Connection | None = None) -> GenerationRun:
+        if connection is None:
+            with closing(self.project.database.connect()) as owned:
+                return self.get(run_id, connection=owned)
+        row = connection.execute("SELECT * FROM generation_runs WHERE id = ?", (run_id,)).fetchone()
         if row is None:
             raise KeyError(f"unknown generation run: {run_id}")
         return self._run_from_row(row)

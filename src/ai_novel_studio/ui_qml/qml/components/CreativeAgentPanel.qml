@@ -124,13 +124,45 @@ Item {
             }
         }
 
-        Text {
+        RowLayout {
             visible: Facade.codexEnabled
             Layout.fillWidth: true
-            text: Facade.codexNovelText
-            color: Theme.tokens.color.textSecondary
-            font.pixelSize: 11
-            wrapMode: Text.WordWrap
+            Text {
+                Layout.fillWidth: true
+                text: Facade.codexNovelText
+                color: Theme.tokens.color.textSecondary
+                font.pixelSize: 11
+                wrapMode: Text.WordWrap
+            }
+            AppButton {
+                objectName: "restoreWriterCandidatesButton"
+                text: "恢复候选"
+                ghost: true
+                enabled: !Facade.agentBusy && Facade.projectSource !== "empty"
+                onClicked: Facade.restoreWriterDrafts()
+            }
+        }
+
+        RowLayout {
+            objectName: "outlineWorkflowHint"
+            Layout.fillWidth: true
+            visible: Facade.codexEnabled && Facade.outline.state.available
+                && Facade.outline.state.documents.length === 0
+            Text {
+                Layout.fillWidth: true
+                text: Facade.outline.state.error !== ""
+                    ? "大纲尚未就绪，请打开大纲页面检查。"
+                    : "尚未登记大纲；可先讨论和查阅正文，生成前请导入完整大纲。"
+                font.pixelSize: 11
+                color: Theme.tokens.color.textSecondary
+                wrapMode: Text.WordWrap
+            }
+            AppButton {
+                objectName: "openWorkflowOutlineButton"
+                text: "打开大纲"
+                ghost: true
+                onClicked: Facade.setActiveNav("outline")
+            }
         }
 
         ListView {

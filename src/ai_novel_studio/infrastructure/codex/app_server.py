@@ -1,4 +1,4 @@
-"""Bounded JSON-RPC stdio transport for Codex CLI 0.160.0.
+"""Bounded JSON-RPC stdio transport for Codex app-server.
 
 Protocol: https://learn.chatgpt.com/docs/app-server
 No shell invocation, credential file access, or raw stderr is exposed to the UI.
@@ -26,6 +26,16 @@ if TYPE_CHECKING:
 class CodexConnectionError(RuntimeError):
     # Diagnostics for acceptance scripts; __str__ remains fixed UI copy.
     rpc_error: dict[str, Any] | None = None
+
+
+MAX_RPC_FRAME_BYTES = 8_000_000
+
+
+def encode_rpc_message(message: dict[str, object]) -> bytes:
+    payload = (json.dumps(message, ensure_ascii=False) + "\n").encode("utf-8")
+    if len(payload) > MAX_RPC_FRAME_BYTES:
+        raise ValueError("Codex 单次传输超过 8MB，未发送或截断；请减少可选资料或新建会话。")
+    return payload
 
 
 def resolve_codex_executable() -> str:
@@ -232,11 +242,12 @@ class CodexAppServer:
             raise CodexConnectionError("小说 MCP 未连接，请重新打开项目")
 
     def _write(self, message: dict[str, object]) -> None:
+        payload = encode_rpc_message(message)
         with self._write_lock:
             if self._closed or self._process.stdin is None:
                 raise CodexConnectionError("Codex 连接已关闭")
             try:
-                self._process.stdin.write((json.dumps(message, ensure_ascii=False) + "\n").encode())
+                self._process.stdin.write(payload)
                 self._process.stdin.flush()
             except (BrokenPipeError, OSError) as exc:
                 raise CodexConnectionError("Codex 连接中断") from exc
@@ -280,9 +291,9 @@ class CodexAppServer:
         error = CodexConnectionError("Codex 进程已退出或连接中断")
         try:
             assert self._process.stdout is not None
-            while frame := self._process.stdout.readline(8_000_001):
-                if len(frame) > 8_000_000:
-                    raise ValueError
+            while frame := self._process.stdout.readline(MAX_RPC_FRAME_BYTES + 1):
+                if len(frame) > MAX_RPC_FRAME_BYTES:
+                    raise CodexConnectionError("Codex 单条响应超过 8MB，无法完整载入；请新建会话。")
                 message = json.loads(frame)
                 if not isinstance(message, dict):
                     raise ValueError
@@ -310,7 +321,9 @@ class CodexAppServer:
                             target.put_nowait(message)
                 elif isinstance(message.get("method"), str):
                     self._events.put_nowait(message)
-        except (OSError, ValueError, TypeError, queue.Full, CodexConnectionError):
+        except CodexConnectionError as exc:
+            error = exc
+        except (OSError, ValueError, TypeError, queue.Full):
             error = CodexConnectionError("Codex 协议或连接异常，请重新连接")
         finally:
             with self._pending_lock:

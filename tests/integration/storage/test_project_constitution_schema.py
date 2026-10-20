@@ -29,7 +29,7 @@ def test_schema_v23_adds_project_constitutions() -> None:
             "SELECT name FROM sqlite_master WHERE type = 'index'"
         ).fetchall()
     }
-    assert LATEST_SCHEMA_VERSION == 25
+    assert LATEST_SCHEMA_VERSION == 27
     assert "project_constitutions" in tables
     assert "project_constitutions_project" in indexes
 

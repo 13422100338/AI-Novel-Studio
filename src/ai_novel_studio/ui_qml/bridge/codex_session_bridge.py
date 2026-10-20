@@ -4,14 +4,17 @@ from __future__ import annotations
 
 import json
 import os
+from _thread import LockType
 from collections.abc import Callable
 from pathlib import Path
+from threading import Lock
 from typing import Any, TypedDict
 from uuid import uuid4
 
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal, Slot
 from PySide6.QtGui import QGuiApplication, QImageReader
 
+from ai_novel_studio.application.codex_outline_context import CodexOutlineContext
 from ai_novel_studio.application.codex_session_service import CodexSessionService
 from ai_novel_studio.application.model_backend import ModelBackend
 from ai_novel_studio.application.novel_read_service import (
@@ -70,6 +73,8 @@ class CodexSessionController(QObject):
     controls_changed = Signal()
     writer_status_changed = Signal(str)
     _writer_event = Signal(int, object)
+    _writer_finished = Signal(int, str)
+    _writer_recovered = Signal(int, object)
     _history = Signal(int, object)
     _message = Signal(int, str, str)
     _finished = Signal(int, str)
@@ -88,6 +93,11 @@ class CodexSessionController(QObject):
         self._factory = session_factory
         self._writer_gateway_factory = writer_gateway_factory
         self._writer: NovelWriterService | None = None
+        self._writer_generating = False
+        self._writer_recovering = False
+        # Keep the lock when reconnecting or reopening a project: a revoked
+        # producer may still be finishing its last checkpoint in another job.
+        self._writer_locks: dict[str, LockType] = {}
         self._writer_ids: dict[str, str] = {}
         self._model = AgentTimelineModel(self)
         self._port: Any = None
@@ -113,6 +123,8 @@ class CodexSessionController(QObject):
         self._event.connect(self._on_event)
         self._steered.connect(self._on_steered)
         self._writer_event.connect(self._on_writer_event)
+        self._writer_finished.connect(self._on_writer_finished)
+        self._writer_recovered.connect(self._on_writer_recovered)
 
     @property
     def is_busy(self) -> bool:
@@ -167,12 +179,14 @@ class CodexSessionController(QObject):
             self._novel = NovelReadService(self._repository)
             self._novel.update_editor(self._editor)
             port.bind_novel(self._novel)
+            port.bind_outline(CodexOutlineContext(self._repository))
             epoch = self._epoch
             self._writer = NovelWriterService(
                 self._repository,
                 self._novel,
                 gateway_factory=self._writer_gateway_factory,
                 on_event=lambda event: self._writer_event.emit(epoch, event),
+                operation_lock=self._writer_locks.setdefault(self._project_id, Lock()),
             )
             port.bind_writer(self._writer)
         return port
@@ -199,6 +213,8 @@ class CodexSessionController(QObject):
 
     def bind_project(self, project_id: str | None, repository: Any = None) -> None:
         self._epoch += 1
+        self._writer_generating = False
+        self._writer_recovering = False
         if self._writer:
             self._writer.revoke()
         self._writer = None
@@ -299,8 +315,10 @@ class CodexSessionController(QObject):
             try:
                 port.steer(text)
                 self._steered.emit(epoch, text, True)
-            except Exception:
+            except Exception as exc:
                 self._steered.emit(epoch, text, False)
+                if isinstance(exc, ValueError):
+                    self._event.emit(epoch, "session/inputRejected", {"message": str(exc)})
 
         QThreadPool.globalInstance().start(_Job(action))
 
@@ -382,6 +400,11 @@ class CodexSessionController(QObject):
         QThreadPool.globalInstance().start(_Job(action))
 
     def stop(self) -> None:
+        if self._writer_recovering:
+            return
+        if self._writer_generating:
+            self.cancel_writer()
+            return
         if not self._busy or self._port is None:
             return
         self._state("正在停止", True)
@@ -412,6 +435,7 @@ class CodexSessionController(QObject):
             self._model.clear()
             self._message_ids.clear()
             self._tool_ids.clear()
+            self._writer_ids.clear()
             self._read_progress = NovelReadProgress()
             self._read_summary_id = None
             self._attachments.clear()
@@ -474,6 +498,157 @@ class CodexSessionController(QObject):
         if self._writer is not None:
             self._writer.cancel()
 
+    def _writer_request(self, item_id: str) -> str:
+        for request_id, row_id in self._writer_ids.items():
+            if row_id == item_id:
+                return request_id
+        raise ValueError("当前输入提案不可用")
+
+    def preview_writer_input(self, item_id: str) -> dict[str, Any]:
+        try:
+            if self._writer is None:
+                raise ValueError("正文服务不可用")
+            data = self._writer_card(item_id)
+            if data.get("run_id"):
+                return self._writer.preview_candidate_input(data["run_id"])
+            return self._writer.preview_input(self._writer_request(item_id))
+        except (ValueError, KeyError):
+            self.warn("原输入不可用，未重新拼接；请检查候选记录或重新整理任务。")
+            return {}
+
+    def _writer_card(self, item_id: str) -> dict[str, Any]:
+        row = next(
+            (r for r in self._model.items() if r.id == item_id and r.kind == "writer_task"), None
+        )
+        if row is None:
+            raise ValueError("候选卡片不可用，请恢复后检查")
+        try:
+            data = json.loads(row.data)
+            if not isinstance(data, dict) or any(
+                not isinstance(data.get(key, ""), str)
+                for key in ("run_id", "checkpoint_id", "candidate_hash")
+            ):
+                raise ValueError
+            return data
+        except (TypeError, ValueError) as exc:
+            raise ValueError("候选卡片无效，请恢复后检查") from exc
+
+    def adopt_writer_draft(self, item_id: str, *, allow_partial: bool = False) -> dict[str, Any]:
+        if self._writer is None or self._busy:
+            self.warn("请等待当前任务结束后再采用候选。")
+            return {}
+        try:
+            data = self._writer_card(item_id)
+            return self._writer.adopt_candidate(
+                data.get("run_id", ""),
+                data.get("checkpoint_id", ""),
+                data.get("candidate_hash", ""),
+                allow_partial=allow_partial,
+            )
+        except (ValueError, KeyError, RuntimeError) as exc:
+            self.warn(str(exc))
+            return {}
+
+    def discard_writer_draft(self, item_id: str) -> bool:
+        if self._writer is None or self._busy:
+            return False
+        try:
+            data = self._writer_card(item_id)
+            return self._writer.discard_candidate(
+                data.get("run_id", ""),
+                data.get("checkpoint_id", ""),
+                data.get("candidate_hash", ""),
+            )
+        except (ValueError, KeyError, RuntimeError) as exc:
+            self.warn(str(exc))
+            return False
+
+    def restore_writer_drafts(self) -> bool:
+        if self._writer is None or self._busy:
+            return False
+        epoch, writer = self._epoch, self._writer
+        self._writer_recovering = True
+        self._state("正在恢复候选", True)
+
+        def action() -> None:
+            result: dict[str, Any]
+            try:
+                result = writer.recover_candidates()
+            except ValueError as exc:
+                result = {"error": str(exc)}
+            except Exception:
+                result = {"error": "候选恢复未完成，原记录已保留。"}
+            self._writer_recovered.emit(epoch, result)
+
+        QThreadPool.globalInstance().start(_Job(action))
+        return True
+
+    @Slot(int, object)
+    def _on_writer_recovered(self, epoch: int, result: dict[str, Any]) -> None:
+        if epoch != self._epoch:
+            return
+        self._writer_recovering = False
+        self._state("候选恢复未完成" if "error" in result else "候选已恢复", False)
+        if "error" in result:
+            self.warn(result["error"])
+        else:
+            self._append(
+                "tool_result",
+                f"已恢复最近 {result['restored']} / {result['total']} 个候选；"
+                "沿用原检查点和输入，未调用模型。",
+            )
+        if self._novel is not None:
+            self._novel.update_editor(self._editor)
+
+    def reject_writer_input(self, item_id: str) -> bool:
+        if self._writer is None or self._busy:
+            return False
+        return self._writer.reject_input(self._writer_request(item_id))
+
+    def confirm_writer_input(self, item_id: str) -> bool:
+        if self._writer is None or self._busy:
+            self.warn("请等待当前任务完成后再确认正文输入。")
+            return False
+        try:
+            request_id = self._writer_request(item_id)
+        except ValueError:
+            return False
+        epoch, writer = self._epoch, self._writer
+        self._writer_generating = True
+        self._state("正文生成中", True)
+
+        def action() -> None:
+            status = "FAILED"
+            try:
+                status = str(writer.confirm_input(request_id)["status"])
+            except ValueError as exc:
+                self._event.emit(epoch, "session/inputRejected", {"message": str(exc)})
+            except Exception:
+                self._event.emit(
+                    epoch,
+                    "session/inputRejected",
+                    {"message": "正文任务未完成，请检查输入与连接。"},
+                )
+            finally:
+                self._writer_finished.emit(epoch, status)
+
+        QThreadPool.globalInstance().start(_Job(action))
+        return True
+
+    @Slot(int, str)
+    def _on_writer_finished(self, epoch: int, status: str) -> None:
+        if epoch != self._epoch:
+            return
+        self._writer_generating = False
+        self._state(
+            {"COMPLETED": "草稿已生成", "PARTIAL": "已保留部分草稿", "CANCELLED": "已停止"}.get(
+                status, "正文任务未完成"
+            ),
+            False,
+        )
+        if self._novel is not None:
+            self._novel.update_editor(self._editor)
+
     def copy_draft(self, item_id: str) -> None:
         item = next(
             (row for row in self._model.items() if row.id == item_id and row.kind == "writer_task"),
@@ -493,12 +668,16 @@ class CodexSessionController(QObject):
             return
         key, state = event["id"], str(event.get("status", "FAILED"))
         labels = {
+            "AWAITING_CONFIRMATION": "待确认正文输入",
+            "STALE": "输入资料已变化",
             "PREPARING": "准备写作上下文",
             "GENERATING": "正文生成中",
             "COMPLETED": "草稿已生成",
             "PARTIAL": "已保留部分草稿",
             "CANCELLED": "正文生成已停止",
             "FAILED": "正文生成失败",
+            "ACCEPTED": "候选已采用",
+            "DISCARDED": "候选已放弃",
         }
         changes = _WriterCardChanges(
             label=labels.get(state, "正文生成"),
@@ -512,6 +691,19 @@ class CodexSessionController(QObject):
                     "model": str(event.get("model", "独立写作模型"))[:160],
                     "word_count": event.get("word_count", 0),
                     "target_words": event.get("target_words", 0),
+                    "input_ready": event.get("input_ready", False),
+                    "run_id": event.get("run_id", ""),
+                    "scope": event.get("scope", ""),
+                    "estimated_tokens": event.get("estimated_tokens", 0),
+                    "context_window": event.get("context_window", 0),
+                    "outline_fingerprint": event.get("outline_fingerprint", ""),
+                    "sources": event.get("sources", []),
+                    "checkpoint_id": event.get("checkpoint_id", ""),
+                    "candidate_hash": event.get("candidate_hash", ""),
+                    "partial": event.get("partial", False),
+                    "can_adopt": event.get("can_adopt", False),
+                    "can_discard": event.get("can_discard", False),
+                    "adoption_note": event.get("adoption_note", ""),
                 },
                 ensure_ascii=False,
             ),
@@ -532,6 +724,19 @@ class CodexSessionController(QObject):
         if method == "session/turnReady":
             self._can_steer = True
             self.controls_changed.emit()
+        elif method == "session/outlineContext":
+            pending = params.get("pendingLinks", -1)
+            links = "关联索引不可用" if pending == -1 else f"{pending} 项关联待确认"
+            text = (
+                f"{params['documents']} 份文档 · {params['characters']:,} 字\n"
+                f"版本 {str(params['fingerprint'])[:12]} · 已确认关联 {params['confirmedLinks']} 项"
+                f" · {links}\n"
+                f"容量保守估算 {params['estimatedTokens']:,} / {params['contextLimit']:,} tokens\n"
+                "本任务使用发送时的完整大纲；改纲在下一轮生效。"
+            )
+            self._tool(f"outline:{self._status_id}", "本轮完整大纲", text)
+        elif method == "session/inputRejected":
+            self.warn(str(params.get("message", "追加要求未发送")))
         elif method == "thread/tokenUsage/updated":
             token_usage = params.get("tokenUsage")
             usage = token_usage.get("last") if isinstance(token_usage, dict) else None

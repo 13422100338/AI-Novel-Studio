@@ -98,3 +98,18 @@ def test_autosave_refreshes_quote_revision_without_dropping_it(qtbot, tmp_path):
     assert facade._chat_selection.revision == facade.currentRevision
     facade.editorTextChanged(facade.currentChapterBody + "新写的一句。")
     assert not facade.hasSelectionReference
+
+
+def test_plaintext_utf16_selection_keeps_second_occurrence_after_emoji():
+    facade = MockNovelStudioFacade(demo_mode=True)
+    raw = "开头😀。\n重复。\n中间。\n重复。"
+    facade.editorTextChanged(raw)
+    start = raw.rindex("重复。")
+    first = len(raw[:start].encode("utf-16-le")) // 2
+    last = len(raw[: start + 3].encode("utf-16-le")) // 2
+    facade.setPlainTextSelection(first, last)
+    assert facade._selection_reference.selection.start == start
+    assert facade._selection_reference.selection.text == "重复。"
+    # A half-surrogate offset must fail closed, not move the selection.
+    facade.setPlainTextSelection(3, 5)
+    assert not facade.hasSelectionReference

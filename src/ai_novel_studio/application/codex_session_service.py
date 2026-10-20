@@ -6,10 +6,18 @@ from threading import Event, Lock
 from typing import TYPE_CHECKING, Any, Protocol
 from uuid import UUID
 
+from ai_novel_studio.application.codex_outline_context import (
+    CodexOutlineContext,
+    OutlineTurnContext,
+    check_outline_capacity,
+    json_input_size,
+    visible_user_text,
+)
 from ai_novel_studio.infrastructure.codex.app_server import (
     CONVERSATION_CONFIG,
     CodexAppServer,
     CodexConnectionError,
+    encode_rpc_message,
     rpc_config,
 )
 from ai_novel_studio.infrastructure.codex.preferences import CodexPreferences
@@ -27,6 +35,18 @@ if TYPE_CHECKING:
 _INSTRUCTIONS = (
     "你是小说创作工作台中的中文创作助手，帮助作者讨论、规划与审阅。"
     "可使用小说资料工具，并在开启联网时查询外部资料。"
+    "默认以完整大纲驱动创作；每轮附有COMPLETE_OUTLINE时，这是该任务固定的完整原文，属于AUTHOR_PLAN，"
+    "优先据此理解全书、事件与人物动机，不用旧会话摘要或人物卡替代。"
+    "大纲不是已经发生的事实；与正式正文不一致时说明差异，由作者决定改纲。"
+    "CONFIRMED_OUTLINE_LINKS提供当前版本已确认的chapter_id，可批量读取原文；"
+    "待确认链接不能冒充已确认关联。Codex读过的正文不会自动传给独立正文模型。"
+    "给正文模型的相关原文必须通过related_refs显式列出，范章经作者指定后列入style_refs，"
+    "使用读取结果中的chapter_id、revision、source_hash及必要范围。"
+    "未附完整大纲时可讨论和读取正式正文，但不能声称已读取全书规划；"
+    "正文生成前请作者在大纲页面导入或新建并保存，不以旧人物、正典或摘要记忆代替。"
+    "不调度旧人物状态、正典、伏笔、事件或摘要的自动抽取。"
+    "正文工具返回AWAITING_CONFIRMATION只是输入提案，尚未调用写作模型；"
+    "请作者在侧栏审阅并确认，不能宣称草稿已经生成，也不能替作者确认。"
     "问题涉及多个章节或整部作品时，按作者目标选择章节范围或章节ID，优先调用"
     "read_novel_chapters批量读取所需正文，不逐章重复调用。它可以直接按范围读取，"
     "无需为了连续章节先逐个列出ID；全书分析使用默认全书选择。"
@@ -77,6 +97,16 @@ class CodexSessionService:
         self._mcp: NovelMcpServer | None = None
         self._model: str | None = None
         self._has_turns = False
+        self._outlines: CodexOutlineContext | None = None
+        self._turn_outline: OutlineTurnContext | None = None
+        self._context_tokens = 0
+        self._runtime_window: int | None = None
+        self._outline_config: dict[str, Any] = {}
+
+    def bind_outline(self, service: CodexOutlineContext) -> None:
+        if self._client is not None or service.project_id != self.project_id:
+            raise ValueError("大纲项目身份不匹配")
+        self._outlines = service
 
     def bind_novel(self, service: NovelReadService) -> None:
         if self._client is not None or service.project_id != self.project_id:
@@ -200,6 +230,8 @@ class CodexSessionService:
         self._thread_id = owned_id
         self._model = selection.model or response.get("model")
         self._has_turns = bool(thread.get("turns"))
+        self._context_tokens = json_input_size(thread.get("turns", []))
+        self._runtime_window = None
         # Codex materializes a new thread's rollout on its first turn. Empty
         # thread IDs cannot be resumed/forked after the process exits.
         if thread_id is not None or fork:
@@ -210,11 +242,7 @@ class CodexSessionService:
                 if item.get("type") == "agentMessage" and isinstance(item.get("text"), str):
                     history.append(("assistant_text", item["text"][:100_000]))
                 elif item.get("type") == "userMessage":
-                    text = "\n".join(
-                        part["text"]
-                        for part in item.get("content", [])
-                        if part.get("type") == "text" and isinstance(part.get("text"), str)
-                    )
+                    text = visible_user_text(item.get("content", []))
                     if text:
                         history.append(("user_text", text[:100_000]))
         return history[-100:]
@@ -242,6 +270,8 @@ class CodexSessionService:
                 params = event.get("params", {})
                 if params.get("threadId") != self._thread_id:
                     continue
+                if event.get("method") == "thread/tokenUsage/updated":
+                    self._record_usage(params)
                 if event.get("method") == "turn/started":
                     self._turn_id = thread_identity(params.get("turn", {}).get("id"))
                     if self._cancel.is_set():
@@ -267,14 +297,21 @@ class CodexSessionService:
     def steer(self, text: str) -> None:
         if not text.strip() or len(text) > 20_000 or self._client is None or self._turn_id is None:
             raise ValueError("当前没有可追加要求的任务")
+        inputs: list[dict[str, object]] = [{"type": "text", "text": text}]
+        if self._turn_outline is not None:
+            inputs = self._turn_outline.inputs() + inputs
+            check_outline_capacity(
+                self._outline_config, inputs, self._context_tokens, self._runtime_window
+            )
         self._client.request(
             "turn/steer",
             {
                 "threadId": self._thread_id,
                 "expectedTurnId": self._turn_id,
-                "input": [{"type": "text", "text": text}],
+                "input": inputs,
             },
         )
+        self._context_tokens += json_input_size(inputs)
 
     def send(
         self,
@@ -289,6 +326,7 @@ class CodexSessionService:
         if self._cancel.is_set():
             self._cancel.clear()
             return "interrupted"
+        outline = self._outlines.snapshot() if self._outlines is not None else None
         selection = self._preferences()
         self.restore()
         assert self._client is not None and self._thread_id is not None
@@ -333,6 +371,20 @@ class CodexSessionService:
                 )
             else:
                 raise ValueError("当前附件支持图片、TXT 和 Markdown")
+        budget: dict[str, int] = {}
+        config: dict[str, Any] = {}
+        if outline is not None:
+            inputs = outline.inputs() + inputs
+            config = self._client.request("config/read", {}).get("config", {})
+            if not isinstance(config, dict):
+                raise ValueError("Codex 上下文容量配置无效，完整大纲未发送。")
+            window = (
+                self._runtime_window
+                if not selection.model or selection.model == self._model
+                else None
+            )
+            budget = check_outline_capacity(config, inputs, self._context_tokens, window)
+        encode_rpc_message({"id": 0, "method": "turn/start", "params": {"input": inputs}})
         if self._writer is not None:
             self._writer.begin_turn()
         turn_params: dict[str, object] = {
@@ -345,9 +397,16 @@ class CodexSessionService:
             turn_params["effort"] = selection.effort
         result = self._client.request("turn/start", turn_params)
         self._turn_id = thread_identity(result.get("turn", {}).get("id"))
+        self._turn_outline, self._outline_config = outline, config
+        if selection.model and selection.model != self._model:
+            self._runtime_window = None
+        self._model = selection.model or self._model
+        self._context_tokens += json_input_size(inputs)
         self._index.put(self.project_id, self._thread_id)
         self._has_turns = True
         if on_event:
+            if outline is not None:
+                on_event("session/outlineContext", {**outline.summary(), **budget})
             on_event("session/turnReady", {"threadId": self._thread_id, "turnId": self._turn_id})
         if self._cancel.is_set():
             self.interrupt()
@@ -358,6 +417,24 @@ class CodexSessionService:
                 params = event.get("params", {})
                 if not isinstance(params, dict) or params.get("threadId") != self._thread_id:
                     continue
+                method = event.get("method")
+                if outline is not None and (
+                    method == "thread/compacted"
+                    or (
+                        params.get("turnId") == self._turn_id
+                        and method in {"item/started", "item/completed"}
+                        and params.get("item", {}).get("type") == "contextCompaction"
+                    )
+                ):
+                    self.close()
+                    raise ValueError(
+                        "本轮发生上下文压缩，已停止 Codex 及正文工具；"
+                        "请重新发送以注入完整大纲，不会使用压缩摘要继续创作。"
+                    )
+                if method == "thread/tokenUsage/updated" and params.get("turnId") == self._turn_id:
+                    self._record_usage(params)
+                elif method == "item/completed" and params.get("turnId") == self._turn_id:
+                    self._context_tokens += json_input_size(params.get("item", {}))
                 if on_event is not None and (
                     params.get("turnId") == self._turn_id
                     or event.get("method") == "thread/tokenUsage/updated"
@@ -367,6 +444,12 @@ class CodexSessionService:
                     turn = params.get("turn", {})
                     if turn.get("id") != self._turn_id:
                         continue
+                    if outline is not None and isinstance(turn.get("error"), dict):
+                        if turn["error"].get("codexErrorInfo") == "contextWindowExceeded":
+                            raise ValueError(
+                                "Codex 服务端报告上下文容量不足，本轮未完成。"
+                                "完整大纲未裁剪；请新建会话或检查模型容量配置后重试。"
+                            )
                     status = turn.get("status")
                     if status not in {"completed", "interrupted", "failed"}:
                         raise CodexConnectionError("Codex 返回了无效会话状态")
@@ -389,7 +472,20 @@ class CodexSessionService:
                         on_message(thread_identity(item.get("id")), item["text"][:200_000])
         finally:
             self._turn_id = None
+            self._turn_outline = None
             self._cancel.clear()
+
+    def _record_usage(self, params: dict[str, Any]) -> None:
+        usage = params.get("tokenUsage", {})
+        if not isinstance(usage, dict):
+            return
+        last = usage.get("last", {})
+        tokens = last.get("totalTokens") if isinstance(last, dict) else None
+        if type(tokens) is int and tokens >= 0:
+            self._context_tokens = tokens
+        window = usage.get("modelContextWindow")
+        if type(window) is int and window > 0:
+            self._runtime_window = window
 
     def interrupt(self) -> None:
         if self._writer is not None:

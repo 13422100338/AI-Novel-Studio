@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+from _thread import LockType
 from collections.abc import Callable
 from threading import Event, Lock
 from typing import Any
 from uuid import UUID, uuid4
 
 from ai_novel_studio.application.novel_read_service import NovelReadService
+from ai_novel_studio.application.outline_writer_input import OutlineRequiredError
+from ai_novel_studio.application.outline_writer_service import OutlineWriterService
 from ai_novel_studio.application.project_generation_session import ProjectGenerationSession
 from ai_novel_studio.application.prose_generation_service import ProseEventKind
+from ai_novel_studio.application.writer_candidate_service import WriterCandidateService
 from ai_novel_studio.core.context.context_builder import RequiredContextOverflowError
 from ai_novel_studio.core.context.history_retriever import HistoryRetriever
 from ai_novel_studio.domain.generation import CreationMode, GenerationStatus
@@ -29,6 +33,7 @@ class NovelWriterService:
         *,
         gateway_factory: Callable[[], LLMGateway],
         on_event: Callable[[dict[str, Any]], None],
+        operation_lock: LockType | None = None,
     ) -> None:
         if project.project.id != novel.project_id:
             raise ValueError("写作工具项目身份不匹配")
@@ -39,14 +44,27 @@ class NovelWriterService:
         self._allowed = False
         self._session: ProjectGenerationSession | None = None
         self._run_id: str | None = None
+        shared_lock = operation_lock or Lock()
+        self.candidates = WriterCandidateService(
+            project, novel, operation_lock=shared_lock, on_event=on_event
+        )
+        self.outline_writer = OutlineWriterService(
+            project,
+            novel,
+            gateway_factory=gateway_factory,
+            on_event=lambda event: self.on_event(self.candidates.decorate(event)),
+            operation_lock=shared_lock,
+        )
 
     def begin_turn(self) -> None:
+        self.outline_writer.begin_turn()
         with self._state_lock:
             if self._closed.is_set():
                 raise ValueError("小说项目已关闭")
             self._allowed = True
 
     def cancel(self) -> None:
+        self.outline_writer.cancel()
         self._cancel.set()
         with self._state_lock:
             session, run_id = self._session, self._run_id
@@ -55,6 +73,8 @@ class NovelWriterService:
             session.prose.cancel(run_id)
 
     def revoke(self) -> None:
+        self.candidates.revoke()
+        self.outline_writer.revoke()
         self._closed.set()
         self.cancel()
 
@@ -65,6 +85,9 @@ class NovelWriterService:
         instruction: str,
         target_words: int = 800,
         output_token_limit: int = 8192,
+        related_refs: list[dict[str, Any]] | None = None,
+        style_refs: list[dict[str, Any]] | None = None,
+        recent_chapters: int = 3,
     ) -> dict[str, Any]:
         if (
             not isinstance(instruction, str)
@@ -87,6 +110,8 @@ class NovelWriterService:
         chapter = ChapterRepository(self.project).get_chapter(chapter_id, include_deleted=False)
         if chapter.revision != expected_revision or context["revision"] != expected_revision:
             raise ValueError("章节已经修改，请重新读取上下文后生成")
+        if not self.outline_writer.inputs.outlines.list_documents():
+            raise OutlineRequiredError()
         if not self._run_lock.acquire(blocking=False):
             raise ValueError("已有正文生成任务，请等待或停止后重试")
         try:
@@ -95,13 +120,45 @@ class NovelWriterService:
                     raise ValueError("每轮作者消息最多生成一次正文草稿，请重新发送写作要求")
                 self._allowed = False
                 self._cancel.clear()
-            return self._generate(
-                chapter_id, expected_revision, instruction, target_words, output_token_limit
+            return self.outline_writer.prepare(
+                chapter_id,
+                expected_revision,
+                instruction,
+                target_words,
+                output_token_limit,
+                related_refs if related_refs is not None else [],
+                style_refs if style_refs is not None else [],
+                recent_chapters,
             )
         finally:
             with self._state_lock:
                 self._session, self._run_id = None, None
             self._run_lock.release()
+
+    def preview_input(self, request_id: str) -> dict[str, Any]:
+        return self.outline_writer.preview(request_id)
+
+    def confirm_input(self, request_id: str) -> dict[str, Any]:
+        return self.outline_writer.confirm(request_id)
+
+    def reject_input(self, request_id: str) -> bool:
+        return self.outline_writer.reject(request_id)
+
+    def recover_candidates(self) -> dict[str, int]:
+        return self.candidates.recover()
+
+    def preview_candidate_input(self, run_id: str) -> dict[str, Any]:
+        return self.candidates.preview(run_id)
+
+    def adopt_candidate(
+        self, run_id: str, checkpoint_id: str, candidate_hash: str, *, allow_partial: bool = False
+    ) -> dict[str, Any]:
+        return self.candidates.accept(
+            run_id, checkpoint_id, candidate_hash, allow_partial=allow_partial
+        )
+
+    def discard_candidate(self, run_id: str, checkpoint_id: str, candidate_hash: str) -> bool:
+        return self.candidates.discard(run_id, checkpoint_id, candidate_hash)
 
     def _generate(
         self,
@@ -111,6 +168,8 @@ class NovelWriterService:
         target_words: int,
         output_token_limit: int,
     ) -> dict[str, Any]:
+        # Historical implementation retained pending a separate cleanup ticket.
+        # The default public entry no longer schedules this memory-based path.
         task: dict[str, Any] = {
             "id": str(uuid4()),
             "chapter_id": chapter_id,

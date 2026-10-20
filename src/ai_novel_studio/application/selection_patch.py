@@ -267,6 +267,32 @@ def validate_selection_patch_capture(
     return validated.selection.text
 
 
+def capture_selection_range(
+    chapter_id: str, revision: int, source: str, start: int, end: int
+) -> SelectionPatchCapture:
+    """Capture an explicit code-point range; never locate a quote by text search."""
+    if type(start) is not int or type(end) is not int or not 0 <= start < end <= len(source):
+        raise _invalid()
+
+    def span(left: int, right: int) -> SelectionPatchSpan:
+        text = source[left:right]
+        return SelectionPatchSpan(left, right, text, _sha256(text))
+
+    capture = SelectionPatchCapture(
+        SCHEMA_VERSION,
+        chapter_id,
+        revision,
+        _sha256(source),
+        span(start, end),
+        span(max(0, start - ANCHOR_CODEPOINTS), start),
+        span(end, min(len(source), end + ANCHOR_CODEPOINTS)),
+    )
+    validate_selection_patch_capture(
+        capture, source=source, chapter_id=chapter_id, revision=revision
+    )
+    return capture
+
+
 def finalize_selection_patch(
     capture: SelectionPatchCapture,
     *,

@@ -7,7 +7,7 @@ WRITING_SKILL_PATH = WRITING_SKILL_ROOT / "novel-edit" / "SKILL.md"
 
 
 def session_skill_path(cwd: Path) -> Path:
-    return cwd / ".agents" / "skills" / "studio-novel-edit-v1" / "SKILL.md"
+    return cwd / ".agents" / "skills" / "studio-novel-edit-v2" / "SKILL.md"
 
 
 def prepare_writing_skill(cwd: Path) -> Path:

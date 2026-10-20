@@ -12,11 +12,28 @@ Item {
         anchors.margins: 16
         spacing: 10
 
+        RowLayout {
+            Layout.fillWidth: true
+            Text {
+                Layout.fillWidth: true
+                text: "旧资料 · 只读"
+                font.pixelSize: 17
+                font.bold: true
+                color: Theme.tokens.color.textPrimary
+            }
+            AppButton {
+                objectName: "openLegacyAdvancedButton"
+                text: "更多旧资料"
+                ghost: true
+                onClicked: Facade.setActiveNav("advanced")
+            }
+        }
         Text {
-            text: "记忆库"
-            font.pixelSize: 17
-            font.bold: true
-            color: Theme.tokens.color.textPrimary
+            Layout.fillWidth: true
+            text: "这里保留旧版人物与记忆记录。当前创作以完整大纲和正式正文为依据，不再自动整理这些资料。"
+            font.pixelSize: 12
+            color: Theme.tokens.color.textSecondary
+            wrapMode: Text.WordWrap
         }
 
         TabBar {
@@ -27,7 +44,7 @@ Item {
                 color: "transparent"
             }
             Repeater {
-                model: ["角色", "世界", "剧情记忆", "待处理"]
+                model: ["人物", "记忆记录"]
                 delegate: ThemedTabButton {
                     text: modelData
                     checked: tabs.currentIndex === index
@@ -42,15 +59,7 @@ Item {
             currentIndex: tabs.currentIndex
 
             CharactersPage {}
-            EmptyState {
-                title: "世界"
-                body: "世界规则与设定将在后续 Wave 接入（当前复用记忆库结构）。"
-            }
             MemoryPage {}
-            EmptyState {
-                title: "待处理"
-                body: "待确认的整理候选将在这里展示。"
-            }
         }
     }
 }

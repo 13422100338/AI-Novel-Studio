@@ -20,6 +20,7 @@ from ai_novel_studio.infrastructure.storage.chapter_repository import ChapterRep
 from ai_novel_studio.infrastructure.storage.chapter_requirement_repository import (
     ChapterRequirementRepository,
 )
+from ai_novel_studio.infrastructure.storage.outline_repository import OutlineRepository
 from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
 
 
@@ -50,6 +51,7 @@ def workspace(tmp_path):
     project = ProjectRepository.create(tmp_path / "novel", "写作工具测试")
     chapters = ChapterRepository(project)
     chapter = chapters.create_chapter(project.list_volumes()[0].id, "灯塔", "1", "原始正文。")
+    OutlineRepository(project).create("全书", "# 全书大纲\n灯塔亮起，潮水退去，保留寄信人的悬念。")
     novel = NovelReadService(project)
     novel.update_editor(
         NovelEditorSnapshot(chapter.id, chapter.title, chapter.revision, "原始正文。")
@@ -78,7 +80,9 @@ def generate(workspace, **changes):
         output_token_limit=8192,
     )
     params.update(changes)
-    return workspace.writer.generate(**params)
+    proposal = workspace.writer.generate(**params)
+    assert proposal["status"] == "AWAITING_CONFIRMATION"
+    return workspace.writer.confirm_input(proposal["draft_id"])
 
 
 def test_chat_task_reaches_independent_writer_without_overwriting_author_content(workspace):
@@ -97,7 +101,7 @@ def test_chat_task_reaches_independent_writer_without_overwriting_author_content
     assert "写灯塔亮起后的场景" in "\n".join(item.content for item in messages)
     assert requirements.get(workspace.chapter.id) == saved
     assert workspace.chapters.read_content(workspace.chapter.id) == "原始正文。"
-    assert workspace.events[0]["status"] == "PREPARING"
+    assert workspace.events[0]["status"] == "AWAITING_CONFIRMATION"
     assert any(
         event["status"] == "GENERATING" and event.get("word_count", 0) > 0
         for event in workspace.events
@@ -194,8 +198,11 @@ def test_authenticated_mcp_can_generate_a_candidate_with_write_annotations(works
                 ),
             )
             assert not result.isError
-            assert result.structuredContent["status"] == "COMPLETED"
-            assert result.structuredContent["domain_kind"] == "CANDIDATE_DRAFT"
+            assert result.structuredContent["status"] == "AWAITING_CONFIRMATION"
+            assert workspace.gateway.calls == []
+            generated = workspace.writer.confirm_input(result.structuredContent["draft_id"])
+            assert generated["status"] == "COMPLETED"
+            assert generated["domain_kind"] == "CANDIDATE_DRAFT"
             invalid = await session.call_tool(
                 "generate_novel_draft",
                 dict(

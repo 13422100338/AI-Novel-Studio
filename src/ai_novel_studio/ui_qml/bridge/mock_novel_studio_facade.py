@@ -20,7 +20,10 @@ from uuid import uuid4
 from PySide6.QtCore import Property, QObject, QTimer, QUrl, Signal, Slot
 
 from ai_novel_studio.application.novel_read_service import NovelEditorSnapshot
-from ai_novel_studio.application.selection_patch import SelectionPatchCapture
+from ai_novel_studio.application.selection_patch import (
+    SelectionPatchCapture,
+    capture_selection_range,
+)
 from ai_novel_studio.ui_qml.bridge.backend_availability import BACKEND_AVAILABLE
 from ai_novel_studio.ui_qml.bridge.codex_session_bridge import CodexSessionController
 from ai_novel_studio.ui_qml.bridge.draft_coordinator import (
@@ -56,6 +59,7 @@ from ai_novel_studio.ui_qml.bridge.models.readonly_list_models import (
     MemoryListModel,
 )
 from ai_novel_studio.ui_qml.bridge.models.suggestion_list_model import SuggestionListModel
+from ai_novel_studio.ui_qml.bridge.outline_bridge import OutlineBridge
 from ai_novel_studio.ui_qml.bridge.overview_counts import (
     OverviewCounts,
     readonly_overview_counts,
@@ -73,7 +77,7 @@ from ai_novel_studio.ui_qml.bridge.readonly_views import (
 )
 from ai_novel_studio.ui_qml.bridge.text_utils import count_words, format_word_count
 
-_NAV_IDS = ("writing", "library", "advanced", "settings")
+_NAV_IDS = ("writing", "outline", "library", "advanced", "settings")
 _NAV_ALIASES = {
     "characters": "library",
     "memory": "library",
@@ -234,7 +238,7 @@ class MockNovelStudioFacade(QObject):
         self._discussion_busy = False
         self._agent_timeline_model = AgentTimelineModel(self)
         self._real_agent: HarnessAgentTimelineController | None = None
-        if agent_coordinator is not None:
+        if agent_coordinator is not None and codex_controller is None:
             self._real_agent = HarnessAgentTimelineController(agent_coordinator, self)
             self._agent_timeline_model = self._real_agent.model
             self._real_agent.timeline_changed.connect(self.agent_timeline_changed)
@@ -286,6 +290,8 @@ class MockNovelStudioFacade(QObject):
         self._editor_state = "CLEAN"
         self._save_status = "已载入 · 暂无未保存更改"
         self._workspace: Any | None = None
+        self._outline = OutlineBridge(self, chapter_opener=self._open_outline_chapter)
+        self.project_changed.connect(self._bind_outline_project)
         self._ai_drawer_open = False
         self._active_nav = "writing"
         self._reduce_motion = False
@@ -305,6 +311,29 @@ class MockNovelStudioFacade(QObject):
         self.selection_reference_changed.connect(self._sync_codex_editor)
 
     # -- project -------------------------------------------------------------
+
+    @Property(QObject, constant=True)
+    def outline(self) -> OutlineBridge:
+        return self._outline
+
+    def _bind_outline_project(self) -> None:
+        self._outline.bind_project(self._workspace.project if self._workspace else None)
+
+    def _open_outline_chapter(self, chapter_id: str) -> bool:
+        if self._editor_state != "CLEAN":
+            self.requestSave()
+            if self._editor_state != "CLEAN":
+                return False
+        for row in self._chapters_model.chapter_rows():
+            chapter = self._chapters_model.chapter_at_row(row)
+            if chapter is not None and chapter.id == chapter_id:
+                self.selectChapter(row)
+                current = self._current_chapter()
+                if current is not None and current.id == chapter_id:
+                    self.setActiveNav("writing")
+                    return self._active_nav == "writing"
+                return False
+        return False
 
     @Property(str, notify=project_changed)
     def projectTitle(self) -> str:
@@ -811,6 +840,10 @@ class MockNovelStudioFacade(QObject):
 
     @Slot()
     def requestDraft(self) -> None:
+        if self._codex is not None:
+            self.toggleAiDrawer(True)
+            self.startAssistantChat("/生成草稿")
+            return
         if self._workspace is not None:
             self._request_project_draft()
             return
@@ -880,6 +913,8 @@ class MockNovelStudioFacade(QObject):
         normalized = _NAV_ALIASES.get(nav_id, nav_id)
         if normalized not in _NAV_IDS or normalized == self._active_nav:
             return
+        if self._active_nav == "outline" and not self._outline.flush():
+            return
         self._active_nav = normalized
         self.active_nav_changed.emit()
 
@@ -936,6 +971,10 @@ class MockNovelStudioFacade(QObject):
     @Slot(int, str)
     def updateAuditFindingStatus(self, row: int, status: str) -> None:
         """Persist an ignore/false-positive decision through the audit service."""
+        if self._codex is not None:
+            self._save_status = "旧审校记录仅供查看"
+            self.editor_state_changed.emit()
+            return
         finding = self._audits_model.audit_at_row(row)
         if finding is None:
             return
@@ -1213,6 +1252,7 @@ class MockNovelStudioFacade(QObject):
         chapter = self._current_chapter()
         selection = self._selection_reference
         selected = ""
+        capture = None
         if (
             selection
             and chapter
@@ -1221,8 +1261,10 @@ class MockNovelStudioFacade(QObject):
             and selection.base_source_hash == hashlib.sha256(self._body_text.encode()).hexdigest()
         ):
             selected = selection.selection.text
+            capture = selection
         if (
-            self._chat_selection
+            capture is None
+            and self._chat_selection
             and chapter
             and self._chat_selection.chapter_id == chapter.id
             and self._chat_selection.revision == self._revision
@@ -1237,8 +1279,35 @@ class MockNovelStudioFacade(QObject):
                 content=self._body_text if chapter else "",
                 dirty=bool(chapter and self._editor_state != "CLEAN"),
                 selection=selected,
+                selection_capture=capture,
             )
         )
+
+    @Slot(int, int)
+    def setPlainTextSelection(self, start: int, end: int) -> None:
+        """TextArea reports UTF-16 offsets; persist exact Python codepoint spans."""
+        chapter = self._current_chapter()
+        if chapter is None or self._editor_state == "CONFLICT":
+            return
+        try:
+            encoded = self._body_text.encode("utf-16-le")
+            if (
+                type(start) is not int
+                or type(end) is not int
+                or not 0 <= start < end <= len(encoded) // 2
+            ):
+                raise ValueError
+            first = len(encoded[: start * 2].decode("utf-16-le"))
+            last = len(encoded[: end * 2].decode("utf-16-le"))
+            capture = capture_selection_range(
+                chapter.id, self._revision, self._body_text, first, last
+            )
+        except (UnicodeError, ValueError):
+            self.clearSelectionReference()
+            return
+        self._chat_selection = None
+        self._selection_reference = capture
+        self.selection_reference_changed.emit()
 
     @Property(bool, notify=selection_reference_changed)
     def hasSelectionReference(self) -> bool:
@@ -1338,6 +1407,10 @@ class MockNovelStudioFacade(QObject):
     @Slot(str)
     def startAgentTurn(self, text: str) -> None:
         """Generate a replacement candidate for the current chapter."""
+        if self._codex is not None:
+            self.toggleAiDrawer(True)
+            self.startAssistantChat(text)
+            return
         normalized = text.strip()
         if not normalized or self.agentBusy:
             return
@@ -1408,6 +1481,9 @@ class MockNovelStudioFacade(QObject):
             if self._codex.can_steer:
                 self._codex.steer(normalized)
             elif not self.agentBusy:
+                if not self._outline.flush():
+                    self._codex.warn("大纲尚未保存，未发送创作任务；请先处理保存冲突或导出副本。")
+                    return
                 self._sync_codex_editor()
                 self._codex.start(display_text, request_text=normalized)
             return
@@ -1701,6 +1777,8 @@ class MockNovelStudioFacade(QObject):
     @Slot(str, result=str)
     def openProject(self, root: str) -> str:
         """Open a real project read-only. Returns an error message or empty."""
+        if not self._outline.flush():
+            return "大纲尚未保存，请先处理保存冲突或导出副本"
         if self._real_agent is not None and self._real_agent.is_busy:
             return "Harness 正在运行，完成前不能切换项目"
         try:
@@ -1749,6 +1827,8 @@ class MockNovelStudioFacade(QObject):
 
     @Slot()
     def closeProject(self) -> None:
+        if not self._outline.flush():
+            return
         if self._real_agent is not None and self._real_agent.is_busy:
             self._real_agent.warn("Harness 运行期间不能关闭项目")
             return
@@ -1802,6 +1882,8 @@ class MockNovelStudioFacade(QObject):
         return self._create_project_at(Path(local), title)
 
     def _create_project_at(self, parent: Path, title: str) -> str:
+        if not self._outline.flush():
+            return "大纲尚未保存，请先处理保存冲突或导出副本"
         if self._real_agent is not None and self._real_agent.is_busy:
             return "Harness 正在运行，完成前不能新建项目"
         normalized_title = (title or "").strip()
@@ -2394,6 +2476,66 @@ class MockNovelStudioFacade(QObject):
     def stopWriterDraft(self) -> None:
         if self._codex is not None:
             self._codex.cancel_writer()
+
+    @Slot(str, result="QVariantMap")
+    def writerInputPreview(self, item_id: str) -> dict[str, Any]:
+        return self._codex.preview_writer_input(item_id) if self._codex else {}
+
+    @Slot(str, result=bool)
+    def confirmWriterInput(self, item_id: str) -> bool:
+        if self._codex is None:
+            return False
+        if not self._outline.flush():
+            self._codex.warn("大纲尚未保存，请先处理冲突；正文模型未启动。")
+            return False
+        self._sync_codex_editor()
+        return self._codex.confirm_writer_input(item_id)
+
+    @Slot(str, result=bool)
+    def rejectWriterInput(self, item_id: str) -> bool:
+        return self._codex.reject_writer_input(item_id) if self._codex else False
+
+    @Slot(result=bool)
+    def restoreWriterDrafts(self) -> bool:
+        return self._codex.restore_writer_drafts() if self._codex else False
+
+    @Slot(str, result=bool)
+    def discardWriterDraft(self, item_id: str) -> bool:
+        return self._codex.discard_writer_draft(item_id) if self._codex else False
+
+    @Slot(str, bool, result=bool)
+    def adoptWriterDraft(self, item_id: str, allow_partial: bool = False) -> bool:
+        if self._codex is None:
+            return False
+        if self._editor_state == "CONFLICT":
+            self._codex.warn("正文存在修订冲突，请先重新载入检查。")
+            return False
+        # Do not save first: adoption checks the original formal revision and
+        # the exact frozen editor buffer, including any then-unsaved edits.
+        self._sync_codex_editor()
+        result = self._codex.adopt_writer_draft(item_id, allow_partial=allow_partial)
+        if not result:
+            return False
+        self._body_text = result["text"]
+        self._saved_body = result["text"]
+        self._revision = result["revision"]
+        self._editor_state = "CLEAN"
+        self._save_status = f"已采用候选 · 修订 {self._revision}"
+        if result.get("maintenance_pending"):
+            self._save_status += " · 检索索引待修复"
+        self.clearSelectionReference()
+        self._clear_draft_review_state()
+        try:
+            self._reload_project_structure(select_chapter_id=result["chapter_id"])
+        except (KeyError, OSError, RuntimeError, ValueError):
+            self._save_status += " · 章节列表待刷新"
+        self.draftAcceptedToEditor.emit(self._body_text)
+        self.editorRevisionChanged.emit(self._revision)
+        self.editor_state_changed.emit()
+        self.chapter_changed.emit()
+        self.chapterChanged.emit()
+        self.project_changed.emit()
+        return True
 
     def _accept_project_draft(self, row: int) -> None:
         if self._draft_port is None or self._active_run_id is None:

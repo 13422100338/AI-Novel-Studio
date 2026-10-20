@@ -6,6 +6,7 @@ import "../components"
 Item {
     id: root
     objectName: "auditPage"
+    readonly property bool readOnly: Facade.codexEnabled
 
     ColumnLayout {
         anchors.fill: parent
@@ -13,7 +14,7 @@ Item {
         spacing: 12
 
         Text {
-            text: "审校"
+            text: root.readOnly ? "审校 · 历史只读" : "审校"
             font.pixelSize: 17
             font.bold: true
             color: Theme.tokens.color.textPrimary
@@ -95,7 +96,7 @@ Item {
 
                     RowLayout {
                         Layout.fillWidth: true
-                        visible: status === "OPEN"
+                        visible: status === "OPEN" && !root.readOnly
                         spacing: 6
 
                         Item {

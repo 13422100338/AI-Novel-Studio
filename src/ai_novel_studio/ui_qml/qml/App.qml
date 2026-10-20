@@ -30,6 +30,17 @@ ApplicationWindow {
     property bool sidebarVisible: true
     property bool useWebEngine: WritingPageUseWebEngine
     property string lastEditorChapterId: ""
+    readonly property bool outlineActive: Facade.activeNav === "outline"
+    readonly property string activeSaveState: outlineActive
+        ? (Facade.outline.state.dirty ? (Facade.outline.state.error ? "CONFLICT" : "DIRTY") : "CLEAN")
+        : Facade.editorState
+
+    onClosing: function(close) {
+        if (!Facade.outline.flush()) {
+            close.accepted = false
+            Facade.setActiveNav("outline")
+        }
+    }
 
     // Helper: theme hex string -> rgba with alpha (window wash over the DWM
     // material, same value as the Native Glass Lab).
@@ -40,8 +51,9 @@ ApplicationWindow {
     function navTitle(navId) {
         const map = {
             "writing": "写作",
-            "library": "记忆库",
-            "advanced": "高级创作",
+            "outline": "大纲",
+            "library": "旧资料",
+            "advanced": "旧资料 · 高级视图",
             "settings": "设置"
         }
         return map[navId] || "写作"
@@ -50,6 +62,7 @@ ApplicationWindow {
     function navIndex(navId) {
         const map = {
             "writing": 0,
+            "outline": 4,
             "library": 1,
             "advanced": 2,
             "settings": 3
@@ -224,6 +237,8 @@ ApplicationWindow {
                     AdvancedCreationPage {}
 
                     SettingsPage {}
+
+                    OutlinePage {}
                 }
             }
 
@@ -257,14 +272,17 @@ ApplicationWindow {
                 }
 
                 StatusChip {
-                    label: "字数"
-                    value: window.useWebEngine ? Facade.webEngineWordCountText : Facade.currentWordCountText
+                    objectName: "wordCountStatusChip"
+                    label: window.outlineActive ? "大纲" : "字数"
+                    value: window.outlineActive ? Facade.outline.state.text.length.toLocaleString() + " 字符"
+                        : window.useWebEngine ? Facade.webEngineWordCountText : Facade.currentWordCountText
                     tone: "accent"
                 }
                 StatusChip {
+                    objectName: "autoSaveStatusChip"
                     label: "自动保存"
-                    value: window.autoSaveText(Facade.editorState)
-                    tone: window.autoSaveTone(Facade.editorState)
+                    value: window.outlineActive && !Facade.outline.state.loaded ? "未载入" : window.autoSaveText(window.activeSaveState)
+                    tone: window.outlineActive && !Facade.outline.state.loaded ? "neutral" : window.autoSaveTone(window.activeSaveState)
                 }
                 StatusChip {
                     label: "任务"

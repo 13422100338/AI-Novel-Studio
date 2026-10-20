@@ -53,6 +53,40 @@ def test_malformed_stdio_fails_without_exposing_frame(tmp_path):
         client.close()
 
 
+def test_oversized_request_is_rejected_before_write_and_transport_still_works(
+    tmp_path, monkeypatch
+):
+    client = fake_server(tmp_path)
+    try:
+        monkeypatch.setattr(app_server, "MAX_RPC_FRAME_BYTES", 512)
+        with pytest.raises(ValueError, match="8MB"):
+            client.request("too-large", {"text": "汉" * 500})
+        assert client.request("probe", {}) == {"ok": True}
+    finally:
+        client.close()
+
+
+def test_oversized_response_has_a_specific_non_content_error(tmp_path, monkeypatch):
+    script = tmp_path / "large_response.py"
+    script.write_text(
+        "import json,sys\n"
+        "for line in sys.stdin:\n"
+        " r=json.loads(line)\n"
+        " if 'id' in r:\n"
+        "  value='private-large-frame'*100 if r['method']=='large' else 'ok'\n"
+        "  print(json.dumps({'id':r['id'],'result':{'text':value}}),flush=True)\n",
+        encoding="utf-8",
+    )
+    client = CodexAppServer(tmp_path, [sys.executable, "-u", str(script)])
+    try:
+        monkeypatch.setattr(app_server, "MAX_RPC_FRAME_BYTES", 512)
+        with pytest.raises(CodexConnectionError, match="8MB") as error:
+            client.request("large", {})
+        assert "private-large-frame" not in str(error.value)
+    finally:
+        client.close()
+
+
 def test_close_stops_owned_descendant_that_inherits_stdout(tmp_path):
     script = tmp_path / "descendant_server.py"
     script.write_text(

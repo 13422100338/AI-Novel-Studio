@@ -47,8 +47,8 @@ Item {
         Repeater {
             model: [
                 { id: "writing", kind: "writing", label: "写作" },
-                { id: "library", kind: "library", label: "记忆库" },
-                { id: "advanced", kind: "advanced", label: "高级创作" },
+                { id: "outline", kind: "outline", label: "大纲" },
+                { id: "library", kind: "library", label: "旧资料" },
                 { id: "settings", kind: "settings", label: "设置" }
             ]
             delegate: IconButton {
@@ -59,6 +59,7 @@ Item {
                 iconKind: modelData.kind
                 text: modelData.label
                 selected: Facade.activeNav === modelData.id
+                    || (modelData.id === "library" && Facade.activeNav === "advanced")
                 onClicked: Facade.setActiveNav(modelData.id)
             }
         }

@@ -19,6 +19,12 @@ Rectangle {
     signal stopRequested()
     signal copyRequested()
 
+    WriterInputReview {
+        id: inputReview
+        itemId: root.itemId
+        canConfirm: root.state === "AWAITING_CONFIRMATION"
+    }
+
     width: parent ? parent.width : 320
     implicitHeight: content.implicitHeight + 32
     radius: 14
@@ -39,7 +45,7 @@ Rectangle {
             Rectangle {
                 width: 9; height: 9; radius: 4.5
                 color: root.state === "FAILED" ? Theme.tokens.color.danger
-                    : root.state === "COMPLETED" ? Theme.tokens.color.success
+                    : (root.state === "COMPLETED" || root.state === "ACCEPTED") ? Theme.tokens.color.success
                     : Theme.tokens.color.accent
             }
             Text {
@@ -52,7 +58,7 @@ Rectangle {
                 wrapMode: Text.WordWrap
             }
             Text {
-                text: root.state === "COMPLETED" ? "✓" : "✎"
+                text: root.state === "COMPLETED" || root.state === "ACCEPTED" ? "✓" : "✎"
                 font.pixelSize: 18
                 color: Theme.tokens.color.accent
             }
@@ -85,17 +91,40 @@ Rectangle {
         }
         Text {
             Layout.fillWidth: true
+            visible: root.metadata.input_ready === true
+            text: (root.metadata.scope === "SELECTION" ? "仅处理选文" : "当前章节候选")
+                + " · 输入大纲 " + (root.metadata.outline_fingerprint || "").slice(0, 12)
+                + " · 确认后固定"
+            font.pixelSize: 12
+            color: Theme.tokens.color.textSecondary
+            wrapMode: Text.WordWrap
+        }
+        Text {
+            Layout.fillWidth: true
             text: "已收到 " + (root.metadata.word_count || 0) + " 字"
                 + (root.metadata.target_words ? " · 目标约 " + root.metadata.target_words + " 字" : "")
             font.pixelSize: 12
             color: Theme.tokens.color.textSecondary
+            visible: root.state !== "AWAITING_CONFIRMATION"
         }
         Text {
             Layout.fillWidth: true
-            text: root.state === "COMPLETED" ? "候选草稿已保留，等待你审阅。" : root.detail
+            text: root.state === "COMPLETED" ? "候选草稿已保留，等待你审阅。"
+                : root.state === "ACCEPTED" ? "已写入正式正文并保留修订历史。"
+                : root.state === "DISCARDED" ? "已放弃；原输入与检查点仍保留。"
+                : root.detail
             textFormat: Text.PlainText
             font.pixelSize: 12
             color: root.state === "FAILED" ? Theme.tokens.color.danger : Theme.tokens.color.textSecondary
+            wrapMode: Text.WordWrap
+        }
+        Text {
+            Layout.fillWidth: true
+            visible: text !== ""
+            text: root.metadata.adoption_note || ""
+            textFormat: Text.PlainText
+            font.pixelSize: 12
+            color: Theme.tokens.color.textSecondary
             wrapMode: Text.WordWrap
         }
         ScrollView {
@@ -118,8 +147,25 @@ Rectangle {
         }
         RowLayout {
             Layout.fillWidth: true
+            visible: root.metadata.input_ready === true && (root.state === "AWAITING_CONFIRMATION" || root.metadata.run_id)
+            AppButton {
+                objectName: "writerInputReviewButton"
+                text: root.state === "AWAITING_CONFIRMATION" ? "查看并确认输入" : "查看本次输入"
+                onClicked: inputReview.showInput()
+            }
+            AppButton {
+                text: "取消提案"
+                ghost: true
+                visible: root.state === "AWAITING_CONFIRMATION"
+                enabled: !Facade.agentBusy
+                onClicked: Facade.rejectWriterInput(root.itemId)
+            }
+        }
+        RowLayout {
+            Layout.fillWidth: true
             visible: root.busy || root.draftText !== ""
             AppButton {
+                objectName: "writerCandidateViewButton"
                 text: root.expanded ? "收起草稿" : "查看草稿"
                 visible: root.draftText !== ""
                 onClicked: root.expanded = !root.expanded
@@ -136,6 +182,26 @@ Rectangle {
                 visible: root.busy
                 ghost: true
                 onClicked: root.stopRequested()
+            }
+        }
+        RowLayout {
+            Layout.fillWidth: true
+            visible: root.metadata.can_adopt === true || root.metadata.can_discard === true
+            AppButton {
+                objectName: "writerCandidateAdoptButton"
+                text: root.metadata.partial === true ? "采用部分候选"
+                    : root.metadata.scope === "SELECTION" ? "替换原选文" : "采用到本章"
+                visible: root.metadata.can_adopt === true
+                enabled: !Facade.agentBusy
+                onClicked: Facade.adoptWriterDraft(root.itemId, root.metadata.partial === true)
+            }
+            AppButton {
+                objectName: "writerCandidateDiscardButton"
+                text: "放弃候选"
+                ghost: true
+                visible: root.metadata.can_discard === true
+                enabled: !Facade.agentBusy
+                onClicked: Facade.discardWriterDraft(root.itemId)
             }
         }
     }

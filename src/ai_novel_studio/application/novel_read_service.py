@@ -10,6 +10,7 @@ from uuid import UUID
 
 from ai_novel_studio.application.chapter_plan_read_service import ChapterPlanReadService
 from ai_novel_studio.application.core_tool_query_service import CoreToolQueryService
+from ai_novel_studio.application.selection_patch import SelectionPatchCapture
 from ai_novel_studio.infrastructure.storage.chapter_repository import ChapterRepository
 from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
 from ai_novel_studio.infrastructure.storage.read_only_database import ReadOnlyDatabase
@@ -21,8 +22,8 @@ NOVEL_TOOLS = (
     "read_novel_chapters",
     "search_novel_evidence",
     "get_novel_constraints",
-    "query_novel_characters",
 )
+LEGACY_NOVEL_TOOLS = ("query_novel_characters",)
 
 
 class _ChapterReadEntry(TypedDict):
@@ -47,6 +48,7 @@ class NovelEditorSnapshot:
     content: str = ""
     dirty: bool = False
     selection: str = ""
+    selection_capture: SelectionPatchCapture | None = None
 
 
 def _integer(value: object, minimum: int, maximum: int) -> int:
@@ -80,13 +82,19 @@ class NovelReadService:
     def revoke(self) -> None:
         self._closed.set()
 
+    def editor_snapshot(self) -> NovelEditorSnapshot:
+        """Internal frozen input, without the MCP display-size limits."""
+        self._ensure_open()
+        with self._lock:
+            return self._snapshot
+
     def _ensure_open(self) -> None:
         if self._closed.is_set():
             raise ValueError("小说项目已切换，旧工具访问已失效")
 
     def call(self, tool: str, **params: Any) -> dict[str, Any]:
         self._ensure_open()
-        if tool not in NOVEL_TOOLS:
+        if tool not in NOVEL_TOOLS + LEGACY_NOVEL_TOOLS:
             raise ValueError("不支持的小说工具")
         result: dict[str, Any] = getattr(self, tool)(**params)
         self._ensure_open()

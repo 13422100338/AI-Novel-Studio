@@ -12,15 +12,26 @@ Item {
         anchors.margins: 16
         spacing: 10
 
-        Text {
-            text: "高级创作"
-            font.pixelSize: 17
-            font.bold: true
-            color: Theme.tokens.color.textPrimary
+        RowLayout {
+            Layout.fillWidth: true
+            Text {
+                Layout.fillWidth: true
+                text: "旧资料 · 高级视图"
+                font.pixelSize: 17
+                font.bold: true
+                color: Theme.tokens.color.textPrimary
+            }
+            AppButton {
+                objectName: "backToLegacyLibraryButton"
+                text: "返回旧资料"
+                ghost: true
+                onClicked: Facade.setActiveNav("library")
+            }
         }
 
         TabBar {
             id: tabs
+            objectName: "legacyAdvancedTabs"
             Layout.fillWidth: true
             background: Rectangle {
                 color: "transparent"

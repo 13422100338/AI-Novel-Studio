@@ -45,7 +45,7 @@ def test_schema_v21_adds_harness_run_tables() -> None:
         ).fetchall()
     }
 
-    assert version == LATEST_SCHEMA_VERSION == 25
+    assert version == LATEST_SCHEMA_VERSION == 27
     assert {"harness_runs", "harness_run_events"} <= tables
     assert "harness_runs_chapter" in indexes
     assert "harness_run_events_run" in indexes
@@ -418,7 +418,7 @@ def _valid_constitution_payload(secret: str = "PROPOSAL_TEXT_MUST_NOT_COPY") -> 
 def test_schema_v25_fresh_database_adds_receipts_indexes_and_event_vocabulary() -> None:
     connection = _migrated_connection()
 
-    assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 25
+    assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 27
     tables = {
         row["name"]
         for row in connection.execute(
@@ -679,7 +679,7 @@ def test_v24_to_v25_preserves_historical_event_rows_field_for_field() -> None:
     _migrate_v24(connection)
 
     after = tuple(connection.execute("SELECT * FROM harness_run_events").fetchone())
-    assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 25
+    assert int(connection.execute("PRAGMA user_version").fetchone()[0]) == 27
     assert after == before
     assert connection.execute("SELECT COUNT(*) FROM harness_run_events").fetchone()[0] == 1
     assert (

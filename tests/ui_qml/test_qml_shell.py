@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QByteArray, QMetaObject, QUrl
+from PySide6.QtCore import QByteArray, QCoreApplication, QEvent, QMetaObject, QUrl
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtQuick import QQuickItem
 from pytestqt.qtbot import QtBot
@@ -21,6 +21,15 @@ from ai_novel_studio.ui_qml.bridge.theme_provider import ThemeProvider
 from .test_mock_facade import FakeDraftPort
 
 _ACTIVE_ENGINES: list[QQmlApplicationEngine] = []
+_ACTIVE_CONTEXTS: list[tuple[MockNovelStudioFacade, ThemeProvider]] = []
+
+
+def _register_frontend_context(
+    engine: QQmlApplicationEngine, facade: MockNovelStudioFacade, theme: ThemeProvider
+) -> None:
+    # QML context properties do not own their Python QObjects.
+    _ACTIVE_CONTEXTS.append((facade, theme))
+    register_frontend_types(engine, facade, theme)
 
 
 def _selection_payload(source: str, selected: str) -> str:
@@ -64,7 +73,9 @@ def _delete_active_engines() -> None:
     yield
     for engine in _ACTIVE_ENGINES:
         engine.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
     _ACTIVE_ENGINES.clear()
+    _ACTIVE_CONTEXTS.clear()
 
 
 def _create_temp_project(root: Path) -> Path:
@@ -124,7 +135,7 @@ def _load_engine(
     engine.addImportPath(str(Path(app_qml_path()).parent))
     facade = facade or MockNovelStudioFacade()
     theme = ThemeProvider()
-    register_frontend_types(engine, facade, theme)
+    _register_frontend_context(engine, facade, theme)
     engine.load(QUrl.fromLocalFile(str(app_qml_path())))
     assert engine.rootObjects(), "App.qml failed to load"
     _ACTIVE_ENGINES.append(engine)
@@ -448,7 +459,7 @@ def test_agent_dock_open_close_and_collapse(qtbot: QtBot) -> None:
     engine.addImportPath(str(Path(app_qml_path()).parent))
     facade = MockNovelStudioFacade()
     theme = ThemeProvider()
-    register_frontend_types(engine, facade, theme)
+    _register_frontend_context(engine, facade, theme)
     engine.loadData(
         QByteArray(
             b"""
@@ -525,7 +536,7 @@ def test_agent_dock_geometry_switches_in_one_step(qtbot: QtBot) -> None:
     engine.addImportPath(str(Path(app_qml_path()).parent))
     facade = MockNovelStudioFacade()
     theme = ThemeProvider()
-    register_frontend_types(engine, facade, theme)
+    _register_frontend_context(engine, facade, theme)
     engine.loadData(
         QByteArray(
             b"""
@@ -571,7 +582,7 @@ def test_agent_dock_drag_previews_and_commits_on_release(qtbot: QtBot) -> None:
     engine.addImportPath(str(Path(app_qml_path()).parent))
     facade = MockNovelStudioFacade()
     theme = ThemeProvider()
-    register_frontend_types(engine, facade, theme)
+    _register_frontend_context(engine, facade, theme)
     engine.loadData(
         QByteArray(
             b"""
@@ -661,7 +672,7 @@ def test_timeline_cards_stay_within_content_width(qtbot: QtBot) -> None:
     engine.addImportPath(str(Path(app_qml_path()).parent))
     facade = MockNovelStudioFacade()
     theme = ThemeProvider()
-    register_frontend_types(engine, facade, theme)
+    _register_frontend_context(engine, facade, theme)
 
     timeline_model = facade.property("agentTimeline")
     for kind in (
@@ -1079,7 +1090,7 @@ def test_memory_detail_panel_shows_after_selection(qtbot: QtBot, tmp_path: Path)
     facade.setActiveNav("memory")
     memory_tabs = window.findChild(object, "memoryLibraryTabs")
     assert memory_tabs is not None
-    memory_tabs.setProperty("currentIndex", 2)
+    memory_tabs.setProperty("currentIndex", 1)
     facade.selectMemory(0)
 
     assert facade.property("memoryDetailVisible") is True

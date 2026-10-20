@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import sqlite3
+from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -63,10 +64,7 @@ class CheckpointRepository:
 
             checkpoint_id = new_id()
             relative = (
-                Path(".ai_pipeline")
-                / "checkpoints"
-                / f"run_{run_id}"
-                / f"checkpoint_{sequence}.md"
+                Path(".ai_pipeline") / "checkpoints" / f"run_{run_id}" / f"checkpoint_{sequence}.md"
             )
             path = self.project.layout.root / relative
             if path.exists():
@@ -105,19 +103,24 @@ class CheckpointRepository:
             raise KeyError(f"unknown generation checkpoint: {checkpoint_id}")
         return self._checkpoint(row)
 
-    def latest(self, run_id: str) -> GenerationCheckpoint | None:
-        with self.project.database.connect() as connection:
-            row = connection.execute(
-                """
-                SELECT * FROM generation_checkpoints
-                WHERE run_id = ? ORDER BY sequence DESC LIMIT 1
-                """,
-                (run_id,),
-            ).fetchone()
+    def latest(
+        self, run_id: str, *, connection: sqlite3.Connection | None = None, verify: bool = True
+    ) -> GenerationCheckpoint | None:
+        if connection is None:
+            with closing(self.project.database.connect()) as owned:
+                return self.latest(run_id, connection=owned, verify=verify)
+        row = connection.execute(
+            """
+            SELECT * FROM generation_checkpoints
+            WHERE run_id = ? ORDER BY sequence DESC LIMIT 1
+            """,
+            (run_id,),
+        ).fetchone()
         if row is None:
             return None
         checkpoint = self._checkpoint(row)
-        self._verified_text(checkpoint)
+        if verify:
+            self._verified_text(checkpoint)
         return checkpoint
 
     def list_for_run(self, run_id: str) -> tuple[GenerationCheckpoint, ...]:
@@ -144,7 +147,7 @@ class CheckpointRepository:
             raise CheckpointIntegrityError("检查点路径越出项目目录")
         if not path.is_file():
             raise CheckpointIntegrityError("检查点文件不存在")
-        text = path.read_text(encoding="utf-8")
+        text = path.read_bytes().decode("utf-8")
         if _hash(text) != checkpoint.content_hash:
             raise CheckpointIntegrityError("检查点正文哈希不匹配")
         return text

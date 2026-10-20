@@ -232,7 +232,9 @@ def register_frontend_types(
     (F6) will move to a qmldir-backed typed registration for the single-process app.
     """
     if facade is None:
-        agent_coordinator = HarnessAgentCoordinator(HarnessAgentPort(), engine)
+        agent_coordinator = (
+            HarnessAgentCoordinator(HarnessAgentPort(), engine) if demo_mode else None
+        )
         codex_controller = None if demo_mode else CodexSessionController(engine)
         facade = MockNovelStudioFacade(
             agent_coordinator=agent_coordinator,

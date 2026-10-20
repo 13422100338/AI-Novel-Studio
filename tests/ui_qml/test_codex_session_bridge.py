@@ -286,3 +286,96 @@ def test_empty_project_snapshot_does_not_expose_previous_editor_content(qtbot):
     facade._sync_codex_editor()
     assert controller._editor.chapter_id is None
     assert controller._editor.content == ""
+
+
+def test_outline_context_has_one_compact_summary_per_turn(qtbot):
+    controller, model = make_controller(FakeSession())
+    summary = {
+        "documents": 3,
+        "characters": 102_345,
+        "fingerprint": "a" * 64,
+        "confirmedLinks": 8,
+        "pendingLinks": 2,
+        "estimatedTokens": 350_000,
+        "contextLimit": 900_000,
+    }
+    controller._on_event(controller._epoch, "session/outlineContext", summary)
+    controller._on_event(controller._epoch, "session/outlineContext", summary)
+    rows = [row for row in model.items() if row.label == "本轮完整大纲"]
+    assert len(rows) == 1
+    assert "102,345" in rows[0].text and "350,000" in rows[0].text
+    assert "8" in rows[0].text and "2" in rows[0].text
+
+
+def test_outline_save_conflict_prevents_codex_send(tmp_path, qtbot):
+    from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
+
+    project = ProjectRepository.create(tmp_path / "novel", "发送保护")
+    session = FakeSession()
+    controller = CodexSessionController(session_factory=lambda _: session)
+    facade = MockNovelStudioFacade(codex_controller=controller)
+    assert facade.openProject(str(project.layout.root)) == ""
+    outline = facade.property("outline")
+    assert outline.newDocument("全书")
+    outline.edit("未保存的新大纲")
+    path = project.layout.root / "outlines" / (outline.state["currentId"] + ".md")
+    path.write_bytes("外部修改".encode())
+    facade.startAssistantChat("按最新大纲讨论")
+    assert not session.started.is_set()
+    assert outline.state["text"] == "未保存的新大纲"
+    assert any("大纲" in row.text for row in controller._model.items() if row.kind == "warning")
+    assert outline.previewDisk() and outline.applyPreview()
+    facade.closeProject()
+
+
+def test_real_session_wiring_flushes_outline_and_delivers_summary(tmp_path, qtbot):
+    from ai_novel_studio.application.codex_session_service import CodexSessionService
+    from ai_novel_studio.infrastructure.codex.session_index import CodexSessionIndex
+    from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
+
+    class Client:
+        def __init__(self):
+            self.inputs = []
+
+        def request(self, method, params):
+            if method == "account/read":
+                return {"account": {"type": "chatgpt"}}
+            if method == "config/read":
+                return {"config": {"model_context_window": 1_000_000}}
+            if method == "thread/start":
+                return {"thread": {"id": "thread", "turns": []}, "sandbox": {"type": "readOnly"}}
+            if method == "turn/start":
+                self.inputs = params["input"]
+                return {"turn": {"id": "turn"}}
+            return {}
+
+        def notification(self, timeout):
+            return {
+                "method": "turn/completed",
+                "params": {"threadId": "thread", "turn": {"id": "turn", "status": "completed"}},
+            }
+
+        def close(self):
+            pass
+
+    project = ProjectRepository.create(tmp_path / "novel", "接线验证")
+    client = Client()
+    port = CodexSessionService(
+        project.project.id,
+        CodexSessionIndex(tmp_path / "sessions.json"),
+        tmp_path / "codex",
+        client_factory=lambda _: client,
+    )
+    controller = CodexSessionController(session_factory=lambda _: port)
+    facade = MockNovelStudioFacade(codex_controller=controller)
+    assert facade.openProject(str(project.layout.root)) == ""
+    outline = facade.property("outline")
+    assert outline.newDocument("全书")
+    outline.edit("# 最新未自动保存的大纲\n完整尾部")
+    facade.startAssistantChat("按大纲讨论")
+    qtbot.waitUntil(lambda: not controller.is_busy)
+    assert not outline.state["dirty"]
+    assert any("# 最新未自动保存的大纲\n完整尾部" in p.get("text", "") for p in client.inputs)
+    assert any(row.label == "本轮完整大纲" for row in controller._model.items())
+    port.close()
+    facade.closeProject()

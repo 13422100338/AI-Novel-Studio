@@ -32,3 +32,16 @@ def test_skill_copy_never_overwrites_an_existing_modified_file(tmp_path):
     with pytest.raises(ValueError, match="未覆盖"):
         prepare_writing_skill(tmp_path)
     assert path.read_text(encoding="utf-8") == "a manually edited skill"
+
+
+def test_new_skill_version_coexists_with_old_workspace_copy(tmp_path):
+    old_path = tmp_path / ".agents" / "skills" / "studio-novel-edit-v1" / "SKILL.md"
+    old_path.parent.mkdir(parents=True)
+    old_path.write_bytes(b"previous app-owned writing skill")
+    path = prepare_writing_skill(tmp_path)
+    assert path != old_path
+    assert old_path.read_bytes() == b"previous app-owned writing skill"
+    content = path.read_text(encoding="utf-8")
+    assert (
+        "完整大纲" in content and "related_refs" in content and "AWAITING_CONFIRMATION" in content
+    )

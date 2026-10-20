@@ -7,7 +7,7 @@ import QtQuick
 Canvas {
     id: root
 
-    // One of: "writing" | "library" | "advanced" | "settings".
+    // One of: "writing" | "outline" | "library" | "advanced" | "settings".
     property string kind: ""
     property color iconColor: Theme.tokens.color.textSecondary
 
@@ -34,6 +34,11 @@ Canvas {
             ctx.lineTo(2.5, 17.5)
             ctx.lineTo(3.3, 13.3)
             ctx.closePath()
+        } else if (root.kind === "outline") {
+            ctx.moveTo(3, 4); ctx.lineTo(17, 4)
+            ctx.moveTo(3, 8); ctx.lineTo(3, 15); ctx.lineTo(6, 15)
+            ctx.moveTo(7, 9); ctx.lineTo(17, 9)
+            ctx.moveTo(9, 15); ctx.lineTo(17, 15)
         } else if (root.kind === "library") {
             // Closed book: cover outline + spine.
             ctx.rect(4, 3, 12, 14)

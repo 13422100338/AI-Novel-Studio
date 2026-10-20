@@ -125,6 +125,11 @@ Item {
                     placeholderText: "开始写作…"
                     placeholderTextColor: Theme.tokens.color.textSecondary
                     onTextChanged: Facade.editorTextChanged(editor.text)
+                    onSelectedTextChanged: {
+                        if (!root.useWebEngine) {
+                            Facade.setPlainTextSelection(editor.selectionStart, editor.selectionEnd)
+                        }
+                    }
                 }
             }
 
