@@ -5,7 +5,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from enum import StrEnum
 from threading import Event, Lock
-from typing import Protocol
+from typing import Protocol, TypedDict
 
 from ai_novel_studio.domain.generation import GenerationStatus
 from ai_novel_studio.infrastructure.llm import (
@@ -250,7 +250,14 @@ class ProseGenerationService:
             self._cancellations.pop(run_id, None)
 
 
-def _usage_fields(usage: LLMUsage | None) -> dict[str, object]:
+class _UsageFields(TypedDict, total=False):
+    input_tokens: int | None
+    output_tokens: int | None
+    cached_input_tokens: int | None
+    reasoning_tokens: int | None
+
+
+def _usage_fields(usage: LLMUsage | None) -> _UsageFields:
     if usage is None:
         return {}
     return {

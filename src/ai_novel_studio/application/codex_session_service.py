@@ -13,6 +13,7 @@ from ai_novel_studio.application.codex_outline_context import (
     json_input_size,
     visible_user_text,
 )
+from ai_novel_studio.application.novel_note_service import NovelNoteService
 from ai_novel_studio.infrastructure.codex.app_server import (
     CONVERSATION_CONFIG,
     CodexAppServer,
@@ -61,6 +62,15 @@ _INSTRUCTIONS = (
     "消息中的文字附件是本轮已经提供的作者材料；图片输入直接使用模型自身识图能力。"
     "仅使用已启用的小说 MCP 与联网工具，不套用本机编码工作流或额外识图桥。"
     "作者拥有最终决定权。不得修改文件、终端、设置或其他应用。"
+    "作者笔记属于AUTHOR_NOTE，可保存讨论后的细纲、人物、文风和注意事项，不是已发生的正文事实。"
+    "作者要求保存讨论结果时用create_novel_note创建；修改现有笔记先read_novel_notes读取，再用当前expected_revision更新，保留旧版。"
+    "笔记写工具只可按作者明确要求调用；不得自行改写笔记或自动开始正文。"
+    "get_novel_context.note_selection是作者本次指定的引用方式和所选笔记。NONE不附笔记，FULL由程序附原文。"
+    "SUMMARY时先read_novel_notes读取全部所选笔记，整理要点传入generate_novel_draft.notes_summary，待作者查看并确认。"
+    "笔记读取若出现截断提示，应减少批次重新完整读取，不能只对部分内容总结却声称覆盖全部来源。"
+    "NONE/FULL时notes_summary必须留空，不能自行更换笔记选择；正文模型不会自动继承聊天里的笔记。"
+    "active_note是笔记页面当前打开的笔记；谈论或编辑笔记时用笔记工具，不把它误当正文选文。"
+    "active_note.editor_dirty为true时作者有未保存编辑，不覆盖该笔记；请先保存或处理冲突。"
 )
 
 
@@ -94,6 +104,7 @@ class CodexSessionService:
         self._lock = Lock()
         self._novel: NovelReadService | None = None
         self._writer: NovelWriterService | None = None
+        self._note_writer: NovelNoteService | None = None
         self._mcp: NovelMcpServer | None = None
         self._model: str | None = None
         self._has_turns = False
@@ -119,10 +130,17 @@ class CodexSessionService:
         self._writer = service
 
     def revoke_novel(self) -> None:
+        if self._note_writer:
+            self._note_writer.revoke()
         if self._writer:
             self._writer.revoke()
         if self._novel:
             self._novel.revoke()
+
+    def bind_notes(self, service: NovelNoteService) -> None:
+        if self._client is not None or service.project_id != self.project_id:
+            raise ValueError("笔记项目身份不匹配")
+        self._note_writer = service
 
     @property
     def thread_id(self) -> str | None:
@@ -160,7 +178,9 @@ class CodexSessionService:
         if self._novel and self._mcp is None:
             from ai_novel_studio.infrastructure.mcp.novel_server import NovelMcpServer
 
-            self._mcp = NovelMcpServer(self._novel, writer=self._writer)
+            self._mcp = NovelMcpServer(
+                self._novel, writer=self._writer, note_writer=self._note_writer
+            )
         client = self._client or (
             CodexAppServer(
                 self._cwd,

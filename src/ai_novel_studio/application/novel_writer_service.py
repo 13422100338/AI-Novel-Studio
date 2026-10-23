@@ -88,6 +88,7 @@ class NovelWriterService:
         related_refs: list[dict[str, Any]] | None = None,
         style_refs: list[dict[str, Any]] | None = None,
         recent_chapters: int = 3,
+        notes_summary: str = "",
     ) -> dict[str, Any]:
         if (
             not isinstance(instruction, str)
@@ -129,6 +130,7 @@ class NovelWriterService:
                 related_refs if related_refs is not None else [],
                 style_refs if style_refs is not None else [],
                 recent_chapters,
+                notes_summary,
             )
         finally:
             with self._state_lock:

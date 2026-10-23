@@ -11,7 +11,9 @@ from uuid import UUID
 from ai_novel_studio.application.chapter_plan_read_service import ChapterPlanReadService
 from ai_novel_studio.application.core_tool_query_service import CoreToolQueryService
 from ai_novel_studio.application.selection_patch import SelectionPatchCapture
+from ai_novel_studio.domain.author_note import AuthorNote, NoteSelection, canonical, note_id
 from ai_novel_studio.infrastructure.storage.chapter_repository import ChapterRepository
+from ai_novel_studio.infrastructure.storage.note_repository import NoteRepository
 from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
 from ai_novel_studio.infrastructure.storage.read_only_database import ReadOnlyDatabase
 
@@ -22,6 +24,8 @@ NOVEL_TOOLS = (
     "read_novel_chapters",
     "search_novel_evidence",
     "get_novel_constraints",
+    "list_novel_notes",
+    "read_novel_notes",
 )
 LEGACY_NOVEL_TOOLS = ("query_novel_characters",)
 
@@ -67,6 +71,9 @@ class NovelReadService:
         )
         self._queries = CoreToolQueryService(self._project)
         self._snapshot = NovelEditorSnapshot()
+        self._note_selection = NoteSelection()
+        self._active_note: str | None = None
+        self._note_dirty = False
         self._lock = Lock()
         self._closed = Event()
 
@@ -81,6 +88,29 @@ class NovelReadService:
 
     def revoke(self) -> None:
         self._closed.set()
+
+    def update_note_selection(
+        self, selection: NoteSelection, active_note: str | None = None, dirty: bool = False
+    ) -> None:
+        self._ensure_open()
+        with self._lock:
+            self._note_selection = selection
+            self._active_note = active_note
+            self._note_dirty = dirty
+
+    def notes_snapshot(self) -> tuple[NoteSelection, tuple[AuthorNote, ...]]:
+        self._ensure_open()
+        with self._lock:
+            selection = self._note_selection
+        if not selection.ids:
+            return selection, ()
+        heads = {n.id: n for n in NoteRepository(self._project).list_notes()}
+        try:
+            notes = tuple(heads[identity] for identity in selection.ids)
+        except KeyError as exc:
+            raise ValueError("所选笔记不可用，请重新选择") from exc
+        self._ensure_open()
+        return selection, notes
 
     def editor_snapshot(self) -> NovelEditorSnapshot:
         """Internal frozen input, without the MCP display-size limits."""
@@ -103,7 +133,24 @@ class NovelReadService:
     def get_novel_context(self) -> dict[str, Any]:
         with self._lock:
             editor = self._snapshot
+            active_note_id, note_dirty = self._active_note, self._note_dirty
+        choice, notes = self.notes_snapshot()
+        active_note = None
+        if active_note_id:
+            current = NoteRepository(self._project).read(active_note_id)
+            active_note = {
+                **current.summary(),
+                "content": current.content[:12000],
+                "truncated": len(current.content) > 12000,
+                "editor_dirty": note_dirty,
+            }
         return {
+            "active_note": active_note,
+            "note_selection": {
+                "mode": choice.mode,
+                "note_ids": list(choice.ids),
+                "notes": [n.summary() for n in notes],
+            },
             "title": self._project.project.title[:200],
             "chapter_id": editor.chapter_id,
             "chapter_title": editor.title[:200],
@@ -122,6 +169,38 @@ class NovelReadService:
             "source_hash": hashlib.sha256(editor.content.encode("utf-8")).hexdigest(),
             "note": "编辑缓冲区及选区是作者材料；未保存内容不能当作已发表正文。",
         }
+
+    def list_novel_notes(self, offset: int = 0, limit: int = 100) -> dict[str, Any]:
+        offset = _integer(offset, 0, 200)
+        limit = _integer(limit, 1, 100)
+        notes = NoteRepository(self._project).list_notes()
+        return {
+            "domain_kind": "AUTHOR_NOTE",
+            "total": len(notes),
+            "notes": [n.summary() for n in notes[offset : offset + limit]],
+        }
+
+    def read_novel_notes(self, note_ids: list[str]) -> dict[str, Any]:
+        if (
+            not isinstance(note_ids, list)
+            or not 1 <= len(note_ids) <= 32
+            or not all(isinstance(i, str) for i in note_ids)
+            or len(set(note_ids)) != len(note_ids)
+        ):
+            raise ValueError("请指定1至32篇不同笔记")
+        for identity in note_ids:
+            note_id(identity)
+        heads = {n.id: n for n in NoteRepository(self._project).list_notes()}
+        if any(i not in heads for i in note_ids):
+            raise ValueError("指定笔记不存在")
+        result = {
+            "domain_kind": "AUTHOR_NOTE",
+            "truncated": False,
+            "notes": [{**heads[i].summary(), "content": heads[i].content} for i in note_ids],
+        }
+        if len(canonical(result)) > 2 * 1024 * 1024:
+            raise ValueError("笔记批次过大，请减少选择；未截断原文")
+        return result
 
     def list_novel_chapters(self, offset: int = 0, limit: int = 100) -> dict[str, Any]:
         offset = _integer(offset, 0, 100_000)

@@ -88,6 +88,7 @@ class OutlineWriterService:
         related_refs: list[dict[str, Any]],
         style_refs: list[dict[str, Any]],
         recent_chapters: int,
+        notes_summary: str = "",
     ) -> dict[str, Any]:
         if not self._lock.acquire(blocking=False):
             raise ValueError("已有正文任务，请等待或停止")
@@ -104,6 +105,7 @@ class OutlineWriterService:
                 related_refs,
                 style_refs,
                 recent_chapters,
+                notes_summary,
             )
             with self._state_lock:
                 if self._closed.is_set() or self._cancel.is_set():
@@ -243,6 +245,9 @@ class OutlineWriterService:
                 "constraints_hash": plan.constraints_hash,
                 "references": [asdict(ref) for ref in plan.references],
                 "adoption_source": asdict(plan.editor_source),
+                "note_originals": [
+                    {**n.summary(), "content": n.content} for n in plan.note_originals
+                ],
             }
             self.snapshots.save(run.id, manifest.id, plan.messages, metadata)
             self.runs.mark_ready(run.id, manifest.id)

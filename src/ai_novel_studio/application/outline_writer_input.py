@@ -8,6 +8,12 @@ from dataclasses import asdict, dataclass, is_dataclass, replace
 from typing import Any
 
 from ai_novel_studio.application.novel_read_service import NovelEditorSnapshot, NovelReadService
+from ai_novel_studio.domain.author_note import (
+    AuthorNote,
+    NoteRef,
+    NoteSelection,
+    validate_note_text,
+)
 from ai_novel_studio.domain.identifiers import new_id, validate_id
 from ai_novel_studio.domain.outline import outline_bundle_fingerprint, validate_outline_hash
 from ai_novel_studio.infrastructure.llm import LLMGateway, LLMMessage, TaskPurpose
@@ -118,6 +124,12 @@ class WriterInputPlan:
     messages: tuple[LLMMessage, ...]
     estimated_tokens: int
     context_window: int
+    note_mode: str = "NONE"
+    note_refs: tuple[NoteRef, ...] = ()
+    note_selection_fingerprint: str = NoteSelection().fingerprint
+    note_summary: str | None = None
+    summary_hash: str | None = None
+    note_originals: tuple[AuthorNote, ...] = ()
 
     def summary(self) -> dict[str, Any]:
         return {
@@ -135,10 +147,19 @@ class WriterInputPlan:
             "recent_chapters": self.recent_chapters,
             "recent_chapter_ids": list(self.recent_chapter_ids),
             "sources": [s.summary() for s in self.sources],
+            "note_mode": self.note_mode,
+            "note_refs": [asdict(ref) for ref in self.note_refs],
+            "note_selection_fingerprint": self.note_selection_fingerprint,
+            "note_summary": self.note_summary,
+            "summary_hash": self.summary_hash,
         }
 
     def preview(self) -> dict[str, Any]:
-        return {**self.summary(), "messages": [asdict(m) for m in self.messages]}
+        return {
+            **self.summary(),
+            "messages": [asdict(m) for m in self.messages],
+            "note_originals": [{**n.summary(), "content": n.content} for n in self.note_originals],
+        }
 
 
 def model_signature(gateway: LLMGateway) -> str:
@@ -207,6 +228,26 @@ class OutlineWriterInputService:
         return chapter.title, content[ref.start : ref.end]
 
     def validate(self, plan: WriterInputPlan, gateway: LLMGateway) -> None:
+        choice, notes = self.novel.notes_snapshot()
+        expected = NoteSelection(plan.note_mode, tuple(ref.note_id for ref in plan.note_refs))
+        summary = plan.note_summary
+        if (
+            choice != expected
+            or choice.fingerprint != plan.note_selection_fingerprint
+            or tuple(NoteRef(n.id, n.revision, n.source_hash) for n in notes) != plan.note_refs
+            or tuple(notes) != plan.note_originals
+        ):
+            raise ValueError("笔记或本次笔记选择已变化，请重新准备并确认输入")
+        if choice.mode == "SUMMARY":
+            if (
+                not isinstance(summary, str)
+                or not summary.strip()
+                or len(summary) > 20000
+                or plan.summary_hash != text_hash(summary)
+            ):
+                raise ValueError("笔记要点身份无效")
+        elif summary is not None or plan.summary_hash is not None:
+            raise ValueError("笔记输入模式不匹配")
         editor = self.novel.editor_snapshot()
         target = self.chapters.get_chapter(plan.chapter_id, include_deleted=False)
         documents = tuple(d for d, _ in self.outlines.read_bundle())
@@ -240,6 +281,7 @@ class OutlineWriterInputService:
         related_refs: list[dict[str, Any]],
         style_refs: list[dict[str, Any]],
         recent_chapters: int,
+        notes_summary: str = "",
     ) -> WriterInputPlan:
         if type(recent_chapters) is not int or not 0 <= recent_chapters <= 10:
             raise ValueError("近期章节数应为 0 至 10")
@@ -266,6 +308,14 @@ class OutlineWriterInputService:
         if not editor.dirty and editor.content != formal:
             raise ValueError("正文文件与编辑器不一致，请重新载入后准备输入")
         constraints = self._constraints(chapter_id)
+        choice, notes = self.novel.notes_snapshot()
+        if not isinstance(notes_summary, str) or len(notes_summary) > 20000:
+            raise ValueError("笔记要点应为20000字以内的文本")
+        validate_note_text(notes_summary)
+        if (choice.mode == "SUMMARY" and not notes_summary.strip()) or (
+            choice.mode != "SUMMARY" and notes_summary
+        ):
+            raise ValueError("笔记引用方式与要点不符，请按作者选择重新准备")
         scope = "SELECTION" if editor.selection else "CHAPTER"
         scope_text = (
             (
@@ -302,6 +352,28 @@ class OutlineWriterInputService:
                 "AUTHOR_REQUEST", chapter_id, "作者要求与处理范围", revision, task, text_hash(task)
             )
         )
+        if choice.mode == "FULL":
+            sources.extend(
+                WriterSource("AUTHOR_NOTE", n.id, n.title, n.revision, n.content, n.source_hash)
+                for n in notes
+            )
+        elif choice.mode == "SUMMARY":
+            summary_content = (
+                "原笔记来源（非正式正文）：\n"
+                + json.dumps([n.summary() for n in notes], ensure_ascii=False)
+                + "\n待作者确认的笔记要点：\n"
+                + notes_summary
+            )
+            sources.append(
+                WriterSource(
+                    "AUTHOR_NOTE_SUMMARY",
+                    self.project.project.id,
+                    "Codex整理的笔记要点",
+                    0,
+                    summary_content,
+                    text_hash(summary_content),
+                )
+            )
         if not editor.selection and editor.content:
             sources.append(
                 WriterSource(
@@ -348,6 +420,7 @@ class OutlineWriterInputService:
                 "system",
                 "你是独立小说正文写手，只输出指定范围的候选正文，不输出分析或调用工具。"
                 "完整大纲是 AUTHOR_PLAN，正式正文记录已发生事实；冲突由作者决定。"
+                "AUTHOR_NOTE 及其整理要点是作者的创作指导材料，不自动视为已发生的正文事实。"
                 "严格遵守作者要求与选文边界，不把未来计划擅自写入选文。",
             ),
         ) + tuple(
@@ -399,6 +472,12 @@ class OutlineWriterInputService:
             messages,
             estimate,
             window,
+            note_mode=choice.mode,
+            note_refs=tuple(NoteRef(n.id, n.revision, n.source_hash) for n in notes),
+            note_selection_fingerprint=choice.fingerprint,
+            note_summary=notes_summary if choice.mode == "SUMMARY" else None,
+            summary_hash=text_hash(notes_summary) if choice.mode == "SUMMARY" else None,
+            note_originals=notes,
         )
         self.validate(plan, gateway)
         return plan

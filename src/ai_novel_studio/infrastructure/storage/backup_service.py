@@ -34,6 +34,8 @@ class BackupService:
                     self._project.layout.assets,
                     self._project.layout.history,
                     self._project.layout.trash,
+                    self._project.layout.root / "notes",
+                    self._project.layout.root / "notes-recovery",
                 ):
                     if not directory.exists():
                         continue

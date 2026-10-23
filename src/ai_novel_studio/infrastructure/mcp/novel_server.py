@@ -8,7 +8,7 @@ import socket
 from dataclasses import dataclass, field
 from threading import Thread
 from time import monotonic, sleep
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 import uvicorn
 from mcp.server.fastmcp import FastMCP
@@ -16,6 +16,7 @@ from mcp.types import ToolAnnotations
 from pydantic import Field
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from ai_novel_studio.application.novel_note_service import NOTE_WRITE_TOOLS, NovelNoteService
 from ai_novel_studio.application.novel_read_service import (
     LEGACY_NOVEL_TOOLS,
     NOVEL_TOOLS,
@@ -42,11 +43,17 @@ class NovelMcpEndpoint:
         }
         if "read_novel_chapters" in self.tools:
             config[f"{prefix}.tools.read_novel_chapters.output_token_limit"] = 200_000
+        if "read_novel_notes" in self.tools:
+            # Cover the bounded 2 MiB note result instead of the host's small default.
+            config[f"{prefix}.tools.read_novel_notes.output_token_limit"] = 2_200_000
         if WRITER_TOOL in self.tools:
             # The author explicitly requested chat-driven drafting. Approval is
             # scoped to this bounded candidate-only tool, never to file or shell tools.
             config[f"{prefix}.tools.{WRITER_TOOL}.approval_mode"] = "approve"
             config[f"{prefix}.tool_timeout_sec"] = 300
+        for name in NOTE_WRITE_TOOLS:
+            if name in self.tools:
+                config[f"{prefix}.tools.{name}.approval_mode"] = "approve"
         return config
 
     def environment(self) -> dict[str, str]:
@@ -104,15 +111,20 @@ class NovelMcpServer:
         service: NovelReadService,
         *,
         writer: NovelWriterService | None = None,
+        note_writer: NovelNoteService | None = None,
         include_legacy_tools: bool = False,
     ) -> None:
         self.service = service
         self.writer = writer
+        if note_writer is not None and note_writer.project_id != service.project_id:
+            raise ValueError("笔记写入口项目身份不匹配")
         self._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._socket.bind(("127.0.0.1", 0))
         port = self._socket.getsockname()[1]
         host = f"127.0.0.1:{port}"
         tools = NOVEL_TOOLS + ((WRITER_TOOL,) if writer is not None else ())
+        if note_writer is not None:
+            tools += NOTE_WRITE_TOOLS
         if include_legacy_tools:
             tools += LEGACY_NOVEL_TOOLS
         self.endpoint = NovelMcpEndpoint(
@@ -144,6 +156,63 @@ class NovelMcpServer:
         def list_novel_chapters(offset: int = 0, limit: int = 100) -> dict[str, Any]:
             """按作品顺序列出章节 ID 和修订；limit 最大100，可分页。"""
             return call("list_novel_chapters", offset=offset, limit=limit)
+
+        @mcp.tool(annotations=annotation)
+        def list_novel_notes(
+            offset: Annotated[int, Field(strict=True, ge=0, le=200)] = 0,
+            limit: Annotated[int, Field(strict=True, ge=1, le=100)] = 100,
+        ) -> dict[str, Any]:
+            """列出作者笔记的ID、类型、标题和修订。笔记是指导/计划，不是正文事实。"""
+            return call("list_novel_notes", offset=offset, limit=limit)
+
+        @mcp.tool(annotations=annotation)
+        def read_novel_notes(
+            note_ids: Annotated[list[str], Field(min_length=1, max_length=32)],
+        ) -> dict[str, Any]:
+            """一次完整读取指定作者笔记；不能据此默认把未选择笔记附给正文模型。"""
+            return call("read_novel_notes", note_ids=note_ids)
+
+        if note_writer is not None:
+            write_annotation = ToolAnnotations(
+                readOnlyHint=False, destructiveHint=False, openWorldHint=False, idempotentHint=False
+            )
+
+            @mcp.tool(annotations=write_annotation)
+            def create_novel_note(
+                title: Annotated[str, Field(strict=True, min_length=1, max_length=200)],
+                content: Annotated[str, Field(strict=True, max_length=200000)],
+                kind: Literal["OUTLINE", "CHARACTER", "STYLE", "CAUTION", "OTHER"] = "OTHER",
+            ) -> dict[str, Any]:
+                """仅在作者明确要求保存时创建笔记。存细纲/人物/文风/注意事项，不启动正文生成，不自动选择引用。"""
+                assert note_writer is not None
+                try:
+                    note = note_writer.create(title, content, kind)
+                    return {
+                        "domain_kind": "AUTHOR_NOTE",
+                        **note.summary(),
+                        "selected_for_writer": False,
+                    }
+                except Exception as exc:
+                    raise ValueError("笔记未保存，请检查参数、修订或未完成保存的恢复状态") from exc
+
+            @mcp.tool(annotations=write_annotation)
+            def update_novel_note(
+                note_id: str,
+                expected_revision: Annotated[int, Field(strict=True, ge=1, le=2000)],
+                content: Annotated[str, Field(strict=True, max_length=200000)],
+                title: Annotated[str, Field(strict=True, min_length=1, max_length=200)]
+                | None = None,
+                kind: Literal["OUTLINE", "CHARACTER", "STYLE", "CAUTION", "OTHER"] | None = None,
+            ) -> dict[str, Any]:
+                """按作者要求更新指定笔记并保留旧版。必须先读取当前修订；错误修订不覆盖。"""
+                assert note_writer is not None
+                try:
+                    note = note_writer.update(note_id, expected_revision, content, title, kind)
+                    return {"domain_kind": "AUTHOR_NOTE", **note.summary()}
+                except Exception as exc:
+                    raise ValueError(
+                        "笔记未更新，请重新读取修订或检查暂存恢复状态；原内容保留"
+                    ) from exc
 
         @mcp.tool(annotations=annotation)
         def read_novel_chapter(
@@ -223,8 +292,13 @@ class NovelMcpServer:
                 related_refs: Annotated[list[dict[str, Any]], Field(max_length=64)] | None = None,
                 style_refs: Annotated[list[dict[str, Any]], Field(max_length=64)] | None = None,
                 recent_chapters: Annotated[int, Field(strict=True, ge=0, le=10)] = 3,
+                notes_summary: Annotated[str, Field(strict=True, max_length=20000)] = "",
             ) -> dict[str, Any]:
                 """准备独立正文模型的完整输入，作者确认后生成候选，不覆盖正文。
+
+                笔记由get_novel_context.note_selection的作者选择控制。NONE不附笔记，FULL自动附原文，
+                这两种模式notes_summary留空。SUMMARY须先批量读取所选笔记，将整理要点放入
+                notes_summary；它是待作者确认的候选，不是已经确认或已经生成的正文。
 
                 仅在作者明确要求写作时调用，每轮最多一次。先读取当前小说和章要求，
                 expected_revision 使用当前上下文修订。instruction 整理作者目标、必要素材、
@@ -248,6 +322,7 @@ class NovelMcpServer:
                         related_refs,
                         style_refs,
                         recent_chapters,
+                        notes_summary,
                     )
                 except asyncio.CancelledError:
                     writer.cancel()
