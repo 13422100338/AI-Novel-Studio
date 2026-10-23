@@ -201,10 +201,9 @@ def test_refresh_advanced_reads_is_safe_without_project() -> None:
     assert facade.property("auditCountText") == "—"
 
 
-def test_audit_empty_state_copy_switches_with_project(
-    qtbot, tmp_path: Path
-) -> None:
-    from PySide6.QtCore import QUrl
+@pytest.fixture
+def audit_ui(qtbot):
+    from PySide6.QtCore import QCoreApplication, QEvent, QUrl
     from PySide6.QtQml import QQmlApplicationEngine
 
     from ai_novel_studio.ui_qml.bootstrap import app_qml_path, register_frontend_types
@@ -218,6 +217,20 @@ def test_audit_empty_state_copy_switches_with_project(
     engine.load(QUrl.fromLocalFile(str(app_qml_path())))
     assert engine.rootObjects()
     window = engine.rootObjects()[0]
+
+    # Context properties are non-owning. Destroy QML before releasing its
+    # Python facade/theme, including when an assertion fails in the test.
+    yield window, facade
+    facade.closeProject()
+    engine.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    qtbot.wait(20)
+
+
+def test_audit_empty_state_copy_switches_with_project(
+    audit_ui, qtbot, tmp_path: Path
+) -> None:
+    window, facade = audit_ui
 
     def find_item(item, name):  # type: ignore[no-untyped-def]
         if item.objectName() == name:
@@ -256,4 +269,3 @@ def test_audit_empty_state_copy_switches_with_project(
     QMetaObject.invokeMethod(refresh, "clicked")
     qtbot.wait(50)
     assert "暂无审校问题" in str(empty.property("title"))
-    engine.deleteLater()
