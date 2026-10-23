@@ -2,13 +2,53 @@
 
 from __future__ import annotations
 
+import re
 from functools import lru_cache
 from html import escape
 from html.parser import HTMLParser
 from urllib.parse import urlsplit
 
 from PySide6.QtCore import QObject, QUrl, Slot
-from PySide6.QtGui import QFont, QTextDocument
+from PySide6.QtGui import QColor, QFont, QTextDocument, QTextFrameFormat, QTextLength, QTextTable
+
+
+def _display_markdown(source: str) -> str:
+    """Tolerate a closing bold marker after spaces, only in displayed prose."""
+
+    def prose(part: str) -> str:
+        markers = list(re.finditer(r"(?<![\\*])\*\*(?!\*)", part))
+        edits = []
+        for first, last in zip(markers[::2], markers[1::2], strict=False):
+            inside = part[first.end() : last.start()]
+            if inside and not inside[0].isspace() and inside[-1] in " \t":
+                trimmed = inside.rstrip(" \t")
+                edits.append(
+                    (first.start(), last.end(), "**" + trimmed + "**" + inside[len(trimmed) :])
+                )
+        for start, end, value in reversed(edits):
+            part = part[:start] + value + part[end:]
+        return part
+
+    result, fence = [], ""
+    for line in source.splitlines(keepends=True):
+        marker = re.match(r"\s*(`{3,}|~{3,})", line)
+        if marker:
+            run = marker.group(1)
+            if not fence:
+                fence = run
+            elif run[0] == fence[0] and len(run) >= len(fence):
+                fence = ""
+            result.append(line)
+        elif fence:
+            result.append(line)
+        else:
+            start = 0
+            parts: list[str] = []
+            for code in re.finditer(r"(?P<ticks>`+).*?(?P=ticks)", line):
+                parts.extend((prose(line[start : code.start()]), code.group()))
+                start = code.end()
+            result.append("".join(parts) + prose(line[start:]))
+    return "".join(result)
 
 
 class _ChatDocument(QTextDocument):
@@ -57,19 +97,39 @@ class _DisplayHtml(HTMLParser):
 
 
 @lru_cache(maxsize=16)
-def _render(source: str, markdown: bool) -> str:
+def _render(
+    source: str,
+    markdown: bool,
+    family: str = "Microsoft YaHei UI",
+    size: int = 14,
+    table_border: str = "",
+) -> str:
     document = _ChatDocument()
-    font = QFont("Microsoft YaHei UI")
-    font.setPixelSize(14)
+    font = QFont(family)
+    font.setPixelSize(size)
     document.setDefaultFont(font)
     if markdown:
         document.setMarkdown(
-            source,
+            _display_markdown(source),
             QTextDocument.MarkdownFeature.MarkdownDialectGitHub
             | QTextDocument.MarkdownFeature.MarkdownNoHTML,
         )
     else:
         document.setPlainText(source)
+    if table_border:
+        color = QColor(table_border)
+        if not color.isValid():
+            color = QColor("#d8c9b7")
+        for frame in document.rootFrame().childFrames():
+            if isinstance(frame, QTextTable):
+                style = frame.format()
+                style.setWidth(QTextLength(QTextLength.Type.PercentageLength, 100))
+                style.setBorder(1)
+                style.setBorderBrush(color)
+                style.setBorderStyle(QTextFrameFormat.BorderStyle.BorderStyle_Solid)
+                style.setCellPadding(7)
+                style.setCellSpacing(0)
+                frame.setFormat(style)
     display = _DisplayHtml()
     display.feed(document.toHtml())
     return "".join(display.parts)

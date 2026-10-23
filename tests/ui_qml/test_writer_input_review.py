@@ -14,6 +14,7 @@ from ai_novel_studio.infrastructure.llm import (
     StreamEventKind,
 )
 from ai_novel_studio.infrastructure.storage.chapter_repository import ChapterRepository
+from ai_novel_studio.infrastructure.storage.note_repository import NoteRepository
 from ai_novel_studio.infrastructure.storage.outline_repository import OutlineRepository
 from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
 from ai_novel_studio.ui_qml.bootstrap import app_qml_path, register_frontend_types
@@ -32,7 +33,7 @@ def find(item, name):
 
 
 @pytest.fixture
-def review(tmp_path, qtbot):
+def review(tmp_path, qtbot, request):
     project = ProjectRepository.create(tmp_path / "novel", "输入确认界面")
     chapters = ChapterRepository(project)
     chapter = chapters.create_chapter(
@@ -76,8 +77,20 @@ def review(tmp_path, qtbot):
         on_event=lambda event: controller._writer_event.emit(controller._epoch, event),
     )
     controller._writer = writer
+    note_mode = getattr(request, "param", "NONE")
+    if note_mode != "NONE":
+        note = NoteRepository(project).create("场景细纲", "NOTE-ORIGINAL-UI-不应被误当成已发生正文")
+        facade.notes.refresh()
+        facade.notes.toggleSelected(note.id, True)
+        facade.notes.setMode(note_mode)
     writer.begin_turn()
-    writer.generate(chapter.id, chapter.revision, "根据事件展开场景。", recent_chapters=0)
+    writer.generate(
+        chapter.id,
+        chapter.revision,
+        "根据事件展开场景。",
+        recent_chapters=0,
+        notes_summary="UI-SUMMARY-保持克制的语气。" if note_mode == "SUMMARY" else "",
+    )
     facade.setReduceMotion(True)
     facade.toggleAiDrawer(True)
     engine = QQmlApplicationEngine()
@@ -108,6 +121,31 @@ def test_actual_qml_confirmation_is_required_before_any_model_call(review, qtbot
     qtbot.waitUntil(lambda: not controller.is_busy and bool(calls))
     assert len(calls) == 1
     assert "# 全书原文\n当前事件\n独有末尾。" in "\n".join(m.content for m in calls[0])
+    assert ChapterRepository(project).read_content_exact(chapter.id) == "不得被候选覆盖的正式正文。"
+    assert not [w for w in warnings if "WriterInputReview.qml" in w or "WriterTaskCard.qml" in w]
+
+
+@pytest.mark.parametrize("review", ["FULL", "SUMMARY"], indirect=True)
+def test_note_material_can_be_reviewed_before_the_exact_messages_are_sent(review, qtbot):
+    project, chapter, _, _, _, _, calls, window, warnings = review
+    assert calls == []
+    QMetaObject.invokeMethod(find(window.contentItem(), "writerInputReviewButton"), "clicked")
+    qtbot.waitUntil(lambda: find(window.contentItem(), "writerInputMessageChoice") is not None)
+    choices = find(window.contentItem(), "writerInputMessageChoice")
+    labels = choices.property("model")
+    if hasattr(labels, "toVariant"):
+        labels = labels.toVariant()
+    index = next(i for i, label in enumerate(labels) if "[AUTHOR_NOTE" in label)
+    choices.setProperty("currentIndex", index)
+    displayed = find(window.contentItem(), "writerInputMessageText").property("text")
+    assert "NOTE-ORIGINAL-UI" in displayed or "UI-SUMMARY" in displayed
+    QMetaObject.invokeMethod(find(window.contentItem(), "writerInputConfirmButton"), "clicked")
+    qtbot.waitUntil(lambda: bool(calls))
+    actual = "\n".join(m.content for m in calls[0])
+    assert displayed in actual
+    if "UI-SUMMARY" in displayed:
+        assert "NOTE-ORIGINAL-UI" not in actual
+    assert not [w for w in warnings if "WriterInputReview" in w]
     assert ChapterRepository(project).read_content_exact(chapter.id) == "不得被候选覆盖的正式正文。"
     assert not [w for w in warnings if "WriterInputReview.qml" in w or "WriterTaskCard.qml" in w]
 

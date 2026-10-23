@@ -161,8 +161,8 @@ def test_shell_loads_and_exposes_core_objects(qtbot: QtBot) -> None:
 def test_shell_flat_chrome_covers_panels_keeps_workspace_opaque(
     qtbot: QtBot,
 ) -> None:
-    """Production shell is flat (clean modern design): the nav rail, sidebar
-    host and AI dock still share one BackdropLayer wiring, but every chrome
+    """Production shell is flat: the sidebar host and AI dock still
+    share one BackdropLayer wiring, but every chrome
     surface renders opaque (no capture, no blur), the decorative backdrop
     stays hidden, and the central workspace stays opaque."""
     engine, _, theme = _load_engine(qtbot)
@@ -180,17 +180,15 @@ def test_shell_flat_chrome_covers_panels_keeps_workspace_opaque(
     rail_glass = _find_quick_item(content, "navRailGlass")
     dock = _find_quick_item(content, "agentDock")
     workspace = _find_quick_item(content, "workspaceHost")
-    assert sidebar is not None and rail_glass is not None
+    assert sidebar is not None and rail_glass is None
     assert dock is not None and workspace is not None
 
     # All chrome columns keep the same backdrop wiring (structural contract).
     assert sidebar.property("sourceItem").objectName() == "f1BackgroundLayer"
-    assert rail_glass.property("sourceItem").objectName() == "f1BackgroundLayer"
     assert dock.property("backdropSource").objectName() == "f1BackgroundLayer"
     # Flat contract: opaque panels, no real-time blur in any tier.
     assert sidebar.property("opaqueFallback") is True
     assert sidebar.property("blurEnabled") is False
-    assert rail_glass.property("blurEnabled") is False
     assert sidebar.property("fillColor").alpha() == 255
 
     # Central workspace stays opaque and untouched.
@@ -199,7 +197,6 @@ def test_shell_flat_chrome_covers_panels_keeps_workspace_opaque(
     # Safe tier keeps the same flat opaque chrome without breaking layout.
     theme.setVisualQuality("safe")
     qtbot.waitUntil(lambda: sidebar.property("blurEnabled") is False)
-    assert rail_glass.property("blurEnabled") is False
     assert sidebar.property("fillColor").alpha() == 255
 
 
@@ -265,7 +262,7 @@ def test_web_editor_theme_wiring_and_tokens(qtbot: QtBot) -> None:
     assert "onTokensChanged" in editor_qml
 
     theme = ThemeProvider()
-    assert theme.property("tokens")["color"]["bgEditor"] == "#FFFAF1"  # paper
+    assert theme.property("tokens")["color"]["bgEditor"] == "#FFFEFA"  # paper
     theme.setTheme("light")
     assert theme.property("tokens")["color"]["bgEditor"] == "#FFFFFF"
     theme.setTheme("dark")
@@ -338,20 +335,20 @@ def test_sidebar_toggle_toggles_state_and_label(qtbot: QtBot) -> None:
     assert toggle.property("text") == "收起侧栏"
 
 
-def test_navigation_rail_button_switches_page(qtbot: QtBot) -> None:
+def test_footer_settings_button_switches_page(qtbot: QtBot) -> None:
     engine, facade, _ = _load_engine(qtbot)
     window = engine.rootObjects()[0]
-    library_button = _find_quick_item(window.contentItem(), "nav-library")
-    assert library_button is not None
-    QMetaObject.invokeMethod(library_button, "clicked")
-    assert facade.property("activeNav") == "library"
+    settings_button = _find_quick_item(window.contentItem(), "nav-settings")
+    assert settings_button is not None
+    QMetaObject.invokeMethod(settings_button, "clicked")
+    assert facade.property("activeNav") == "settings"
 
 
 def test_navigation_writing_button_returns_to_writing(qtbot: QtBot) -> None:
     engine, facade, _ = _load_engine(qtbot)
     window = engine.rootObjects()[0]
     facade.setActiveNav("library")
-    writing_button = _find_quick_item(window.contentItem(), "nav-writing")
+    writing_button = _find_quick_item(window.contentItem(), "mode-writing")
     assert writing_button is not None
     QMetaObject.invokeMethod(writing_button, "clicked")
     assert facade.property("activeNav") == "writing"

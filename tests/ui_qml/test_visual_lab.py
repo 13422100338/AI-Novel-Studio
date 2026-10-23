@@ -219,7 +219,7 @@ def test_visual_quality_degrades_acrylic_to_opaque_and_disables_blur(
     qtbot.waitUntil(lambda: acrylic.property("blurEnabled") is False)
     assert acrylic.property("effectActive") is False
     # Safe uses the opaque paper surface, distinct from the acrylic tint.
-    assert _qcolor(acrylic.property("fillColor")).name() == "#faf6f0"
+    assert _qcolor(acrylic.property("fillColor")).name() == "#fbfaf7"
 
     theme.setVisualQuality("premium")
     qtbot.waitUntil(lambda: acrylic.property("blurEnabled") is True)
@@ -248,7 +248,7 @@ def test_quality_tiers_change_nav_sidebar_and_ai_glass(qtbot: QtBot) -> None:
     qtbot.waitUntil(lambda: nav.property("blurEnabled") is False)
     for item in (nav, sidebar, acrylic):
         assert item.property("blurEnabled") is False, item.objectName()
-        assert _qcolor(item.property("fillColor")).name() == "#faf6f0"
+        assert _qcolor(item.property("fillColor")).name() == "#fbfaf7"
 
     # Premium: blur on again.
     theme.setVisualQuality("premium")

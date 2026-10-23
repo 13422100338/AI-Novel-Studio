@@ -17,12 +17,14 @@ from PySide6.QtGui import QGuiApplication, QImageReader
 from ai_novel_studio.application.codex_outline_context import CodexOutlineContext
 from ai_novel_studio.application.codex_session_service import CodexSessionService
 from ai_novel_studio.application.model_backend import ModelBackend
+from ai_novel_studio.application.novel_note_service import NovelNoteService
 from ai_novel_studio.application.novel_read_service import (
     NOVEL_TOOLS,
     NovelEditorSnapshot,
     NovelReadService,
 )
 from ai_novel_studio.application.novel_writer_service import NovelWriterService
+from ai_novel_studio.domain.author_note import NoteSelection
 from ai_novel_studio.infrastructure.codex.app_server import CodexConnectionError
 from ai_novel_studio.infrastructure.codex.session_index import CodexSessionIndex
 from ai_novel_studio.infrastructure.llm import LLMGateway
@@ -72,6 +74,8 @@ class CodexSessionController(QObject):
     status_changed = Signal()
     controls_changed = Signal()
     writer_status_changed = Signal(str)
+    notes_changed = Signal()
+    _note_saved = Signal(int, str)
     _writer_event = Signal(int, object)
     _writer_finished = Signal(int, str)
     _writer_recovered = Signal(int, object)
@@ -93,6 +97,10 @@ class CodexSessionController(QObject):
         self._factory = session_factory
         self._writer_gateway_factory = writer_gateway_factory
         self._writer: NovelWriterService | None = None
+        self._note_writer: NovelNoteService | None = None
+        self._note_selection = NoteSelection()
+        self._active_note: str | None = None
+        self._note_dirty = False
         self._writer_generating = False
         self._writer_recovering = False
         # Keep the lock when reconnecting or reopening a project: a revoked
@@ -125,6 +133,7 @@ class CodexSessionController(QObject):
         self._writer_event.connect(self._on_writer_event)
         self._writer_finished.connect(self._on_writer_finished)
         self._writer_recovered.connect(self._on_writer_recovered)
+        self._note_saved.connect(self._on_note_saved)
 
     @property
     def is_busy(self) -> bool:
@@ -172,15 +181,35 @@ class CodexSessionController(QObject):
         if self._novel and not self._busy:
             self._novel.update_editor(snapshot)
 
+    def update_notes(
+        self, selection: NoteSelection, active_note: str | None = None, dirty: bool = False
+    ) -> None:
+        self._note_selection = selection
+        self._active_note, self._note_dirty = active_note, dirty
+        if self._novel:
+            self._novel.update_note_selection(selection, active_note, dirty)
+
+    @Slot(int, str)
+    def _on_note_saved(self, epoch: int, identity: str) -> None:
+        if epoch == self._epoch:
+            self.notes_changed.emit()
+
     def _create_port(self) -> Any:
         assert self._project_id is not None
         port = self._factory(self._project_id)
         if self._repository is not None and isinstance(port, CodexSessionService):
             self._novel = NovelReadService(self._repository)
             self._novel.update_editor(self._editor)
+            self._novel.update_note_selection(
+                self._note_selection, self._active_note, self._note_dirty
+            )
             port.bind_novel(self._novel)
             port.bind_outline(CodexOutlineContext(self._repository))
             epoch = self._epoch
+            self._note_writer = NovelNoteService(
+                self._repository, on_saved=lambda identity: self._note_saved.emit(epoch, identity)
+            )
+            port.bind_notes(self._note_writer)
             self._writer = NovelWriterService(
                 self._repository,
                 self._novel,
@@ -213,6 +242,11 @@ class CodexSessionController(QObject):
 
     def bind_project(self, project_id: str | None, repository: Any = None) -> None:
         self._epoch += 1
+        if self._note_writer:
+            self._note_writer.revoke()
+        self._note_writer = None
+        self._note_selection = NoteSelection()
+        self._active_note, self._note_dirty = None, False
         self._writer_generating = False
         self._writer_recovering = False
         if self._writer:

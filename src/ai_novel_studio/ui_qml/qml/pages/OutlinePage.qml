@@ -9,8 +9,31 @@ Item {
     objectName: "outlinePage"
     readonly property var outline: Facade.outline
     readonly property var view: outline.state
+    property bool editingSource: false
+    property bool adjustingPosition: false
+    readonly property var references: outline.references
+    readonly property bool marginReferences: readerScroll.textWidth >= 560 && references.length > 0
+    readonly property real referenceColumnWidth: marginReferences
+        ? Math.min(220, Math.max(158, readerScroll.textWidth * 0.24)) : 0
+    readonly property var rendered: view.loaded && !editingSource
+        ? OutlineMarkup.renderLinked(view.text, view.headings, String(Theme.tokens.color.border),
+            references, !marginReferences, String(Theme.tokens.color.accent))
+        : ({html: "", headings: [], annotations: []})
     property bool reimportMode: false
-    onVisibleChanged: { if (!visible && linksPanel) linksPanel.close() }
+    onVisibleChanged: {
+        if (visible) Qt.callLater(root.refreshReadingView)
+        else if (linksPanel) linksPanel.close()
+    }
+    onEditingSourceChanged: Qt.callLater(function() { root.jumpTo(root.outline.navigation.sourcePosition) })
+    onWidthChanged: {
+        if (visible && view.loaded) Qt.callLater(function() {
+            const scroll = root.editingSource ? sourceScroll : readerScroll
+            if (scroll.contentItem) root.scrollTo(scroll, scroll.contentItem.contentY)
+        })
+    }
+    onRenderedChanged: {
+        if (!editingSource && view.loaded) Qt.callLater(function() { root.jumpTo(root.outline.navigation.sourcePosition) })
+    }
 
     Connections {
         target: root.outline
@@ -54,12 +77,76 @@ Item {
         }
     }
 
+    function scrollTo(scroll, position) {
+        const viewport = scroll.contentItem
+        if (viewport && viewport.contentY !== undefined)
+            viewport.contentY = Math.max(0, Math.min(position,
+                Math.max(0, viewport.contentHeight - viewport.height)))
+    }
+
+    function refreshReadingView() {
+        if (!visible || !view.loaded || editingSource) return
+        const offset = readerScroll.contentItem ? readerScroll.contentItem.contentY : 0
+        const position = reader.cursorPosition
+        // Restore a lost display binding without clearing a healthy document:
+        // an intermediate empty layout would clamp tall margin notes to the top.
+        reader.text = Qt.binding(function() { return root.rendered.html })
+        reader.cursorPosition = position
+        OutlineMarkup.prepareTableReader(reader)
+        Qt.callLater(function() {
+            if (root.visible && !root.editingSource) root.scrollTo(readerScroll, offset)
+        })
+    }
+
     function jumpTo(position) {
+        if (!visible || !view.loaded) return
+        adjustingPosition = true
+        root.outline.setSourceCursor(position)
         editor.cursorPosition = position
-        editor.forceActiveFocus()
-        const rect = editor.positionToRectangle(position)
-        if (sourceScroll.contentItem && sourceScroll.contentItem.contentY !== undefined)
-            sourceScroll.contentItem.contentY = Math.max(0, rect.y - sourceScroll.height / 3)
+        if (editingSource) {
+            editor.forceActiveFocus()
+            const rect = editor.positionToRectangle(position)
+            root.scrollTo(sourceScroll, rect.y - 22)
+        } else {
+            const headings = view.headings.filter(function(item) { return item.position <= position })
+            const line = headings.length ? headings[headings.length - 1].line : 1
+            const found = rendered.headings.find(function(item) { return item.line === line })
+            reader.cursorPosition = found ? found.position : 0
+            const rect = reader.positionToRectangle(reader.cursorPosition)
+            root.scrollTo(readerScroll, rect.y - 24)
+        }
+        Qt.callLater(function() { root.adjustingPosition = false })
+    }
+
+    function selectRenderedPosition(position) {
+        if (adjustingPosition || editingSource || !root.visible) return
+        const previous = rendered.headings.filter(function(item) { return item.position <= position })
+        if (!previous.length) return
+        const line = previous[previous.length - 1].line
+        const source = view.headings.find(function(item) { return item.line === line })
+        if (source) root.outline.setSourceCursor(source.position)
+    }
+
+    function openLinks() {
+        root.outline.refreshLinks()
+        linksPanel.open()
+    }
+
+    function activateReference(url) {
+        const chapter = "novel://chapter/"
+        const note = "novel://note/"
+        if (url.indexOf(chapter) === 0) root.outline.openLinkedChapter(url.slice(chapter.length))
+        else if (url.indexOf(note) === 0) Facade.openOutlineNote(url.slice(note.length))
+        else if (url.indexOf("https://") === 0 || url.indexOf("http://") === 0) Qt.openUrlExternally(url)
+    }
+
+    function addReference(kind: string) {
+        root.outline.refreshLinks()
+        Facade.notes.refresh()
+        referenceDialog.kind = kind
+        referenceDialog.sourceLine = root.outline.navigation.headingLine
+        referenceDialog.open()
+        referenceChoice.currentIndex = 0
     }
 
     Shortcut {
@@ -82,21 +169,53 @@ Item {
             Layout.fillWidth: true
             spacing: 8
             Text {
-                text: "大纲"
-                font.pixelSize: 25
+                Layout.fillWidth: true
+                text: root.view.title || "大纲"
+                elide: Text.ElideRight
+                font.pixelSize: 16
                 font.bold: true
                 color: Theme.tokens.color.textPrimary
             }
-            Item { Layout.fillWidth: true }
+            AppButton {
+                objectName: "outlineContentsButton"
+                text: "目录"
+                ghost: true
+                visible: root.width > 380
+                enabled: root.view.loaded
+                onClicked: contentsDrawer.open()
+            }
+            AppButton {
+                objectName: "outlineAddReferenceButton"
+                text: "关联"
+                ghost: true
+                enabled: root.view.loaded
+                onClicked: referenceMenu.popup()
+                Menu {
+                    id: referenceMenu
+                    background: Rectangle { color: Theme.tokens.color.bgSurface; radius: 10; border.color: Theme.tokens.color.border }
+                    MenuItem { text: "关联正式章节…"; onTriggered: root.addReference("chapter") }
+                    MenuItem { text: "插入笔记链接…"; onTriggered: root.addReference("note") }
+                    MenuItem { text: "检查与确认关联…"; onTriggered: root.openLinks() }
+                }
+            }
+            AppButton {
+                objectName: "outlineSourceToggle"
+                text: root.editingSource ? "阅读" : "编辑源码"
+                ghost: true
+                enabled: root.view.loaded
+                onClicked: root.editingSource = !root.editingSource
+            }
             AppButton {
                 objectName: "outlineNewButton"
                 text: "新建"
+                visible: root.width > 560 || !root.view.loaded
                 enabled: root.view.available
                 onClicked: newDocumentDialog.open()
             }
             AppButton {
                 objectName: "outlineImportButton"
                 text: "导入"
+                visible: root.width > 560 || !root.view.loaded
                 enabled: root.view.available
                 onClicked: { root.reimportMode = false; importDialog.open() }
             }
@@ -116,6 +235,11 @@ Item {
                 Menu {
                     id: actionsMenu
                     background: Rectangle { color: Theme.tokens.color.bgSurface; radius: 8; border.color: Theme.tokens.color.border }
+                    MenuItem { text: "新建大纲…"; enabled: root.view.available; onTriggered: newDocumentDialog.open() }
+                    MenuItem { text: "导入大纲…"; enabled: root.view.available; onTriggered: { root.reimportMode = false; importDialog.open() } }
+                    MenuItem { text: "大纲目录"; enabled: root.view.loaded; onTriggered: contentsDrawer.open() }
+                    MenuItem { text: "章节关联"; enabled: root.view.loaded; onTriggered: root.openLinks() }
+                    MenuSeparator {}
                     MenuItem { text: "版本历史"; enabled: root.view.loaded; onTriggered: historyDrawer.open() }
                     MenuItem { text: "重新导入…"; enabled: root.view.loaded; onTriggered: { root.reimportMode = true; importDialog.open() } }
                     MenuItem { text: "导出当前编辑…"; enabled: root.view.loaded; onTriggered: exportDialog.open() }
@@ -131,50 +255,10 @@ Item {
         }
 
         RowLayout {
-            visible: root.view.documents.length > 0
-            Layout.fillWidth: true
-            ComboBox {
-                id: documentsBox
-                objectName: "outlineDocuments"
-                Layout.fillWidth: true
-                model: root.view.documents
-                textRole: "title"
-                valueRole: "id"
-                currentIndex: root.view.currentIndex
-                onActivated: root.outline.selectDocument(currentValue)
-                background: Rectangle { color: Theme.tokens.color.bgSurface; radius: 8; border.color: Theme.tokens.color.border }
-                contentItem: Text {
-                    text: documentsBox.displayText
-                    leftPadding: 12
-                    rightPadding: 28
-                    verticalAlignment: Text.AlignVCenter
-                    elide: Text.ElideRight
-                    color: Theme.tokens.color.textPrimary
-                    font.pixelSize: 14
-                }
-                popup.background: Rectangle { color: Theme.tokens.color.bgSurface; radius: 8; border.color: Theme.tokens.color.border }
-            }
-            AppButton {
-                objectName: "outlineContentsButton"
-                text: "目录"
-                ghost: true
-                enabled: root.view.loaded
-                onClicked: contentsDrawer.open()
-            }
-            AppButton {
-                objectName: "outlineLinksButton"
-                text: "章节关联" + (root.view.pendingLinkCount > 0 ? " · " + root.view.pendingLinkCount : "")
-                ghost: true
-                enabled: root.view.loaded
-                onClicked: { root.outline.refreshLinks(); linksPanel.open() }
-            }
-        }
-
-        RowLayout {
             visible: root.view.loaded
             Layout.fillWidth: true
             Text {
-                text: "Markdown"
+                text: root.editingSource ? "Markdown 源码" : "阅读视图"
                 font.pixelSize: 12
                 color: Theme.tokens.color.accent
             }
@@ -220,13 +304,14 @@ Item {
             ScrollView {
                 id: sourceScroll
                 anchors.fill: parent
-                visible: root.view.loaded
+                visible: root.view.loaded && root.editingSource
                 clip: true
-                contentWidth: availableWidth
+                contentWidth: Math.max(0, width - leftPadding - rightPadding - sourceBar.implicitWidth)
+                ScrollBar.vertical: DocumentScrollBar { id: sourceBar; parent: sourceScroll; objectName: "outlineSourceScrollBar" }
                 TextArea {
                     id: editor
                     objectName: "outlineEditor"
-                    width: sourceScroll.availableWidth
+                    width: sourceScroll.contentWidth
                     text: root.view.text
                     textFormat: TextEdit.PlainText
                     wrapMode: TextEdit.Wrap
@@ -241,6 +326,69 @@ Item {
                     padding: 22
                     background: null
                     onTextChanged: root.outline.edit(text)
+                    onCursorPositionChanged: {
+                        if (root.editingSource && !root.adjustingPosition && visible)
+                            root.outline.setSourceCursor(cursorPosition)
+                    }
+                }
+            }
+            ScrollView {
+                id: readerScroll
+                anchors.fill: parent
+                visible: root.view.loaded && !root.editingSource
+                clip: true
+                // Reserve the gutter even while hidden: effective scrollbar
+                // visibility must not reflow a long document during tab changes.
+                readonly property real textWidth: Math.max(0,
+                    width - leftPadding - rightPadding - readerBar.implicitWidth)
+                contentWidth: textWidth
+                contentHeight: reader.height
+                ScrollBar.vertical: DocumentScrollBar { id: readerBar; parent: readerScroll; objectName: "outlineReaderScrollBar" }
+                TextArea {
+                    id: reader
+                    objectName: "outlineReadView"
+                    // Let ScrollView place its single TextArea in the scrolling
+                    // content. Parenting it to the viewport pins the text in place.
+                    width: readerScroll.textWidth
+                    height: Math.max(contentHeight + topPadding + bottomPadding,
+                        referenceNotes.implicitHeight)
+                    clip: false
+                    text: root.rendered.html
+                    textFormat: TextEdit.RichText
+                    readOnly: true
+                    selectByMouse: true
+                    persistentSelection: true
+                    wrapMode: TextEdit.Wrap
+                    font.family: Theme.tokens.font.manuscript
+                    font.pixelSize: 18
+                    color: Theme.tokens.color.textPrimary
+                    selectionColor: Theme.tokens.color.accent
+                    selectedTextColor: "white"
+                    padding: 26
+                    rightPadding: 26 + (root.marginReferences ? root.referenceColumnWidth + 22 : 0)
+                    background: null
+                    function prepareTableRendering() { OutlineMarkup.prepareTableReader(reader) }
+                    Component.onCompleted: Qt.callLater(prepareTableRendering)
+                    onTextChanged: Qt.callLater(prepareTableRendering)
+                    onWidthChanged: Qt.callLater(prepareTableRendering)
+                    // Text/layout refreshes may move the cursor automatically;
+                    // only user gestures select a different event.
+                    onReleased: root.selectRenderedPosition(cursorPosition)
+                    Keys.onReleased: root.selectRenderedPosition(cursorPosition)
+                    onLinkActivated: function(link) {
+                        root.activateReference(link)
+                    }
+                    OutlineReferenceNotes {
+                        id: referenceNotes
+                        visible: root.marginReferences
+                        marginActive: root.marginReferences
+                        width: reader.width
+                        reader: reader
+                        annotations: root.rendered.annotations
+                        columnX: reader.width - root.referenceColumnWidth
+                        columnWidth: root.referenceColumnWidth
+                        onActivated: function(url) { root.activateReference(url) }
+                    }
                 }
             }
             EmptyState {
@@ -256,8 +404,66 @@ Item {
         id: linksPanel
         parent: root
         outline: root.outline
-        sourceLine: editor.text.substring(0, editor.cursorPosition).split("\n").length
+        sourceLine: root.outline.navigation.sourceLine
         onRevealRequested: function(position) { root.jumpTo(position) }
+    }
+
+    StudioDialog {
+        id: referenceDialog
+        objectName: "outlineReferenceDialog"
+        property string kind: "chapter"
+        property int sourceLine: 1
+        title: kind === "chapter" ? "关联正式章节" : "插入笔记链接"
+        contentItem: ColumnLayout {
+            spacing: 16
+            Text {
+                Layout.fillWidth: true
+                text: "关联到：" + root.outline.navigation.headingTitle
+                textFormat: Text.PlainText
+                wrapMode: Text.Wrap
+                color: Theme.tokens.color.textSecondary
+                font.pixelSize: 13
+            }
+            AppComboBox {
+                id: referenceChoice
+                objectName: "outlineReferenceChoice"
+                Layout.fillWidth: true
+                model: referenceDialog.kind === "chapter" ? root.view.linkChapters : Facade.notes.state.documents
+                textRole: "title"
+                valueRole: "id"
+            }
+            Text {
+                Layout.fillWidth: true
+                text: referenceChoice.count ? referenceChoice.currentText : "请先创建章节或笔记，再插入链接。"
+                textFormat: Text.PlainText
+                wrapMode: Text.Wrap
+                color: Theme.tokens.color.textPrimary
+                font.pixelSize: 13
+            }
+            Text {
+                Layout.fillWidth: true
+                visible: root.view.error !== ""
+                text: root.view.error
+                wrapMode: Text.Wrap
+                color: Theme.tokens.color.danger
+            }
+            RowLayout {
+                Layout.alignment: Qt.AlignRight
+                AppButton { text: "取消"; onClicked: referenceDialog.close() }
+                AppButton {
+                    objectName: "outlineReferenceConfirm"
+                    text: "插入链接"
+                    primary: true
+                    enabled: referenceChoice.currentIndex >= 0
+                    onClicked: {
+                        const ok = referenceDialog.kind === "chapter"
+                            ? root.outline.insertChapterLink(referenceChoice.currentValue, referenceDialog.sourceLine)
+                            : root.outline.insertNoteLink(referenceChoice.currentValue, referenceDialog.sourceLine)
+                        if (ok) referenceDialog.close()
+                    }
+                }
+            }
+        }
     }
 
     Popup {

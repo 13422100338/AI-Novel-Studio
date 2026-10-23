@@ -48,7 +48,7 @@ Item {
             }
             AppButton {
                 objectName: "assistantControlsButton"
-                text: root.controlsExpanded ? "收起设置" : "模型与会话"
+                text: root.controlsExpanded ? "收起设置" : "会话与用量"
                 ghost: true
                 visible: Facade.codexEnabled
                 onClicked: root.controlsExpanded = !root.controlsExpanded
@@ -71,6 +71,8 @@ Item {
         CodexControls {
             visible: Facade.codexEnabled && root.controlsExpanded
             Layout.fillWidth: true
+            showModelControls: false
+            details: true
         }
 
         ColumnLayout {
@@ -177,6 +179,7 @@ Item {
             rightMargin: root.scrollbarWidth + 2
             ScrollBar.vertical: AppScrollBar {
                 width: root.scrollbarWidth
+                visible: size < 1
             }
 
             delegate: Loader {
@@ -372,10 +375,7 @@ Item {
             }
             onStopRequested: Facade.stopAgentTurn()
             onSessionCommand: function(command) {
-                if (command === "model")
-                    root.controlsExpanded = !root.controlsExpanded
-                else
-                    Facade.manageCodexSession(command, "")
+                Facade.manageCodexSession(command, "")
             }
             onQuickCommand: function(command) {
                 if (Facade.codexEnabled) {

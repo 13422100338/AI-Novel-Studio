@@ -59,6 +59,7 @@ from ai_novel_studio.ui_qml.bridge.models.readonly_list_models import (
     MemoryListModel,
 )
 from ai_novel_studio.ui_qml.bridge.models.suggestion_list_model import SuggestionListModel
+from ai_novel_studio.ui_qml.bridge.notes_bridge import NotesBridge
 from ai_novel_studio.ui_qml.bridge.outline_bridge import OutlineBridge
 from ai_novel_studio.ui_qml.bridge.overview_counts import (
     OverviewCounts,
@@ -77,7 +78,7 @@ from ai_novel_studio.ui_qml.bridge.readonly_views import (
 )
 from ai_novel_studio.ui_qml.bridge.text_utils import count_words, format_word_count
 
-_NAV_IDS = ("writing", "outline", "library", "advanced", "settings")
+_NAV_IDS = ("writing", "outline", "notes", "library", "advanced", "settings")
 _NAV_ALIASES = {
     "characters": "library",
     "memory": "library",
@@ -291,6 +292,10 @@ class MockNovelStudioFacade(QObject):
         self._save_status = "已载入 · 暂无未保存更改"
         self._workspace: Any | None = None
         self._outline = OutlineBridge(self, chapter_opener=self._open_outline_chapter)
+        self._notes = NotesBridge(self)
+        self._notes.changed.connect(self._sync_codex_notes)
+        if self._codex is not None:
+            self._codex.notes_changed.connect(self._notes.refresh)
         self.project_changed.connect(self._bind_outline_project)
         self._ai_drawer_open = False
         self._active_nav = "writing"
@@ -316,8 +321,20 @@ class MockNovelStudioFacade(QObject):
     def outline(self) -> OutlineBridge:
         return self._outline
 
+    @Property(QObject, constant=True)
+    def notes(self) -> NotesBridge:
+        return self._notes
+
+    def _sync_codex_notes(self) -> None:
+        self._outline.set_note_documents(self._notes.property("state")["documents"])
+        if self._codex is not None:
+            identity, dirty = self._notes.editor_context
+            active = identity if self._active_nav == "notes" else None
+            self._codex.update_notes(self._notes.current_selection, active or None, dirty)
+
     def _bind_outline_project(self) -> None:
         self._outline.bind_project(self._workspace.project if self._workspace else None)
+        self._notes.bind_project(self._workspace.project if self._workspace else None)
 
     def _open_outline_chapter(self, chapter_id: str) -> bool:
         if self._editor_state != "CLEAN":
@@ -915,8 +932,20 @@ class MockNovelStudioFacade(QObject):
             return
         if self._active_nav == "outline" and not self._outline.flush():
             return
+        if self._active_nav == "notes" and not self._notes.flush():
+            return
         self._active_nav = normalized
+        self._sync_codex_notes()
         self.active_nav_changed.emit()
+
+    @Slot(str, result=bool)
+    def openOutlineNote(self, note_id: str) -> bool:
+        if not self._outline.flush() or not self._notes.flush():
+            return False
+        if not self._notes.selectDocument(note_id):
+            return False
+        self.setActiveNav("notes")
+        return self._active_nav == "notes"
 
     @Slot(int)
     def selectCharacter(self, row: int) -> None:
@@ -1481,8 +1510,10 @@ class MockNovelStudioFacade(QObject):
             if self._codex.can_steer:
                 self._codex.steer(normalized)
             elif not self.agentBusy:
-                if not self._outline.flush():
-                    self._codex.warn("大纲尚未保存，未发送创作任务；请先处理保存冲突或导出副本。")
+                if not self._outline.flush() or not self._notes.flush():
+                    self._codex.warn(
+                        "大纲或笔记尚未保存，未发送创作任务；请先处理保存冲突或导出副本。"
+                    )
                     return
                 self._sync_codex_editor()
                 self._codex.start(display_text, request_text=normalized)
@@ -1777,8 +1808,8 @@ class MockNovelStudioFacade(QObject):
     @Slot(str, result=str)
     def openProject(self, root: str) -> str:
         """Open a real project read-only. Returns an error message or empty."""
-        if not self._outline.flush():
-            return "大纲尚未保存，请先处理保存冲突或导出副本"
+        if not self._outline.flush() or not self._notes.flush():
+            return "大纲或笔记尚未保存，请先处理保存冲突或导出副本"
         if self._real_agent is not None and self._real_agent.is_busy:
             return "Harness 正在运行，完成前不能切换项目"
         try:
@@ -1827,7 +1858,7 @@ class MockNovelStudioFacade(QObject):
 
     @Slot()
     def closeProject(self) -> None:
-        if not self._outline.flush():
+        if not self._outline.flush() or not self._notes.flush():
             return
         if self._real_agent is not None and self._real_agent.is_busy:
             self._real_agent.warn("Harness 运行期间不能关闭项目")
@@ -1882,8 +1913,8 @@ class MockNovelStudioFacade(QObject):
         return self._create_project_at(Path(local), title)
 
     def _create_project_at(self, parent: Path, title: str) -> str:
-        if not self._outline.flush():
-            return "大纲尚未保存，请先处理保存冲突或导出副本"
+        if not self._outline.flush() or not self._notes.flush():
+            return "大纲或笔记尚未保存，请先处理保存冲突或导出副本"
         if self._real_agent is not None and self._real_agent.is_busy:
             return "Harness 正在运行，完成前不能新建项目"
         normalized_title = (title or "").strip()
@@ -2485,8 +2516,8 @@ class MockNovelStudioFacade(QObject):
     def confirmWriterInput(self, item_id: str) -> bool:
         if self._codex is None:
             return False
-        if not self._outline.flush():
-            self._codex.warn("大纲尚未保存，请先处理冲突；正文模型未启动。")
+        if not self._outline.flush() or not self._notes.flush():
+            self._codex.warn("大纲或笔记尚未保存，请先处理冲突；正文模型未启动。")
             return False
         self._sync_codex_editor()
         return self._codex.confirm_writer_input(item_id)

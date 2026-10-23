@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from PySide6.QtQuick import QQuickWindow
+from pytestqt.qtbot import QtBot
 
 from ai_novel_studio.ui_qml.bridge import windows_backdrop as wb
 
@@ -18,7 +19,7 @@ def test_unknown_kind_rejected() -> None:
     assert wb.apply_system_backdrop(None, "sparkle") is False
 
 
-def test_apply_never_raises_and_returns_bool() -> None:
+def test_apply_never_raises_and_returns_bool(qtbot: QtBot) -> None:
     window = QQuickWindow()
     window.resize(320, 240)
     try:

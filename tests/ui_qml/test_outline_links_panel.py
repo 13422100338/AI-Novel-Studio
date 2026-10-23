@@ -43,9 +43,9 @@ def panel(tmp_path, qtbot):
     assert engine.rootObjects()
     window = engine.rootObjects()[0]
     facade.setActiveNav("outline")
-    editor = _find(window.contentItem(), "outlineEditor")
-    editor.setProperty("cursorPosition", bridge.state["text"].index("25."))
-    QMetaObject.invokeMethod(_find(window.contentItem(), "outlineLinksButton"), "clicked")
+    heading = next(h for h in bridge.state["headings"] if h["title"].startswith("25."))
+    bridge.selectHeading(heading["line"])
+    QMetaObject.invokeMethod(_find(window.contentItem(), "outlinePage"), "openLinks")
     qtbot.waitUntil(lambda: _find(window.contentItem(), "outlineLinkInsertButton") is not None)
     yield project, first, second, facade, bridge, window, warnings
     facade.closeProject()

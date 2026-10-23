@@ -28,6 +28,7 @@ from ai_novel_studio.ui_qml.bridge.harness_agent_bridge import (
 )
 from ai_novel_studio.ui_qml.bridge.mock_novel_studio_facade import MockNovelStudioFacade
 from ai_novel_studio.ui_qml.bridge.model_settings_bridge import ModelSettingsBridge
+from ai_novel_studio.ui_qml.bridge.outline_markdown_view import OutlineMarkdownView
 from ai_novel_studio.ui_qml.bridge.theme_provider import ThemeProvider
 from ai_novel_studio.ui_qml.bridge.windows_backdrop import (
     apply_immersive_dark_mode,
@@ -248,6 +249,7 @@ def register_frontend_types(
     engine.rootContext().setContextProperty("Facade", facade)
     engine.rootContext().setContextProperty("Theme", theme)
     engine.rootContext().setContextProperty("ChatMarkup", ChatMarkdown(engine))
+    engine.rootContext().setContextProperty("OutlineMarkup", OutlineMarkdownView(engine))
     codex_controls = CodexControlsBridge(engine)
     _CODEX_CONTROLS[id(engine)] = codex_controls
     engine.rootContext().setContextProperty("CodexSettings", codex_controls)

@@ -135,7 +135,10 @@ def test_slash_palette_filters_and_inserts_command_without_sending(qtbot):
     assert not menu.property("visible")
     input_item.setProperty("text", "/model")
     QMetaObject.invokeMethod(composer, "submit")
-    assert window.findChild(object, "creativeAgentPanel").property("controlsExpanded")
+    qtbot.waitUntil(
+        lambda: window.findChild(object, "composerCodexModelComboPopup").property("visible")
+    )
+    assert not window.findChild(object, "creativeAgentPanel").property("controlsExpanded")
 
 
 def test_slash_palette_supports_keyboard_selection(qtbot):

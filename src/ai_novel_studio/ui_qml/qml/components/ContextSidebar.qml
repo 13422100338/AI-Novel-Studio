@@ -5,6 +5,10 @@ import QtQuick.Layouts
 
 Item {
     id: root
+    readonly property bool outlineMode: Facade.activeNav === "outline"
+    readonly property bool notesMode: Facade.activeNav === "notes"
+    onOutlineModeChanged: { search.text = ""; Facade.setChapterFilter("") }
+    onNotesModeChanged: { search.text = ""; Facade.setChapterFilter("") }
 
     ColumnLayout {
         anchors.fill: parent
@@ -30,7 +34,8 @@ Item {
                 }
             }
             Text {
-                text: Facade.chapterCount + " 章"
+                text: root.notesMode ? Facade.notes.state.documents.length + " 篇"
+                    : root.outlineMode ? Facade.outline.state.headings.length + " 节" : Facade.chapterCount + " 章"
                 font.pixelSize: 12
                 color: Theme.tokens.color.textSecondary
             }
@@ -75,12 +80,27 @@ Item {
             id: search
             Layout.fillWidth: true
             objectName: "sidebarSearch"
-            onTextChanged: Facade.setChapterFilter(text)
+            onTextChanged: { if (!root.outlineMode && !root.notesMode) Facade.setChapterFilter(text) }
+        }
+
+        OutlineNavigator {
+            visible: root.outlineMode
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            query: search.text
+        }
+
+        NotesNavigator {
+            visible: root.notesMode
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            query: search.text
         }
 
         ListView {
             id: chapterList
             objectName: "chapterList"
+            visible: !root.outlineMode && !root.notesMode
             Layout.fillWidth: true
             Layout.fillHeight: true
             clip: true
@@ -148,6 +168,7 @@ Item {
         }
 
         GridLayout {
+            visible: !root.outlineMode && !root.notesMode
             Layout.fillWidth: true
             columns: 2
             columnSpacing: 6
@@ -202,13 +223,10 @@ Item {
         }
     }
 
-    Dialog {
+    StudioDialog {
         id: newVolumeDialog
         objectName: "newVolumeDialog"
         title: "新建卷"
-        modal: true
-        width: 360
-        standardButtons: Dialog.Cancel
 
         function submit() {
             var error = Facade.createVolume(volumeNameInput.text)
@@ -223,29 +241,49 @@ Item {
         onOpened: {
             volumeNameInput.text = ""
             volumeError.text = ""
+            Qt.callLater(function() { volumeNameInput.forceActiveFocus() })
         }
 
-        footer: DialogButtonBox {
-            Button {
-                text: "创建"
-                enabled: volumeNameInput.text.trim() !== ""
-                onClicked: newVolumeDialog.submit()
-            }
-            Button {
-                text: "取消"
-                onClicked: newVolumeDialog.reject()
+        footer: Item {
+            implicitHeight: 70
+            RowLayout {
+                anchors.right: parent.right
+                anchors.rightMargin: 22
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: 10
+                AppButton {
+                    text: "取消"
+                    ghost: true
+                    onClicked: newVolumeDialog.reject()
+                }
+                AppButton {
+                    objectName: "createVolumeConfirmButton"
+                    text: "创建卷"
+                    primary: true
+                    enabled: volumeNameInput.text.trim() !== ""
+                    onClicked: newVolumeDialog.submit()
+                }
             }
         }
 
-        ColumnLayout {
-            width: parent.width
-            spacing: 8
+        contentItem: ColumnLayout {
+            spacing: 14
+            Text {
+                Layout.fillWidth: true
+                text: "为故事添加一卷，继续整理卷内的章节。"
+                wrapMode: Text.Wrap
+                font.pixelSize: 13
+                color: Theme.tokens.color.textSecondary
+            }
             Label { text: "卷名"; color: Theme.tokens.color.textSecondary }
-            TextField {
+            AppTextField {
                 id: volumeNameInput
                 objectName: "newVolumeNameInput"
                 Layout.fillWidth: true
+                implicitHeight: 42
+                font.pixelSize: 14
                 placeholderText: "例如：第二卷 · 远行"
+                onAccepted: { if (text.trim() !== "") newVolumeDialog.submit() }
             }
             Label {
                 id: volumeError
@@ -257,13 +295,10 @@ Item {
         }
     }
 
-    Dialog {
+    StudioDialog {
         id: newChapterDialog
         objectName: "newChapterDialog"
         title: "新建章节"
-        modal: true
-        width: 380
-        standardButtons: Dialog.Cancel
 
         function submit() {
             var error = Facade.createChapter(
@@ -280,36 +315,61 @@ Item {
             chapterTitleInput.text = ""
             chapterNumberInput.text = ""
             chapterError.text = ""
+            Qt.callLater(function() { chapterTitleInput.forceActiveFocus() })
         }
 
-        footer: DialogButtonBox {
-            Button {
-                text: "创建"
-                enabled: chapterTitleInput.text.trim() !== ""
-                onClicked: newChapterDialog.submit()
-            }
-            Button {
-                text: "取消"
-                onClicked: newChapterDialog.reject()
+        footer: Item {
+            implicitHeight: 70
+            RowLayout {
+                anchors.right: parent.right
+                anchors.rightMargin: 22
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: 10
+                AppButton {
+                    text: "取消"
+                    ghost: true
+                    onClicked: newChapterDialog.reject()
+                }
+                AppButton {
+                    objectName: "createChapterConfirmButton"
+                    text: "创建章节"
+                    primary: true
+                    enabled: chapterTitleInput.text.trim() !== ""
+                    onClicked: newChapterDialog.submit()
+                }
             }
         }
 
-        ColumnLayout {
-            width: parent.width
-            spacing: 8
+        contentItem: ColumnLayout {
+            spacing: 14
+            Text {
+                Layout.fillWidth: true
+                text: "为当前卷添加一个章节，随后即可编辑正文。"
+                wrapMode: Text.Wrap
+                font.pixelSize: 13
+                color: Theme.tokens.color.textSecondary
+            }
             Label { text: "章节标题"; color: Theme.tokens.color.textSecondary }
-            TextField {
+            AppTextField {
                 id: chapterTitleInput
                 objectName: "newChapterTitleInput"
                 Layout.fillWidth: true
+                implicitHeight: 42
+                font.pixelSize: 14
                 placeholderText: "例如：雾中的来客"
+                onAccepted: { if (text.trim() !== "") newChapterDialog.submit() }
             }
             Label { text: "章节编号（可选）"; color: Theme.tokens.color.textSecondary }
-            TextField {
+            AppTextField {
                 id: chapterNumberInput
                 objectName: "newChapterNumberInput"
                 Layout.fillWidth: true
+                implicitHeight: 42
+                font.pixelSize: 14
                 placeholderText: "例如：第1章"
+                onAccepted: {
+                    if (chapterTitleInput.text.trim() !== "") newChapterDialog.submit()
+                }
             }
             Label {
                 id: chapterError

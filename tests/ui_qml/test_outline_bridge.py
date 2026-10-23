@@ -1,6 +1,7 @@
 import pytest
 from PySide6.QtCore import QUrl
 
+from ai_novel_studio.infrastructure.storage.chapter_repository import ChapterRepository
 from ai_novel_studio.infrastructure.storage.outline_repository import OutlineRepository
 from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
 from ai_novel_studio.ui_qml.bridge.outline_bridge import OutlineBridge
@@ -38,6 +39,40 @@ def test_edit_is_autosaved(workspace, qtbot):
     bridge.edit("# 第一部\n\n25. 政变\n")
     qtbot.waitUntil(lambda: bridge.state["dirty"] is False, timeout=4000)
     assert OutlineRepository(project).read(bridge.state["currentId"]).content.endswith("25. 政变\n")
+
+
+def test_note_reference_is_versioned_markdown_and_keeps_the_note_unchanged(workspace):
+    from ai_novel_studio.infrastructure.storage.note_repository import NoteRepository
+
+    project, bridge = workspace
+    note = NoteRepository(project).create("场景[细纲]", "作者的原始笔记")
+    assert bridge.newDocument("全书")
+    bridge.edit("# 全书\n\n## 事件一\n必须发生的事。\n")
+    assert bridge.flush()
+    bridge.set_note_documents([{"id": note.id, "title": note.title}])
+    assert bridge.insertNoteLink(note.id, 3)
+    snapshot = OutlineRepository(project).read(bridge.state["currentId"])
+    assert f"(novel://note/{note.id})" in snapshot.content
+    assert "场景\\[细纲\\]" in snapshot.content
+    assert bridge.references[0]["refs"][0]["title"] == note.title
+    assert NoteRepository(project).read(note.id).content == "作者的原始笔记"
+    assert not bridge.insertNoteLink("../../other-project", 3)
+
+
+def test_outline_note_link_opens_the_note_without_selecting_it_for_writing(tmp_path, qapp):
+    from ai_novel_studio.infrastructure.storage.note_repository import NoteRepository
+    from ai_novel_studio.ui_qml.bridge.mock_novel_studio_facade import MockNovelStudioFacade
+
+    project = ProjectRepository.create(tmp_path / "book", "笔记链接")
+    note = NoteRepository(project).create("细纲", "只讨论，不生成")
+    OutlineRepository(project).create("全书", f"## 事件\n[细纲](novel://note/{note.id})\n")
+    facade = MockNovelStudioFacade()
+    assert facade.openProject(str(project.layout.root)) == ""
+    assert facade.outline.references[0]["refs"][0]["available"] is True
+    assert facade.openOutlineNote(note.id)
+    assert facade.activeNav == "notes" and facade.notes.state["currentId"] == note.id
+    assert facade.notes.current_selection.mode == "NONE"
+    facade.closeProject()
 
 
 def test_failed_save_blocks_document_switch_and_keeps_exportable_buffer(workspace, tmp_path):
@@ -133,3 +168,50 @@ def test_same_project_structure_refresh_keeps_pending_outline_edits(workspace):
     assert bridge.state["currentId"] == current
     assert bridge.state["text"] == "尚未保存的事件设计"
     assert bridge.state["dirty"]
+
+
+def test_navigation_includes_child_scenes_and_groups_repeated_chapters(workspace):
+    project, bridge = workspace
+    chapter = ChapterRepository(project).create_chapter(
+        project.list_volumes()[0].id, "旧信", "1", "正式原文。"
+    )
+    assert bridge.newDocument("总览")
+    bridge.edit(
+        "# 全书\n## 第一卷\n### 事件一\n#### 场景一\n细节一。\n"
+        "#### 场景二\n细节二。\n### 事件二\n后续。\n"
+    )
+    assert bridge.flush()
+    for title in ("场景一", "场景二"):
+        line = next(h["line"] for h in bridge.state["headings"] if h["title"] == title)
+        assert bridge.insertChapterLink(chapter.id, line)
+    event = next(h for h in bridge.state["headings"] if h["title"] == "事件一")
+    bridge.selectHeading(event["line"])
+    assert len(bridge.navigation["chapters"]) == 1
+    assert bridge.navigation["chapters"][0]["linkCount"] == 2
+    assert not bridge.navigation["chapters"][0]["confirmed"]
+    scene = next(h for h in bridge.state["headings"] if h["title"] == "场景二")
+    bridge.selectHeading(scene["line"])
+    assert bridge.navigation["chapters"][0]["linkCount"] == 1
+    following = next(h for h in bridge.state["headings"] if h["title"] == "事件二")
+    bridge.selectHeading(following["line"])
+    assert bridge.navigation["chapters"] == []
+
+
+def test_navigation_uses_utf16_and_resets_when_switching_documents(workspace):
+    _, bridge = workspace
+    assert bridge.newDocument("第一份")
+    source = "# 全书😀\n\n第一段🌊\n\n## 第二事件\n正文。"
+    bridge.edit(source)
+    assert bridge.flush()
+    heading = bridge.state["headings"][-1]
+    bridge.selectHeading(heading["line"])
+    expected = len(source[: source.index("## 第二事件")].encode("utf-16-le")) // 2
+    assert bridge.navigation["sourcePosition"] == expected
+    assert bridge.navigation["sourceLine"] == heading["line"]
+    bridge.setSourceCursor(10000)
+    assert bridge.navigation["sourcePosition"] == expected
+    bridge.edit("短")
+    assert bridge.navigation["sourcePosition"] == 1
+    assert bridge.newDocument("第二份")
+    assert bridge.navigation["sourcePosition"] == 0
+    assert bridge.navigation["chapters"] == []

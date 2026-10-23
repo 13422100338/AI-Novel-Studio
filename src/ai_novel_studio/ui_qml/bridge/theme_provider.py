@@ -37,7 +37,7 @@ def _material(theme_name: str) -> dict[str, str]:
             "glassFillStrong": "#EBFBF8F0",
             "glassBorderHighlight": "#66FFFFFF",
             "glassBorderShadow": "#40D8D0C0",
-            "paperFill": "#FFFDF7",
+            "paperFill": "#FFFEFA",
             "noiseOpacity": "0.025",
             # Real-time acrylic (Visual V0 lab only):
             "acrylicTint": "#FBF8F0",
@@ -151,20 +151,20 @@ def _agent_colors() -> dict[str, str]:
 def _palette(theme_name: str) -> dict[str, object]:
     if theme_name == "paper":
         colors = {
-            "bgCanvas": "#F0E6DA",
-            "bgSurface": "#FAF6F0",
-            "bgSidebar": "#EFE5D8",
-            "bgEditor": "#FFFAF1",
+            "bgCanvas": "#F4F2EE",
+            "bgSurface": "#FBFAF7",
+            "bgSidebar": "#F1EFEB",
+            "bgEditor": "#FFFEFA",
             "scrim": "#80000000",
-            "textPrimary": "#3C2E25",
-            "textSecondary": "#807163",
-            "border": "#E0D3C3",
-            "accent": "#915E31",
+            "textPrimary": "#292722",
+            "textSecondary": "#6E6B65",
+            "border": "#E4E0D8",
+            "accent": "#5C685B",
             "success": "#3E7C4F",
             "warning": "#B7791F",
             "danger": "#A6453F",
-            "hover": "#EFE4D7",
-            "pressed": "#EAD7BD",
+            "hover": "#EDEBE5",
+            "pressed": "#E2E6DD",
         }
     elif theme_name == "dark":
         colors = {

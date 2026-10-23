@@ -49,6 +49,7 @@ def test_outline_page_edits_and_saves_through_real_qml(shell, qtbot):
     editor = _find(window.contentItem(), "outlineEditor")
     save = _find(window.contentItem(), "outlineSaveButton")
     assert editor is not None and save is not None
+    QMetaObject.invokeMethod(_find(window.contentItem(), "outlineSourceToggle"), "clicked")
     assert editor.property("visible")
     editor.setProperty("text", editor.property("text").replace("艾瑞克视角", "艾瑞克的限知视角"))
     qtbot.waitUntil(lambda: bridge.state["dirty"])
@@ -95,7 +96,7 @@ def test_outline_conflict_blocks_project_close_and_navigation(shell, qtbot):
 
 def test_outline_navigation_is_a_visible_shell_entry(shell):
     project, facade, bridge, window, warnings = shell
-    button = _find(window.contentItem(), "nav-outline")
+    button = _find(window.contentItem(), "mode-outline")
     assert button is not None
     assert button.property("text") == "大纲"
     facade.setActiveNav("writing")

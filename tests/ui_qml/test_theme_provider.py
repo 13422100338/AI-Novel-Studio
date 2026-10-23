@@ -7,7 +7,7 @@ def test_default_theme_is_paper() -> None:
     theme = ThemeProvider()
     assert theme.property("themeName") == "paper"
     tokens = theme.property("tokens")
-    assert tokens["color"]["bgCanvas"] == "#F0E6DA"
+    assert tokens["color"]["bgCanvas"] == "#F4F2EE"
     assert tokens["spacing"]["lg"] == 16
     assert tokens["radius"]["r16"] == 16
     assert tokens["duration"]["panel"] == 220

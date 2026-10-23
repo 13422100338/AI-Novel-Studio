@@ -19,11 +19,20 @@ Item {
         anchors.margins: 20
         spacing: 14
 
-        Text {
-            text: "模型与连接"
-            font.pixelSize: 22
-            font.bold: true
-            color: Theme.tokens.color.textPrimary
+        RowLayout {
+            Layout.fillWidth: true
+            Text {
+                text: "设置"
+                font.pixelSize: 22
+                font.bold: true
+                color: Theme.tokens.color.textPrimary
+            }
+            Item { Layout.fillWidth: true }
+            AppButton {
+                objectName: "appearanceSettingsButton"
+                text: "外观与交互"
+                onClicked: appearanceDialog.open()
+            }
         }
 
         Rectangle {
@@ -74,6 +83,38 @@ Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
             sourceComponent: root.bridgeReady ? settingsForm : null
+        }
+    }
+
+    StudioDialog {
+        id: appearanceDialog
+        objectName: "appearanceSettingsDialog"
+        title: "外观与交互"
+        contentItem: ColumnLayout {
+            spacing: 18
+            Text { text: "主题"; font.pixelSize: 13; color: Theme.tokens.color.textSecondary }
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+                Repeater {
+                    model: [{value:"paper",label:"Paper"},{value:"light",label:"浅色"},{value:"dark",label:"深色"}]
+                    AppButton {
+                        required property var modelData
+                        objectName: "appearance-theme-" + modelData.value
+                        Layout.fillWidth: true
+                        text: modelData.label
+                        selected: Theme.themeName === modelData.value
+                        onClicked: Theme.setTheme(modelData.value)
+                    }
+                }
+            }
+            NoteCheckBox {
+                objectName: "appearanceReduceMotion"
+                text: "减少动态效果"
+                checked: Facade.reduceMotion
+                onClicked: Facade.setReduceMotion(checked)
+            }
+            AppButton { text: "完成"; Layout.alignment: Qt.AlignRight; onClicked: appearanceDialog.close() }
         }
     }
 

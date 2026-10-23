@@ -46,9 +46,6 @@ Item {
         // stay centered -- same selection language as the chapter list.
         Repeater {
             model: [
-                { id: "writing", kind: "writing", label: "写作" },
-                { id: "outline", kind: "outline", label: "大纲" },
-                { id: "library", kind: "library", label: "旧资料" },
                 { id: "settings", kind: "settings", label: "设置" }
             ]
             delegate: IconButton {
@@ -59,7 +56,6 @@ Item {
                 iconKind: modelData.kind
                 text: modelData.label
                 selected: Facade.activeNav === modelData.id
-                    || (modelData.id === "library" && Facade.activeNav === "advanced")
                 onClicked: Facade.setActiveNav(modelData.id)
             }
         }

@@ -76,12 +76,13 @@ ColumnLayout {
 
     Rectangle {
         id: inputBox
+        objectName: "agentComposerBox"
         Layout.fillWidth: true
-        Layout.preferredHeight: 112
+        Layout.preferredHeight: 144
         color: Theme.tokens.color.bgEditor
         border.color: input.activeFocus ? Theme.tokens.color.accent : Theme.tokens.color.border
         border.width: input.activeFocus ? 2 : 1
-        radius: Theme.tokens.radius.r12
+        radius: 20
 
         TextArea {
             id: input
@@ -90,7 +91,7 @@ ColumnLayout {
             anchors.margins: 10
             anchors.bottomMargin: 42
             // Room for the embedded send circle at the right edge.
-            anchors.rightMargin: Facade.agentBusy ? 100 : 48
+            anchors.rightMargin: 10
             placeholderText: Facade.codexCanSteer ? "给当前任务追加要求…" : "向 AI 助手提问，或告诉它接下来怎么写…"
             font.pixelSize: 14
             placeholderTextColor: Theme.tokens.color.textSecondary
@@ -160,16 +161,14 @@ ColumnLayout {
             anchors.bottomMargin: 8
             property bool canSend: input.text.trim() !== "" && (!Facade.agentBusy || Facade.codexCanSteer)
             opacity: canSend ? 1.0 : 0.4
-            color: sendArea.containsMouse
-                ? Qt.darker(Theme.tokens.color.accent, 1.12)
-                : Theme.tokens.color.accent
+            color: Theme.tokens.color.textPrimary
 
             Text {
                 anchors.centerIn: parent
                 text: Facade.codexCanSteer ? "＋" : "↑"
                 font.pixelSize: 15
                 font.bold: true
-                color: "white"
+                color: Theme.tokens.color.bgSurface
             }
             MouseArea {
                 id: sendArea
@@ -185,27 +184,57 @@ ColumnLayout {
         AppButton {
             id: attachmentButton
             objectName: "agentAttachmentButton"
-            text: "＋ 附件"
-            visible: Facade.codexEnabled
+            text: "＋"
+            implicitWidth: 32
+            implicitHeight: 32
+            Accessible.name: "添加材料、笔记或写作指令"
             enabled: !Facade.agentBusy
             ghost: true
             anchors.left: parent.left
             anchors.leftMargin: 6
             anchors.bottom: parent.bottom
             anchors.bottomMargin: 6
-            onClicked: attachmentDialog.open()
+            onClicked: materialsMenu.open()
         }
-        AppButton {
-            objectName: "writingMenuButton"
-            text: "/ 写作"
-            ghost: true
-            enabled: !Facade.agentBusy
-            anchors.left: attachmentButton.visible ? attachmentButton.right : parent.left
-            anchors.bottom: attachmentButton.bottom
-            onClicked: {
-                root.menuFromSlash = false
-                root.commandIndex = 0
-                writingMenu.open()
+        Popup {
+            id: materialsMenu
+            objectName: "composerMaterialsMenu"
+            x: 6
+            y: -height - 8
+            width: 240
+            padding: 10
+            focus: true
+            closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+            background: Rectangle { color: Theme.tokens.color.bgSurface; border.color: Theme.tokens.color.border; radius: 14 }
+            contentItem: ColumnLayout {
+                spacing: 4
+                AppButton {
+                    objectName: "composerAttachAction"
+                    text: "添加附件…"
+                    Layout.fillWidth: true
+                    ghost: true
+                    visible: Facade.codexEnabled
+                    onClicked: { materialsMenu.close(); attachmentDialog.open() }
+                }
+                AppButton {
+                    id: writingButton
+                    objectName: "writingMenuButton"
+                    text: "/ 写作"
+                    ghost: true
+                    enabled: !Facade.agentBusy
+                    Layout.fillWidth: true
+                    onClicked: {
+                        materialsMenu.close()
+                        root.menuFromSlash = false
+                        root.commandIndex = 0
+                        writingMenu.open()
+                    }
+                }
+                NotesInputPicker { id: notePickerAction; Layout.fillWidth: true }
+            }
+            Connections {
+                target: notePickerAction
+                function onClicked() { materialsMenu.close() }
             }
         }
         Popup {
@@ -253,6 +282,7 @@ ColumnLayout {
             }
         }
         AppButton {
+            id: stopButton
             objectName: "agentStopButton"
             text: "停止"
             ghost: true
@@ -262,10 +292,21 @@ ColumnLayout {
             anchors.verticalCenter: sendButton.verticalCenter
             onClicked: root.stopRequested()
         }
+        CodexControls {
+            id: composerModels
+            visible: Facade.codexEnabled
+            anchors.right: Facade.agentBusy ? stopButton.left : sendButton.left
+            anchors.bottom: parent.bottom
+            anchors.bottomMargin: 9
+            anchors.rightMargin: 4
+            width: Math.min(228, implicitWidth, parent.width - (Facade.agentBusy ? 150 : 86))
+            compact: true
+        }
     }
 
     Text {
         Layout.fillWidth: true
+        visible: !Facade.codexEnabled
         text: "Enter 发送 · / 写作指令 · Shift + Enter 换行"
         font.pixelSize: 11
         color: Theme.tokens.color.textSecondary
@@ -282,7 +323,11 @@ ColumnLayout {
             return
         }
         input.text = ""
-        if (["/model", "/new", "/compact"].indexOf(text.trim()) >= 0 && Facade.codexEnabled) {
+        if (text.trim() === "/model" && Facade.codexEnabled) {
+            composerModels.openModels()
+            return
+        }
+        if (["/new", "/compact"].indexOf(text.trim()) >= 0 && Facade.codexEnabled) {
             root.sessionCommand(text.trim().slice(1))
             return
         }

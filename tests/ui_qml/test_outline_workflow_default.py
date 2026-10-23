@@ -67,10 +67,10 @@ def test_missing_outline_hint_opens_editor_and_hides_after_registration(default_
     qtbot.waitUntil(lambda: not hint.property("visible"))
 
 
-def test_legacy_views_are_grouped_but_remain_reachable(default_ui):
+def test_legacy_entry_is_removed_but_internal_compatibility_views_still_load(default_ui):
     window, facade, _ = default_ui
     nav = find(window.contentItem(), "nav-library")
-    assert nav.property("text") == "旧资料"
+    assert nav is None
     assert find(window.contentItem(), "nav-advanced") is None
     facade.setActiveNav("library")
     button = find(window.contentItem(), "openLegacyAdvancedButton")

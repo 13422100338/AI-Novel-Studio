@@ -17,12 +17,12 @@ ApplicationWindow {
     title: "AI Novel Studio"
     // Production-shell system backdrop (DWM Desktop Acrylic): the Python
     // bootstrap exposes UseNativeGlass only when the machine supports it.
-    // The window goes frameless + transparent only while the bridge reports
-    // nativeActive; every failure path keeps the opaque theme canvas.
+    // The optional material becomes transparent only while the bridge reports
+    // nativeActive; themed window controls also work on the opaque canvas.
     property bool nativeGlass: typeof UseNativeGlass !== "undefined" && UseNativeGlass
     readonly property bool nativeActive:
         typeof NativeGlassBridge !== "undefined" && NativeGlassBridge.nativeActive
-    flags: window.nativeGlass ? Qt.FramelessWindowHint : Qt.Window
+    flags: Qt.Window | Qt.FramelessWindowHint
     color: window.nativeGlass && window.nativeActive
         ? "transparent" : Theme.tokens.color.bgCanvas
     font.family: Theme.tokens.font.ui
@@ -31,7 +31,10 @@ ApplicationWindow {
     property bool useWebEngine: WritingPageUseWebEngine
     property string lastEditorChapterId: ""
     readonly property bool outlineActive: Facade.activeNav === "outline"
-    readonly property string activeSaveState: outlineActive
+    readonly property bool notesActive: Facade.activeNav === "notes"
+    readonly property string activeSaveState: notesActive
+        ? (Facade.notes.state.dirty ? (Facade.notes.state.error ? "CONFLICT" : "DIRTY") : "CLEAN")
+        : outlineActive
         ? (Facade.outline.state.dirty ? (Facade.outline.state.error ? "CONFLICT" : "DIRTY") : "CLEAN")
         : Facade.editorState
 
@@ -39,6 +42,9 @@ ApplicationWindow {
         if (!Facade.outline.flush()) {
             close.accepted = false
             Facade.setActiveNav("outline")
+        } else if (!Facade.notes.flush()) {
+            close.accepted = false
+            Facade.setActiveNav("notes")
         }
     }
 
@@ -52,6 +58,7 @@ ApplicationWindow {
         const map = {
             "writing": "写作",
             "outline": "大纲",
+            "notes": "笔记",
             "library": "旧资料",
             "advanced": "旧资料 · 高级视图",
             "settings": "设置"
@@ -63,6 +70,7 @@ ApplicationWindow {
         const map = {
             "writing": 0,
             "outline": 4,
+            "notes": 5,
             "library": 1,
             "advanced": 2,
             "settings": 3
@@ -117,22 +125,28 @@ ApplicationWindow {
         washEnabled: false
     }
 
+    WindowResizeHandles { targetWindow: window }
+
     ColumnLayout {
         anchors.fill: parent
         spacing: 0
 
-        // Custom title bar: only exists on the frameless native-glass shell.
-        // Drag moves the window; the three buttons use the window API.
+        // Theme-matched chrome keeps the desktop caption in the same paper
+        // language as the footer; system move/resize still use native APIs.
         Item {
             id: glassTitleBar
             objectName: "glassTitleBar"
-            visible: window.nativeGlass
+            visible: true
             Layout.fillWidth: true
-            Layout.preferredHeight: 40
+            Layout.preferredHeight: 36
+
+            Rectangle { objectName: "windowTitleSurface"; anchors.fill: parent; color: Theme.tokens.color.bgSurface }
+            Rectangle { anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom; height: 1; color: Theme.tokens.color.border }
 
             MouseArea {
                 anchors.fill: parent
                 acceptedButtons: Qt.LeftButton
+                onDoubleClicked: window.visibility === Window.Maximized ? window.showNormal() : window.showMaximized()
                 onPressed: {
                     if (typeof window.startSystemMove === "function") {
                         window.startSystemMove()
@@ -152,23 +166,24 @@ ApplicationWindow {
                     font.bold: true
                     color: Theme.tokens.color.textPrimary
                 }
-                Text {
-                    text: "F1"
-                    font.pixelSize: 11
-                    color: Theme.tokens.color.textSecondary
-                }
 
                 Item { Layout.fillWidth: true }
 
                 AppButton {
                     objectName: "glassMinButton"
                     text: "—"
+                    Accessible.name: "最小化"
+                    implicitWidth: 36
+                    implicitHeight: 28
                     ghost: true
                     onClicked: window.showMinimized()
                 }
                 AppButton {
                     objectName: "glassMaxButton"
                     text: window.visibility === Window.Maximized ? "❐" : "□"
+                    Accessible.name: "最大化或还原"
+                    implicitWidth: 36
+                    implicitHeight: 28
                     ghost: true
                     onClicked: window.visibility === Window.Maximized
                         ? window.showNormal() : window.showMaximized()
@@ -176,9 +191,22 @@ ApplicationWindow {
                 AppButton {
                     objectName: "glassCloseButton"
                     text: "×"
+                    Accessible.name: "关闭窗口"
+                    implicitWidth: 36
+                    implicitHeight: 28
                     ghost: true
                     onClicked: window.close()
                 }
+            }
+        }
+
+        Item {
+            objectName: "workspaceToolbar"
+            Layout.fillWidth: true
+            Layout.preferredHeight: 46
+            WorkspaceTabs {
+                anchors.centerIn: parent
+                width: Math.min(300, parent.width - 32)
             }
         }
 
@@ -188,12 +216,6 @@ ApplicationWindow {
             Layout.margins: 12
             spacing: 10
 
-            NavigationRail {
-                Layout.preferredWidth: 64
-                Layout.fillHeight: true
-                backdropSource: backgroundLayer
-            }
-
             // Sidebar host: flat opaque panel (clean modern shell). The
             // backdrop wiring is kept so the native-glass experiment and the
             // structural shell contract stay intact.
@@ -202,7 +224,8 @@ ApplicationWindow {
             AcrylicSurface {
                 id: sidebarHost
                 objectName: "sidebarHost"
-                Layout.preferredWidth: window.sidebarVisible ? (window.width < 1280 ? 240 : 280) : 0
+                Layout.preferredWidth: window.sidebarVisible
+                    ? (window.width < 1280 ? (window.outlineActive ? 190 : 240) : 280) : 0
                 Layout.fillHeight: true
                 sourceItem: backgroundLayer
                 opaqueFallback: true
@@ -222,29 +245,39 @@ ApplicationWindow {
                 Layout.fillHeight: true
                 color: Theme.tokens.color.bgCanvas
 
-                StackLayout {
+                ColumnLayout {
                     anchors.fill: parent
-                    currentIndex: window.navIndex(Facade.activeNav)
+                    spacing: 6
+                    StackLayout {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        currentIndex: window.navIndex(Facade.activeNav)
 
-                    WritingPage {
-                        id: writingPage
-                        useWebEngine: window.useWebEngine
-                        backdropSource: backgroundLayer
+                        WritingPage {
+                            id: writingPage
+                            useWebEngine: window.useWebEngine
+                            backdropSource: backgroundLayer
+                        }
+
+                        MemoryLibraryPage {}
+
+                        AdvancedCreationPage {}
+
+                        SettingsPage {}
+
+                        OutlinePage { id: outlinePage }
+                        NotesPage {}
                     }
-
-                    MemoryLibraryPage {}
-
-                    AdvancedCreationPage {}
-
-                    SettingsPage {}
-
-                    OutlinePage {}
                 }
             }
 
             AgentDock {
                 open: Facade.aiDrawerOpen
                 windowWidth: window.width
+                defaultWidth: window.width < 1280 ? 330 : 380
+                // Reserve a usable document column even after dragging the dock wider.
+                maxWidth: Math.max(320, Math.min(window.width * 0.45,
+                    window.width - sidebarHost.width - 408))
                 backdropSource: backgroundLayer
                 onClosed: Facade.toggleAiDrawer(false)
             }
@@ -253,6 +286,7 @@ ApplicationWindow {
 
         Rectangle {
             id: statusBar
+            objectName: "windowStatusSurface"
             Layout.fillWidth: true
             Layout.preferredHeight: 40
             color: Theme.tokens.color.bgSurface
@@ -271,18 +305,28 @@ ApplicationWindow {
                     onClicked: window.sidebarVisible = !window.sidebarVisible
                 }
 
+                AppButton {
+                    objectName: "statusMoreButton"
+                    text: "状态 ⌄"
+                    ghost: true
+                    onClicked: moreMenu.open()
+                }
+
                 StatusChip {
                     objectName: "wordCountStatusChip"
-                    label: window.outlineActive ? "大纲" : "字数"
-                    value: window.outlineActive ? Facade.outline.state.text.length.toLocaleString() + " 字符"
+                    label: window.notesActive ? "笔记" : window.outlineActive ? "大纲" : "字数"
+                    value: window.notesActive ? Facade.notes.state.text.length.toLocaleString() + " 字符"
+                        : window.outlineActive ? Facade.outline.state.text.length.toLocaleString() + " 字符"
                         : window.useWebEngine ? Facade.webEngineWordCountText : Facade.currentWordCountText
                     tone: "accent"
                 }
                 StatusChip {
                     objectName: "autoSaveStatusChip"
-                    label: "自动保存"
-                    value: window.outlineActive && !Facade.outline.state.loaded ? "未载入" : window.autoSaveText(window.activeSaveState)
-                    tone: window.outlineActive && !Facade.outline.state.loaded ? "neutral" : window.autoSaveTone(window.activeSaveState)
+                    label: window.notesActive ? "笔记保存" : "自动保存"
+                    value: window.notesActive ? (Facade.notes.state.loaded ? (Facade.notes.state.dirty ? "未保存" : "已保存") : "未载入")
+                        : window.outlineActive && !Facade.outline.state.loaded ? "未载入" : window.autoSaveText(window.activeSaveState)
+                    tone: window.notesActive && !Facade.notes.state.loaded ? "neutral"
+                        : window.outlineActive && !Facade.outline.state.loaded ? "neutral" : window.autoSaveTone(window.activeSaveState)
                 }
                 StatusChip {
                     label: "任务"
@@ -303,106 +347,52 @@ ApplicationWindow {
                 Item {
                     Layout.fillWidth: true
                 }
-
                 AppButton {
-                    objectName: "statusMoreButton"
-                    text: "···"
-                    onClicked: moreMenu.popup()
+                    id: settingsButton
+                    objectName: "nav-settings"
+                    implicitWidth: 32
+                    implicitHeight: 30
+                    padding: 5
+                    ghost: true
+                    selected: Facade.activeNav === "settings"
+                    Accessible.name: "设置"
+                    ToolTip.visible: hovered
+                    ToolTip.text: "设置"
+                    onClicked: Facade.setActiveNav("settings")
+                    contentItem: Item {
+                        NavIcon {
+                            anchors.centerIn: parent
+                            kind: "settings"
+                            iconColor: settingsButton.selected ? "white" : Theme.tokens.color.textSecondary
+                        }
+                    }
                 }
             }
         }
 
-        Menu {
+        Popup {
             id: moreMenu
             objectName: "statusMoreMenu"
-
-            MenuItem {
-                text: "主题：" + Theme.themeName
-                onTriggered: Theme.setTheme(Theme.nextThemeName())
+            parent: Overlay.overlay
+            x: 12
+            y: Math.max(12, parent.height - height - 46)
+            width: 300
+            padding: 18
+            focus: true
+            closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+            background: Rectangle { color: Theme.tokens.color.bgSurface; border.color: Theme.tokens.color.border; radius: 14 }
+            contentItem: ColumnLayout {
+                spacing: 12
+                Text { text: "当前状态"; font.pixelSize: 16; font.bold: true; color: Theme.tokens.color.textPrimary }
+                Text { text: "Token：" + Facade.usageInputOutputText; font.pixelSize: 13; color: Theme.tokens.color.textSecondary }
+                Text { text: "费用：" + Facade.usageCostText; font.pixelSize: 13; color: Theme.tokens.color.textSecondary }
+                Text { text: "缓存：" + Facade.usageCacheText; font.pixelSize: 13; color: Theme.tokens.color.textSecondary }
+                Text {
+                    text: "数据源：" + (Facade.projectSource === "project" ? "当前项目" : Facade.projectSource === "mock" ? "演示" : "未打开项目")
+                    font.pixelSize: 13
+                    color: Theme.tokens.color.textSecondary
+                }
             }
-            MenuItem {
-                text: Facade.reduceMotion ? "动效：开" : "动效：关"
-                onTriggered: Facade.setReduceMotion(!Facade.reduceMotion)
-            }
-            MenuSeparator {}
-            MenuItem {
-                text: "Token：" + Facade.usageInputOutputText
-                enabled: false
-            }
-            MenuItem {
-                text: "费用：" + Facade.usageCostText
-                enabled: false
-            }
-            MenuItem {
-                text: "缓存：" + Facade.usageCacheText
-                enabled: false
-            }
-            MenuItem {
-                text: "数据源：" + (Facade.projectSource === "project" ? "项目"
-                    : Facade.projectSource === "mock" ? "演示" : "未打开")
-                enabled: false
-            }
-        }
-    }
-
-    // Frameless resize edges/corners (native-glass shell only). They call the
-    // OS resize loop so DWM keeps the acrylic material during the drag.
-    Item {
-        anchors.fill: parent
-        visible: window.nativeGlass
-        z: 100
-
-        MouseArea {
-            anchors { left: parent.left; right: parent.right; top: parent.top }
-            height: 6
-            cursorShape: Qt.SizeVerCursor
-            onPressed: window.startSystemResize(Qt.TopEdge)
-        }
-        MouseArea {
-            anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
-            height: 6
-            cursorShape: Qt.SizeVerCursor
-            onPressed: window.startSystemResize(Qt.BottomEdge)
-        }
-        MouseArea {
-            anchors { top: parent.top; bottom: parent.bottom; left: parent.left }
-            width: 6
-            cursorShape: Qt.SizeHorCursor
-            onPressed: window.startSystemResize(Qt.LeftEdge)
-        }
-        MouseArea {
-            anchors { top: parent.top; bottom: parent.bottom; right: parent.right }
-            width: 6
-            cursorShape: Qt.SizeHorCursor
-            onPressed: window.startSystemResize(Qt.RightEdge)
-        }
-        MouseArea {
-            anchors { left: parent.left; top: parent.top }
-            width: 12
-            height: 12
-            cursorShape: Qt.SizeFDiagCursor
-            onPressed: window.startSystemResize(Qt.LeftEdge | Qt.TopEdge)
-        }
-        MouseArea {
-            anchors { right: parent.right; top: parent.top }
-            width: 12
-            height: 12
-            cursorShape: Qt.SizeBDiagCursor
-            onPressed: window.startSystemResize(Qt.RightEdge | Qt.TopEdge)
-        }
-        MouseArea {
-            anchors { left: parent.left; bottom: parent.bottom }
-            width: 12
-            height: 12
-            cursorShape: Qt.SizeBDiagCursor
-            onPressed: window.startSystemResize(Qt.LeftEdge | Qt.BottomEdge)
-        }
-        MouseArea {
-            anchors { right: parent.right; bottom: parent.bottom }
-            width: 12
-            height: 12
-            cursorShape: Qt.SizeFDiagCursor
-            onPressed: window.startSystemResize(Qt.RightEdge | Qt.BottomEdge)
         }
     }
 

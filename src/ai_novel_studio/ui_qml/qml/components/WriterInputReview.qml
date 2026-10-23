@@ -39,6 +39,9 @@ Dialog {
                 + " · 模型：" + (root.preview.model || "")
                 + "\n输入保守估算 " + Number(root.preview.estimated_tokens || 0).toLocaleString(Qt.locale(), "f", 0)
                 + " / 容量 " + Number(root.preview.context_window || 0).toLocaleString(Qt.locale(), "f", 0) + " tokens"
+                + "\n笔记：" + ((root.preview.note_mode || "NONE") === "NONE" ? "不附笔记"
+                    : root.preview.note_mode === "FULL" ? "所选原文 · " + (root.preview.note_refs || []).length + " 篇"
+                    : "Codex 整理要点 · 来源 " + (root.preview.note_refs || []).length + " 篇")
             textFormat: Text.PlainText
             wrapMode: Text.WordWrap
             color: Theme.tokens.color.textSecondary

@@ -1,42 +1,50 @@
 import QtQuick
-import QtQuick.Controls
+import QtQuick.Controls.Basic
 import QtQuick.Dialogs
 import QtQuick.Layouts
 
-Dialog {
+StudioDialog {
     id: root
 
-    property string parentPath: ""
+    property url selectedParentUrl: ""
+    readonly property string parentPath: String(selectedParentUrl)
 
     signal projectCreated(string message)
 
     modal: true
     title: "新建项目"
-    standardButtons: Dialog.Cancel
-    width: 420
-
-    footer: DialogButtonBox {
-        Button {
-            objectName: "createProjectConfirmButton"
-            text: "创建"
-            enabled: nameInput.text.trim() !== "" && root.parentPath !== ""
-            onClicked: root.create()
-        }
-        Button {
-            text: "取消"
-            onClicked: root.reject()
+    footer: Item {
+        implicitHeight: 70
+        RowLayout {
+            anchors.right: parent.right
+            anchors.rightMargin: 22
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: 10
+            AppButton {
+                objectName: "createProjectCancelButton"
+                text: "取消"
+                ghost: true
+                onClicked: root.reject()
+            }
+            AppButton {
+                objectName: "createProjectConfirmButton"
+                text: "创建项目"
+                primary: true
+                enabled: nameInput.text.trim() !== "" && root.parentPath !== ""
+                onClicked: root.create()
+            }
         }
     }
 
     function create() {
-        // selectedFolder is a QUrl: hand it to the bridge untouched so
+        // Keep the accepted folder as a QUrl and hand it to the bridge so
         // toLocalFile() conversion happens on the Python side (same boundary
         // as openProjectFromUrl). Never pre-stringify into a file:/// URL.
         var error = Facade.createProjectFromUrl(
-            parentFolderDialog.selectedFolder, nameInput.text)
+            root.selectedParentUrl, nameInput.text)
         if (error === "") {
             nameInput.text = ""
-            root.parentPath = ""
+            root.selectedParentUrl = ""
             errorText.text = ""
             root.accept()
             root.projectCreated("")
@@ -47,13 +55,21 @@ Dialog {
 
     onOpened: {
         nameInput.text = ""
-        root.parentPath = ""
+        root.selectedParentUrl = ""
         errorText.text = ""
+        Qt.callLater(function() { nameInput.forceActiveFocus() })
     }
 
-    ColumnLayout {
-        width: parent.width
-        spacing: 8
+    contentItem: ColumnLayout {
+        spacing: 14
+
+        Text {
+            Layout.fillWidth: true
+            text: "为这部小说准备一个工作区，保存大纲、正文和创作笔记。"
+            wrapMode: Text.Wrap
+            font.pixelSize: 13
+            color: Theme.tokens.color.textSecondary
+        }
 
         Label {
             text: "项目名称"
@@ -64,10 +80,20 @@ Dialog {
             objectName: "newProjectNameInput"
             Layout.fillWidth: true
             placeholderText: "例如：我的小说"
+            font.pixelSize: 14
+            color: Theme.tokens.color.textPrimary
+            placeholderTextColor: Theme.tokens.color.textSecondary
+            padding: 12
+            selectByMouse: true
+            background: Rectangle {
+                color: Theme.tokens.color.bgEditor
+                border.color: nameInput.activeFocus ? Theme.tokens.color.accent : Theme.tokens.color.border
+                radius: 9
+            }
         }
 
         Label {
-            text: "父目录"
+            text: "保存位置"
             color: Theme.tokens.color.textSecondary
         }
         RowLayout {
@@ -76,14 +102,14 @@ Dialog {
 
             Label {
                 Layout.fillWidth: true
-                text: root.parentPath === "" ? "（未选择）"
+                text: root.parentPath === "" ? "请选择小说工作区的存放位置"
                       : root.parentPath.replace(/^file:\/\/\//, "")
                 elide: Text.ElideMiddle
                 color: Theme.tokens.color.textPrimary
             }
             AppButton {
                 objectName: "chooseParentDirButton"
-                text: "选择…"
+                text: "选择文件夹…"
                 onClicked: parentFolderDialog.open()
             }
         }
@@ -91,7 +117,7 @@ Dialog {
         Label {
             Layout.fillWidth: true
             text: root.parentPath === "" || nameInput.text.trim() === ""
-                  ? "" : "目标位置：" + root.parentPath + "/" + nameInput.text.trim()
+                  ? "" : "将创建：" + root.parentPath.replace(/^file:\/\/\//, "") + "/" + nameInput.text.trim()
             wrapMode: Text.WordWrap
             color: Theme.tokens.color.textSecondary
         }
@@ -110,6 +136,6 @@ Dialog {
         id: parentFolderDialog
         objectName: "newProjectParentDialog"
         title: "选择父目录"
-        onAccepted: root.parentPath = parentFolderDialog.selectedFolder
+        onAccepted: root.selectedParentUrl = parentFolderDialog.selectedFolder
     }
 }

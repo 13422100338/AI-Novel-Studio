@@ -11,16 +11,19 @@ from typing import Any
 from PySide6.QtCore import Property, QObject, QTimer, QUrl, Signal, Slot
 
 from ai_novel_studio.application.outline_service import OutlineService
+from ai_novel_studio.core.outline_links import insert_chapter_link
 from ai_novel_studio.core.outline_markdown import apply_editor_edit, editor_text, outline_headings
 from ai_novel_studio.domain.outline import OutlineSnapshot, outline_content_hash
 from ai_novel_studio.domain.outline_link import OutlineLinkSnapshot
 from ai_novel_studio.infrastructure.storage.chapter_repository import ChapterRepository
+from ai_novel_studio.infrastructure.storage.note_repository import NoteRepository
 from ai_novel_studio.infrastructure.storage.outline_repository import (
     OutlineConflictError,
     OutlineIntegrityError,
     OutlineRepository,
 )
 from ai_novel_studio.infrastructure.storage.project_repository import ProjectRepository
+from ai_novel_studio.ui_qml.bridge.outline_references import build_references, reference_url
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,6 +38,7 @@ class _Preview:
 
 class OutlineBridge(QObject):
     changed = Signal()
+    navigation_changed = Signal()
     chapterRequested = Signal(str)
     revealRequested = Signal(int)
 
@@ -47,12 +51,15 @@ class OutlineBridge(QObject):
         self._key: tuple[Path, str] | None = None
         self._base: OutlineSnapshot | None = None
         self._buffer = ""
+        self._note_documents: list[dict[str, Any]] = []
         self._preview: _Preview | None = None
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
         self._timer.setInterval(900)
         self._timer.timeout.connect(self.flush)
         self._state = self._empty_state()
+        self._source_cursor = 0
+        self.changed.connect(self.navigation_changed.emit)
 
     @staticmethod
     def _empty_state() -> dict[str, Any]:
@@ -86,6 +93,102 @@ class OutlineBridge(QObject):
     def state(self) -> dict[str, Any]:
         return dict(self._state)
 
+    def set_note_documents(self, documents: list[dict[str, Any]]) -> None:
+        current = [{"id": n["id"], "title": n["title"]} for n in documents]
+        if current != self._note_documents:
+            self._note_documents = current
+            self.changed.emit()
+
+    @Property(list, notify=changed)
+    def references(self) -> list[dict[str, Any]]:
+        if not self._state["loaded"] or self._service is None:
+            return []
+        path = (
+            self._service.outlines.project.layout.root
+            / "outlines"
+            / (self._state["currentId"] + ".md")
+        )
+        return build_references(
+            self._state["text"],
+            self._state["headings"],
+            self._state["links"],
+            self._state["linkChapters"],
+            self._note_documents,
+            path,
+            dirty=self._state["dirty"],
+        )
+
+    @Property(dict, notify=navigation_changed)
+    def navigation(self) -> dict[str, Any]:
+        text = self._state["text"]
+        prefix = text.encode("utf-16-le")[: self._source_cursor * 2].decode(
+            "utf-16-le", errors="ignore"
+        )
+        line = prefix.count("\n") + 1
+        headings = self._state["headings"]
+        selected = next(
+            (h for h in reversed(headings) if h["position"] <= self._source_cursor), None
+        )
+        start = selected["line"] if selected else 1
+        end = len(text.splitlines()) + 1
+        if selected:
+            end = next(
+                (
+                    h["line"]
+                    for h in headings
+                    if h["line"] > start and h["level"] <= selected["level"]
+                ),
+                end,
+            )
+        titles = {c["id"]: c["title"] for c in self._state["linkChapters"]}
+        order = {c["id"]: index for index, c in enumerate(self._state["linkChapters"])}
+        chapters: dict[str, dict[str, Any]] = {}
+        for link in self._state["links"]:
+            if not link["active"] or not start <= link["line"] < end:
+                continue
+            chapter = chapters.setdefault(
+                link["chapterId"],
+                {
+                    "chapterId": link["chapterId"],
+                    "title": titles.get(link["chapterId"], link["chapterTitle"]),
+                    "available": link["chapterAvailable"],
+                    "status": link["statusText"],
+                    "confirmed": True,
+                    "linkCount": 0,
+                },
+            )
+            chapter["linkCount"] += 1
+            if link["status"] != "CONFIRMED":
+                chapter["confirmed"] = False
+                chapter["status"] = link["statusText"]
+        return {
+            "sourcePosition": self._source_cursor,
+            "sourceLine": line,
+            "headingLine": start,
+            "headingTitle": selected["title"] if selected else "全篇大纲",
+            "endLine": end,
+            "chapters": sorted(
+                chapters.values(), key=lambda chapter: order.get(chapter["chapterId"], len(order))
+            ),
+        }
+
+    @Slot(int)
+    def setSourceCursor(self, position: int) -> None:
+        if (
+            type(position) is int
+            and 0 <= position <= len(self._state["text"].encode("utf-16-le")) // 2
+        ):
+            if position != self._source_cursor:
+                self._source_cursor = position
+                self.navigation_changed.emit()
+
+    @Slot(int)
+    def selectHeading(self, line: int) -> None:
+        heading = next((h for h in self._state["headings"] if h["line"] == line), None)
+        if heading:
+            self.setSourceCursor(heading["position"])
+            self.revealRequested.emit(heading["position"])
+
     def bind_project(self, project: ProjectRepository | None) -> None:
         """The project owner must flush successfully before changing this binding."""
         key = (project.layout.root, project.project.id) if project else None
@@ -98,6 +201,8 @@ class OutlineBridge(QObject):
                 self.changed.emit()
             return
         self._timer.stop()
+        self._source_cursor = 0
+        self._note_documents = []
         self._key, self._base, self._buffer, self._preview = key, None, "", None
         self._service = OutlineService(OutlineRepository(project)) if project else None
         self._state = self._empty_state()
@@ -130,6 +235,8 @@ class OutlineBridge(QObject):
     def _adopt(self, snapshot: OutlineSnapshot) -> None:
         repository = self._require().outlines
         document = repository.get(snapshot.version.document_id)
+        if self._state["currentId"] != document.id:
+            self._source_cursor = 0
         versions = repository.list_versions(document.id)
         self._timer.stop()
         self._base, self._buffer = snapshot, snapshot.content
@@ -146,6 +253,9 @@ class OutlineBridge(QObject):
                 {"revision": v.revision, "time": v.created_at.astimezone().strftime("%m-%d %H:%M")}
                 for v in reversed(versions)
             ],
+        )
+        self._source_cursor = min(
+            self._source_cursor, len(self._state["text"].encode("utf-16-le")) // 2
         )
         self._refresh_documents()
         self._refresh_links()
@@ -176,7 +286,11 @@ class OutlineBridge(QObject):
             linksReady=True,
             linksEpoch=self._state["linksEpoch"] + 1,
             linkChapters=[
-                {"id": c.id, "title": " ".join(p for p in (c.declared_number, c.title) if p)}
+                {
+                    "id": c.id,
+                    "title": " ".join(p for p in (c.declared_number, c.title) if p),
+                    "path": c.content_path,
+                }
                 for c in snapshot.chapters
             ],
             links=[
@@ -287,6 +401,9 @@ class OutlineBridge(QObject):
             self._timer.start()
         else:
             self._timer.stop()
+        self._source_cursor = min(
+            self._source_cursor, len(self._state["text"].encode("utf-16-le")) // 2
+        )
         self.changed.emit()
 
     @Slot(result=bool)
@@ -510,7 +627,7 @@ class OutlineBridge(QObject):
                 self._state["currentId"],
                 tuple(link_ids),
                 expected_fingerprint=fingerprint,
-            )
+            ),
         )
 
     @Slot(str, int, str, result=bool)
@@ -522,7 +639,7 @@ class OutlineBridge(QObject):
                 link_id,
                 line,
                 expected_fingerprint=fingerprint,
-            )
+            ),
         )
 
     @Slot(str, str, result=bool)
@@ -533,8 +650,23 @@ class OutlineBridge(QObject):
                 self._state["currentId"],
                 link_id,
                 expected_fingerprint=fingerprint,
-            )
+            ),
         )
+
+    @Slot(str, int, result=bool)
+    def insertNoteLink(self, note_id: str, line: int) -> bool:
+        if not self.flush():
+            return False
+
+        def insert() -> None:
+            if self._base is None:
+                raise ValueError("大纲尚未载入")
+            note = NoteRepository(self._require().outlines.project).read(note_id)
+            title = note.title.replace("\\", "\\\\").replace("[", "\\[").replace("]", "\\]")
+            token = f"[{title}]({reference_url('note', note.id)})"
+            self.edit(editor_text(insert_chapter_link(self._buffer, line, token)))
+
+        return self._attempt(insert) and self.flush()
 
     @Slot(str, int, result=bool)
     def insertChapterLink(self, chapter_id: str, line: int) -> bool:

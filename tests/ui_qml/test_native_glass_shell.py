@@ -2,8 +2,8 @@
 
 The bootstrap exposes ``UseNativeGlass`` + ``NativeGlassBridge`` to App.qml
 only when the machine supports the material. Every failure path must keep the
-window on the opaque theme canvas; the custom title bar and resize edges must
-exist only on the frameless native-glass shell.
+window on the opaque theme canvas. The theme-matched title bar and resize edges
+also serve the default opaque shell independently of the optional material.
 """
 
 from __future__ import annotations
@@ -76,16 +76,16 @@ def _load_shell(
 
 
 def test_shell_stays_opaque_without_native_glass(qtbot: QtBot) -> None:
-    """Default context (no UseNativeGlass/bridge): opaque, normal window."""
-    engine, _, _ = _load_shell(qtbot, use_native_glass=False)
+    """Default context: opaque themed chrome without native-glass activation."""
+    engine, facade, theme = _load_shell(qtbot, use_native_glass=False)
     window = engine.rootObjects()[0]
     assert isinstance(window, QQuickWindow)
     assert window.property("nativeGlass") is False
-    assert window.flags() & Qt.FramelessWindowHint == 0
+    assert window.flags() & Qt.FramelessWindowHint == Qt.FramelessWindowHint
     assert QColor(window.color()).alpha() == 255
     title_bar = _find_item(window.contentItem(), "glassTitleBar")
     assert title_bar is not None
-    assert title_bar.property("visible") is False
+    assert title_bar.property("visible") is True
 
 
 def test_shell_glass_fallback_keeps_opaque_canvas(qtbot: QtBot) -> None:
